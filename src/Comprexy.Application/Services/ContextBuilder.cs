@@ -25,8 +25,26 @@ public class ContextBuilder
         ChatMessage currentUserMessage)
     {
         var messages = BuildLivePrefix(systemPrompt, workingMemory, recentRawMessages).ToList();
+
+        // Avoid duplicating the tip when it was already persisted (client replayed it).
+        if (messages.Count > 0 && AreSameMessage(messages[^1], currentUserMessage))
+            return messages;
+
         messages.Add(currentUserMessage);
         return messages;
+    }
+
+    private static bool AreSameMessage(ChatMessage a, ChatMessage b)
+    {
+        if (a.Role != b.Role)
+            return false;
+
+        if (a.Content != b.Content)
+            return false;
+
+        var aWire = a.RawWireMessage?.GetRawText();
+        var bWire = b.RawWireMessage?.GetRawText();
+        return string.Equals(aWire, bWire, StringComparison.Ordinal);
     }
 
     /// <summary>

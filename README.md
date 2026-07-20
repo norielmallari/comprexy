@@ -115,7 +115,7 @@ flowchart LR
 
 ## Configuration
 
-Settings load in order: `appsettings.json` → `appsettings.{Environment}.json` → user secrets / environment variables / command line (host defaults), then optional `appsettings.Local.json` (loaded last so it overrides matching keys).
+Settings load in order: `appsettings.json` → `appsettings.{Environment}.json` → optional `appsettings.Local.json` → user secrets / environment variables / command line (host defaults). Host defaults can override keys set in `appsettings.Local.json`.
 
 | Section | Role |
 | --- | --- |
