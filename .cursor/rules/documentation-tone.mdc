@@ -1,0 +1,47 @@
+---
+description: Calm, professional, contributor-friendly tone for Markdown docs
+globs: **/*.md
+alwaysApply: false
+---
+
+# Documentation tone
+
+Public and in-repo Markdown should read as clear project docs, not marketing or an audit dump.
+
+## Voice
+
+- Calm, factual, and contributor-friendly
+- Prefer precise claims over hype (“supports X”, “does not support Y”)
+- State defaults, constraints, and failure modes plainly
+- Keep security/ops guidance direct and non-dramatic
+
+## Prefer
+
+```markdown
+When `X-Comprexy-Conversation-Id` is omitted, identity is derived from the
+system prompt and first two user message texts. Sessions that share the same
+opening text can map to one stored conversation.
+```
+
+## Avoid
+
+```markdown
+**Severity:** Critical / High
+Adversarial findings… memory bleed… remediation order…
+Drop-in compatible with everything…
+```
+
+- Audit-style severity labels and postmortem voice in public docs
+- Overclaims (“drop-in”, “fully compatible”) without a stated supported surface
+- Leaking secrets, local paths, or real request-log contents in examples
+
+## Placement
+
+- Operator/contributor material: `README.md`, `CONTRIBUTING.md`, `docs/`
+- Design notes, private reviews, and adversarial writeups: keep out of the public tree (e.g. gitignored `internal/`)
+- Backlog items: neutral summaries and priorities — not finding dumps
+
+## TODO Tasks
+
+- Never mark a TODO as done if there are still pending items in the same list or section.
+- If a TODO is resolved, ensure all related subtasks are also resolved before closing the parent.

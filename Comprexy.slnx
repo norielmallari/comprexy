@@ -1,0 +1,11 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/Comprexy.Api/Comprexy.Api.csproj" />
+    <Project Path="src/Comprexy.Application/Comprexy.Application.csproj" />
+    <Project Path="src/Comprexy.Domain/Comprexy.Domain.csproj" />
+    <Project Path="src/Comprexy.Infrastructure/Comprexy.Infrastructure.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Comprexy.Application.Tests/Comprexy.Application.Tests.csproj" />
+  </Folder>
+</Solution>
