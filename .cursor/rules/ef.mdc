@@ -1,0 +1,71 @@
+---
+description: EF Core query and tracking conventions (AsNoTracking, split queries, N+1)
+globs: **/Persistence/**/*.cs,**/*Repository*.cs,**/*DbContext*.cs
+alwaysApply: false
+---
+
+# EF Core
+
+Follow current EF Core performance practice: prefer lean queries, explicit loading shape, and tracking only when `SaveChanges` must see mutations.
+
+## AsNoTracking — pure reads only
+
+Use `.AsNoTracking()` on queries that return data for display, context building, or decisions **without** mutating the returned entities before `SaveChanges`.
+
+```csharp
+// ✅ Pure read
+await db.WorkingMemories.AsNoTracking()
+    .Where(w => w.ConversationId == id)
+    .OrderByDescending(w => w.Version)
+    .FirstOrDefaultAsync(ct);
+
+// ❌ Do not AsNoTracking when the entity is mutated then saved
+var conversation = await db.Conversations.FirstAsync(...); // tracked
+conversation.SetSyncedMessageCount(n, now);
+await db.SaveChangesAsync(ct);
+```
+
+- Do **not** add `Update`/`Attach` solely to force no-tracking on write paths. Keep tracking for load-modify-save.
+- Prefer `.AsNoTrackingWithIdentityResolution()` only when a no-tracking graph needs shared related instances deduped.
+- Optional: set `QueryTrackingBehavior.NoTracking` on the DbContext and opt in with `.AsTracking()` on write queries — only if the codebase adopts that consistently.
+
+## Avoid N+1
+
+Never rely on lazy loading in request paths. Load related data in one shot:
+
+- Eager load with `.Include()` / `.ThenInclude()`, or
+- Project to DTOs / anonymous types (preferred for list/read APIs — less data, no tracker).
+
+```csharp
+// ❌ N+1
+foreach (var c in conversations)
+    _ = c.Messages.Count; // extra query per row if lazy
+
+// ✅ Eager or project
+await db.Conversations.AsNoTracking()
+    .Include(c => c.Messages)
+    .ToListAsync(ct);
+```
+
+## AsSplitQuery — multiple collection includes
+
+When a query `.Include`s **two or more collection** navigations, use `.AsSplitQuery()` to avoid cartesian explosion (row multiplication). This is the standard fix alongside eager loading — not a substitute for missing `Include`s.
+
+```csharp
+await db.Blogs.AsNoTracking()
+    .Include(b => b.Posts)
+    .Include(b => b.Tags)
+    .AsSplitQuery()
+    .ToListAsync(ct);
+```
+
+- Global default is `QuerySplittingBehavior.SplitQuery` (set in `AddComprexyInfrastructure`). Use `.AsSingleQuery()` only when a single round-trip is required.
+- Split queries use multiple round-trips; wrap in a transaction only when cross-query consistency is required.
+
+## Other defaults
+
+- Prefer async EF APIs (`ToListAsync`, `FirstOrDefaultAsync`, …).
+- Bound list queries (`.Take` / paging); do not load unbounded graphs on hot paths.
+- Filter and project in LINQ so SQL does the work; avoid `ToList` then filter in memory.
+- Ensure indexes exist for filter/join/order columns used by hot queries; escalate if a new heavy read lacks an index.
+- Migrations: create only via `dotnet ef migrations` — never hand-author migration files.
