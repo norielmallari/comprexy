@@ -1,0 +1,43 @@
+---
+description: Subagent-driven code analysis for C# and SQL; findings as line + analysis only
+globs: **/*.cs,**/*.sql
+alwaysApply: false
+---
+
+# Code analysis
+
+When the user asks for code analysis, review, audit, or similar on matching files, follow this workflow.
+
+## Process
+
+1. **Delegate to a subagent** — Launch an explore or generalPurpose subagent to perform the analysis. Do not analyze large code surfaces solely in the parent agent.
+2. **Subagent reads the code** — The subagent inspects the relevant files and returns structured findings.
+3. **Parent reports findings only** — Summarize the subagent result for the user. Do not re-paste source code that was already read.
+
+## Output format
+
+Each finding is one line (or a short block) with **line number(s)** and **analysis**. No code dumps.
+
+```text
+path/to/File.cs:42 — Null reference: `customer` used before null check; throw or guard before use.
+path/to/Script.sql:18-21 — Missing index on `Orders.CustomerId` for the join in this query; expect table scans under load.
+```
+
+## Analysis focus
+
+- Correctness, data integrity, and failure visibility (prefer fix-at-source over skip/filter workarounds)
+- Security (injection, authz, secrets, unsafe SQL concatenation)
+- Performance hotspots with concrete evidence (N+1, missing indexes, unbounded reads)
+- Maintainability only when it affects correctness or clear defects
+
+## Do
+
+- Cite `file:line` (or `file:start-end`) and state the issue and recommended fix briefly
+- Group findings by severity only if asked; default is severity-agnostic, concise list
+- Escalate ambiguous architectural choices instead of inventing policy
+
+## Do not
+
+- Paste or re-output full methods, queries, or large code blocks as part of the analysis response
+- Repeat the same snippet across findings; reference the line once
+- Mark-and-skip or filter-out bad data as the primary remediation

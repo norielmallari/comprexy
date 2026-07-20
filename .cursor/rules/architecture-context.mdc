@@ -1,0 +1,27 @@
+---
+description: Read docs/ARCHITECTURE.md before changing or reasoning about the codebase
+alwaysApply: true
+---
+
+# Architecture context
+
+Before implementing, reviewing, or explaining behavior in this repository, **read** [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) with the Read tool (or re-read it if your session has not loaded it yet).
+
+Treat that document as the map for:
+
+- Layer boundaries (Api / Application / Domain / Infrastructure)
+- Chat prepare → upstream → complete flow
+- Working memory, soft vs emergency compression, closed tool-chain gate
+- Conversation gate, in-process queue, SQLite persistence
+
+## Do
+
+- Prefer changes that preserve the documented dependency direction and ownership table
+- Update `docs/ARCHITECTURE.md` in the same change when you alter structural behavior (new major path, ownership shift, persistence contract)
+- Point operators at the README for config tables; keep architecture prose structural, not a second config dump
+
+## Do not
+
+- Invent parallel gateways, shared multi-instance queues, or cross-cutting frameworks the architecture explicitly excludes
+- Bypass Application ports from Api straight into Infrastructure persistence helpers
+- Assume fingerprint identity or PassThrough semantics without checking the architecture + README limitations

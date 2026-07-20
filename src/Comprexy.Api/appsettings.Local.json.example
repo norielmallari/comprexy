@@ -1,0 +1,17 @@
+{
+  "Provider": {
+    "BaseUrl": "http://localhost:11434/v1",
+    "ApiKey": null,
+    "Model": "your-model"
+  },
+  "Compression": {
+    "BaseUrl": null,
+    "ApiKey": null,
+    "Model": null
+  },
+  "Trace": {
+    "RequestFiles": true,
+    "RequestLogDirectory": "logs/requests",
+    "MaxPayloadChars": 0
+  }
+}
