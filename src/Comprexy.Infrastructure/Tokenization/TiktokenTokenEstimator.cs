@@ -1,3 +1,4 @@
+using System.Text;
 using System.Text.Json;
 using Comprexy.Application.Abstractions;
 using Comprexy.Application.Configuration;
@@ -11,6 +12,7 @@ namespace Comprexy.Infrastructure.Tokenization;
 /// <summary>
 /// Approximates token counts using a Tiktoken BPE encoding. Counts full wire message JSON when
 /// available, plus request-level prompt fields (tools, etc.), not just extracted text.
+/// Image payloads use OpenAI-style vision tile estimates — base64 is never BPE-tokenized.
 /// Individual string and per-message counts are memoized via <see cref="ITokenEstimateCache"/>.
 /// </summary>
 public class TiktokenTokenEstimator : ITokenEstimator
@@ -45,7 +47,7 @@ public class TiktokenTokenEstimator : ITokenEstimator
         }
 
         var key = TokenEstimateCache.ComputeStringKey(text);
-        return _tokenEstimateCache.GetOrCompute(key, () => _tokenizer.CountTokens(text));
+        return _tokenEstimateCache.GetOrCompute(key, () => CountStringTokensUncached(text));
     }
 
     public int CountTokens(IEnumerable<ChatMessage> messages) =>
@@ -81,14 +83,172 @@ public class TiktokenTokenEstimator : ITokenEstimator
     {
         if (message.RawWireMessage is { ValueKind: JsonValueKind.Object } raw)
         {
-            // Full OpenAI message object: role, content (string or parts), tool_calls, etc.
-            var wire = raw.GetRawText();
-            return string.IsNullOrEmpty(wire) ? 0 : _tokenizer.CountTokens(wire);
+            return CountWireMessageTokens(raw);
         }
 
         var contentTokens = string.IsNullOrEmpty(message.Content)
             ? 0
-            : _tokenizer.CountTokens(message.Content);
+            : CountStringTokensUncached(message.Content);
         return contentTokens + PerMessageOverheadTokens;
+    }
+
+    private int CountStringTokensUncached(string text)
+    {
+        if (VisionImageTokenEstimator.IsDataImageUrl(text) ||
+            text.Contains("data:image/", StringComparison.OrdinalIgnoreCase))
+        {
+            return CountTextWithEmbeddedDataImages(text);
+        }
+
+        return _tokenizer.CountTokens(text);
+    }
+
+    private int CountWireMessageTokens(JsonElement raw)
+    {
+        if (!raw.TryGetProperty("content", out var content) || content.ValueKind != JsonValueKind.Array)
+        {
+            var wire = raw.GetRawText();
+            return string.IsNullOrEmpty(wire) ? 0 : _tokenizer.CountTokens(wire);
+        }
+
+        var imageTokens = 0;
+        using var stream = new MemoryStream();
+        using (var writer = new Utf8JsonWriter(stream))
+        {
+            writer.WriteStartObject();
+            foreach (var property in raw.EnumerateObject())
+            {
+                if (property.NameEquals("content"))
+                {
+                    writer.WritePropertyName("content");
+                    WriteSanitizedContentArray(property.Value, writer, ref imageTokens);
+                }
+                else
+                {
+                    property.WriteTo(writer);
+                }
+            }
+
+            writer.WriteEndObject();
+        }
+
+        var sanitized = Encoding.UTF8.GetString(stream.ToArray());
+        return _tokenizer.CountTokens(sanitized) + imageTokens;
+    }
+
+    private static void WriteSanitizedContentArray(
+        JsonElement contentArray,
+        Utf8JsonWriter writer,
+        ref int imageTokens)
+    {
+        writer.WriteStartArray();
+        foreach (var part in contentArray.EnumerateArray())
+        {
+            if (part.ValueKind == JsonValueKind.Object &&
+                part.TryGetProperty("type", out var type) &&
+                type.ValueKind == JsonValueKind.String &&
+                string.Equals(type.GetString(), "image_url", StringComparison.Ordinal) &&
+                part.TryGetProperty("image_url", out var imageUrl))
+            {
+                var (url, detail) = ReadImageUrlFields(imageUrl);
+                imageTokens += VisionImageTokenEstimator.Estimate(url, detail);
+                writer.WriteStartObject();
+                writer.WriteString("type", "image_url");
+                writer.WritePropertyName("image_url");
+                writer.WriteStartObject();
+                writer.WriteString("url", VisionImageTokenEstimator.RedactImageUrlForText(url));
+                if (detail is not null)
+                {
+                    writer.WriteString("detail", detail);
+                }
+
+                writer.WriteEndObject();
+                writer.WriteEndObject();
+                continue;
+            }
+
+            part.WriteTo(writer);
+        }
+
+        writer.WriteEndArray();
+    }
+
+    private static (string? Url, string? Detail) ReadImageUrlFields(JsonElement imageUrl)
+    {
+        if (imageUrl.ValueKind == JsonValueKind.String)
+        {
+            return (imageUrl.GetString(), null);
+        }
+
+        if (imageUrl.ValueKind != JsonValueKind.Object)
+        {
+            return (null, null);
+        }
+
+        string? url = null;
+        string? detail = null;
+        if (imageUrl.TryGetProperty("url", out var urlElement) && urlElement.ValueKind == JsonValueKind.String)
+        {
+            url = urlElement.GetString();
+        }
+
+        if (imageUrl.TryGetProperty("detail", out var detailElement) &&
+            detailElement.ValueKind == JsonValueKind.String)
+        {
+            detail = detailElement.GetString();
+        }
+
+        return (url, detail);
+    }
+
+    private int CountTextWithEmbeddedDataImages(string text)
+    {
+        var total = 0;
+        var span = text.AsSpan();
+        var start = 0;
+        while (start < span.Length)
+        {
+            var relative = span[start..].IndexOf("data:image/", StringComparison.OrdinalIgnoreCase);
+            if (relative < 0)
+            {
+                var remainder = span[start..].ToString();
+                if (remainder.Length > 0)
+                {
+                    total += _tokenizer.CountTokens(remainder);
+                }
+
+                break;
+            }
+
+            var dataStart = start + relative;
+            if (dataStart > start)
+            {
+                total += _tokenizer.CountTokens(span[start..dataStart].ToString());
+            }
+
+            var fromData = span[dataStart..];
+            var endRel = IndexOfDataUrlEnd(fromData);
+            var dataUrl = fromData[..endRel].ToString();
+            total += VisionImageTokenEstimator.Estimate(dataUrl, detail: null);
+            total += _tokenizer.CountTokens("[image]");
+            start = dataStart + endRel;
+        }
+
+        return total;
+    }
+
+    private static int IndexOfDataUrlEnd(ReadOnlySpan<char> fromData)
+    {
+        // data URLs in extracted text usually run to whitespace, quote, or end.
+        for (var i = 0; i < fromData.Length; i++)
+        {
+            var c = fromData[i];
+            if (char.IsWhiteSpace(c) || c is '"' or '\'' or ')' or ']' or '>')
+            {
+                return i;
+            }
+        }
+
+        return fromData.Length;
     }
 }
