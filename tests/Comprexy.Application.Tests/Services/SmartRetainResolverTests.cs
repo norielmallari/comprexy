@@ -9,6 +9,26 @@ public class SmartRetainResolverTests
     private static ConversationMessage Msg(Guid conversationId, int sequence, int tokens = 10, MessageRole role = MessageRole.User) =>
         ConversationMessage.Create(conversationId, sequence, role, $"m-{sequence}", tokens, DateTimeOffset.UtcNow);
 
+    private static ConversationMessage AssistantWithToolCall(Guid conversationId, int sequence, string callId, int tokens = 10) =>
+        ConversationMessage.Create(
+            conversationId,
+            sequence,
+            MessageRole.Assistant,
+            string.Empty,
+            tokens,
+            DateTimeOffset.UtcNow,
+            $"{{\"role\":\"assistant\",\"tool_calls\":[{{\"id\":\"{callId}\",\"type\":\"function\",\"function\":{{\"name\":\"Read\",\"arguments\":\"{{}}\"}}}}]}}");
+
+    private static ConversationMessage ToolResult(Guid conversationId, int sequence, string callId, int tokens = 10) =>
+        ConversationMessage.Create(
+            conversationId,
+            sequence,
+            MessageRole.Tool,
+            "ok",
+            tokens,
+            DateTimeOffset.UtcNow,
+            $"{{\"role\":\"tool\",\"tool_call_id\":\"{callId}\",\"content\":\"ok\"}}");
+
     [Fact]
     public void Resolve_DropsUnknownSequencesAndDedupes()
     {
@@ -74,6 +94,50 @@ public class SmartRetainResolverTests
 
         Assert.Equal([2, 3], retain.Select(m => m.Sequence).ToArray());
         Assert.Equal(20, retain.Sum(m => m.TokenCount));
+    }
+
+    [Fact]
+    public void Resolve_ExpandsNominatedToolToParentAssistantGroup()
+    {
+        var conversationId = Guid.NewGuid();
+        var candidates = new[]
+        {
+            Msg(conversationId, 1),
+            AssistantWithToolCall(conversationId, 2, "c1"),
+            ToolResult(conversationId, 3, "c1"),
+            Msg(conversationId, 4)
+        };
+
+        var retain = SmartRetainResolver.Resolve(
+            [3],
+            candidates,
+            candidates[^1],
+            maxMessages: 8,
+            maxTokens: 1000);
+
+        Assert.Equal([2, 3, 4], retain.Select(m => m.Sequence).ToArray());
+    }
+
+    [Fact]
+    public void Resolve_ClampsDropsEntireAssistantToolGroupNotOrphanTools()
+    {
+        var conversationId = Guid.NewGuid();
+        var candidates = new[]
+        {
+            AssistantWithToolCall(conversationId, 1, "c1", tokens: 10),
+            ToolResult(conversationId, 2, "c1", tokens: 10),
+            Msg(conversationId, 3, tokens: 10)
+        };
+
+        var retain = SmartRetainResolver.Resolve(
+            [1, 2, 3],
+            candidates,
+            candidates[^1],
+            maxMessages: 1,
+            maxTokens: 1000);
+
+        Assert.Equal([3], retain.Select(m => m.Sequence).ToArray());
+        Assert.DoesNotContain(retain, m => m.Role == MessageRole.Tool);
     }
 
     [Fact]

@@ -134,6 +134,16 @@ public class CompressionOrchestrator : ICompressionOrchestrator
                     string.Join(',', dedupe.DroppedSequences));
 
                 keepRecent = keepRecent.Where(m => !droppedByDedupe.Contains(m.Sequence)).ToList();
+                var (sanitizedKeep, droppedOrphans) = ChatTemplateMessageOrder.RemoveOrphanToolMessages(keepRecent);
+                keepRecent = sanitizedKeep.ToList();
+                if (droppedOrphans > 0)
+                {
+                    _logger.LogWarning(
+                        "duplicate_file_read_dedupe conversationId={ConversationId} dropped {DroppedCount} orphan tool message(s) from Fixed retain tip.",
+                        conversationId,
+                        droppedOrphans);
+                }
+
                 if (keepRecent.Count == 0 && tip is not null)
                 {
                     keepRecent = [tip];
