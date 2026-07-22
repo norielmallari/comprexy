@@ -323,10 +323,15 @@ public class ProxyChatCompletionService
         // After compression: send every still-unfolded message. Retain/window decisions happen
         // only inside CompressionOrchestrator when folding into working memory (except send-time
         // emergency trim below when still over the hard limit after compression).
-        var recentRaw = allMessages
-            .Where(m => !m.IsFolded && m.Sequence < currentMessageEntity.Sequence)
-            .OrderBy(m => m.Sequence)
-            .ToList();
+        var recentRaw = PrepareRecentRawForChatTemplate(
+            conversation.Id,
+            allMessages
+                .Where(m => !m.IsFolded && m.Sequence < currentMessageEntity.Sequence)
+                .OrderBy(m => m.Sequence)
+                .ToList(),
+            currentUserMessage,
+            allMessages,
+            currentMessageEntity.Sequence);
 
         var outgoing = _contextBuilder.Build(conversation.SystemPrompt, workingMemory, recentRaw, currentUserMessage);
         var estimatedTokens = _tokenEstimator.CountPromptTokens(outgoing, request.RawRequest);
@@ -353,10 +358,15 @@ public class ProxyChatCompletionService
 
             workingMemory = await _workingMemoryRepository.GetLatestAsync(conversation.Id, cancellationToken);
             var refreshed = await _messageRepository.GetByConversationIdAsync(conversation.Id, cancellationToken);
-            recentRaw = refreshed
-                .Where(m => !m.IsFolded && m.Sequence < currentMessageEntity.Sequence)
-                .OrderBy(m => m.Sequence)
-                .ToList();
+            recentRaw = PrepareRecentRawForChatTemplate(
+                conversation.Id,
+                refreshed
+                    .Where(m => !m.IsFolded && m.Sequence < currentMessageEntity.Sequence)
+                    .OrderBy(m => m.Sequence)
+                    .ToList(),
+                currentUserMessage,
+                refreshed,
+                currentMessageEntity.Sequence);
 
             outgoing = _contextBuilder.Build(conversation.SystemPrompt, workingMemory, recentRaw, currentUserMessage);
             estimatedTokens = _tokenEstimator.CountPromptTokens(outgoing, request.RawRequest);
@@ -429,6 +439,59 @@ public class ProxyChatCompletionService
     }
 
     /// <summary>
+    /// Repairs unfolded context so tool turns always follow an assistant/tool predecessor:
+    /// restore a folded parent assistant when the live tip is a tool result, then drop any
+    /// remaining orphan tools. Logs when recovery runs so bad retain folds stay visible.
+    /// </summary>
+    private List<ConversationMessage> PrepareRecentRawForChatTemplate(
+        Guid conversationId,
+        List<ConversationMessage> recentRaw,
+        ChatMessage tip,
+        IReadOnlyList<ConversationMessage> allMessages,
+        int tipSequence)
+    {
+        var (withParent, restored) = ChatTemplateMessageOrder.EnsureToolTipHasParent(
+            recentRaw,
+            tip,
+            allMessages,
+            tipSequence);
+        if (restored > 0)
+        {
+            _logger.LogWarning(
+                "Restored {RestoredCount} folded parent message(s) for tool tip in conversation {ConversationId} (chat template order).",
+                restored,
+                conversationId);
+        }
+
+        var (sanitized, dropped) = ChatTemplateMessageOrder.RemoveOrphanToolMessages(withParent);
+        if (dropped > 0)
+        {
+            _logger.LogWarning(
+                "Dropped {DroppedCount} orphan tool message(s) from outgoing context for conversation {ConversationId} (tool must follow assistant or tool).",
+                dropped,
+                conversationId);
+        }
+
+        return sanitized as List<ConversationMessage> ?? sanitized.ToList();
+    }
+
+    private List<ConversationMessage> SanitizeRecentRawForChatTemplate(
+        Guid conversationId,
+        List<ConversationMessage> recentRaw)
+    {
+        var (sanitized, dropped) = ChatTemplateMessageOrder.RemoveOrphanToolMessages(recentRaw);
+        if (dropped > 0)
+        {
+            _logger.LogWarning(
+                "Dropped {DroppedCount} orphan tool message(s) from outgoing context for conversation {ConversationId} (tool must follow assistant or tool).",
+                dropped,
+                conversationId);
+        }
+
+        return sanitized as List<ConversationMessage> ?? sanitized.ToList();
+    }
+
+    /// <summary>
     /// Temporary wire-only retain trim (does not mark messages folded). Used when emergency
     /// compression left the full unfolded tip still over the hard limit.
     /// </summary>
@@ -446,6 +509,7 @@ public class ProxyChatCompletionService
         var trimmed = _recentContextSelector
             .Select(recentRaw, emergency: true)
             .ToList();
+        trimmed = SanitizeRecentRawForChatTemplate(conversation.Id, trimmed);
 
         if (trimmed.Count < recentRaw.Count)
         {
