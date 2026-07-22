@@ -160,11 +160,64 @@ public class CompressionPromptFactory
             }
 
             SimplifyToolCallsForCompression(message);
+            RedactImageDataUrls(message);
             return message.ToJsonString();
         }
         catch (JsonException)
         {
             return rawWireJson;
+        }
+    }
+
+    /// <summary>
+    /// Replace inline <c>data:image/...;base64,...</c> payloads with a short placeholder so the
+    /// compression model does not ingest megabytes of binary as text.
+    /// </summary>
+    private static void RedactImageDataUrls(JsonObject message)
+    {
+        if (!message.TryGetPropertyValue("content", out var contentNode) || contentNode is not JsonArray parts)
+        {
+            return;
+        }
+
+        foreach (var item in parts)
+        {
+            if (item is not JsonObject part)
+            {
+                continue;
+            }
+
+            if (!part.TryGetPropertyValue("type", out var typeNode) ||
+                typeNode is not JsonValue typeValue ||
+                !typeValue.TryGetValue<string>(out var type) ||
+                !string.Equals(type, "image_url", StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            if (!part.TryGetPropertyValue("image_url", out var imageUrlNode))
+            {
+                continue;
+            }
+
+            if (imageUrlNode is JsonValue imageUrlString &&
+                imageUrlString.TryGetValue<string>(out var urlString))
+            {
+                part["image_url"] = VisionImageTokenEstimator.RedactImageUrlForText(urlString);
+                continue;
+            }
+
+            if (imageUrlNode is not JsonObject imageUrlObject)
+            {
+                continue;
+            }
+
+            if (imageUrlObject.TryGetPropertyValue("url", out var urlNode) &&
+                urlNode is JsonValue urlValue &&
+                urlValue.TryGetValue<string>(out var url))
+            {
+                imageUrlObject["url"] = VisionImageTokenEstimator.RedactImageUrlForText(url);
+            }
         }
     }
 

@@ -119,7 +119,7 @@ Repositories and `IUnitOfWork` live behind Application abstractions; implementat
 
 | Concern | Primary types |
 | --- | --- |
-| Token estimates | `ITokenEstimator` (tiktoken), optional `ITokenEstimateCache` |
+| Token estimates | `ITokenEstimator` (tiktoken for text; OpenAI-style vision tiles for `image_url` — never BPE of base64) |
 | Retain windows | `RecentContextSelector` (Fixed atomic groups), `SmartRetainResolver` / `RetainIndexBuilder` |
 | Duplicate file reads | `DuplicateFileReadDeduper` + `FileReadPathExtractor` (soft path, when enabled) |
 | Reasoning strip | `ReasoningContentStripper` before chat/compression upstream calls |

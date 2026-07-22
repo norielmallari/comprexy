@@ -1,5 +1,6 @@
 using System.Text;
 using System.Text.Json;
+using Comprexy.Application.Services;
 
 namespace Comprexy.Application.OpenAi;
 
@@ -64,14 +65,14 @@ public static class OpenAiMessageContent
     {
         if (imageUrl.ValueKind == JsonValueKind.String)
         {
-            return $"[image: {imageUrl.GetString()}]";
+            return VisionImageTokenEstimator.RedactImageUrlForText(imageUrl.GetString());
         }
 
         if (imageUrl.ValueKind == JsonValueKind.Object &&
             imageUrl.TryGetProperty("url", out var url) &&
             url.ValueKind == JsonValueKind.String)
         {
-            return $"[image: {url.GetString()}]";
+            return VisionImageTokenEstimator.RedactImageUrlForText(url.GetString());
         }
 
         return "[image]";

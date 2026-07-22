@@ -1,6 +1,7 @@
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using Comprexy.Application.Services;
 
 namespace Comprexy.Api.Serialization;
 
@@ -86,14 +87,14 @@ public sealed class ChatMessageContentJsonConverter : JsonConverter<string>
     {
         if (imageUrl.ValueKind == JsonValueKind.String)
         {
-            return $"[image: {imageUrl.GetString()}]";
+            return VisionImageTokenEstimator.RedactImageUrlForText(imageUrl.GetString());
         }
 
         if (imageUrl.ValueKind == JsonValueKind.Object &&
             imageUrl.TryGetProperty("url", out var url) &&
             url.ValueKind == JsonValueKind.String)
         {
-            return $"[image: {url.GetString()}]";
+            return VisionImageTokenEstimator.RedactImageUrlForText(url.GetString());
         }
 
         return "[image]";
