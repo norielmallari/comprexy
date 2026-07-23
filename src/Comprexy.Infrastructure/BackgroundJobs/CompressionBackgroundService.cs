@@ -74,7 +74,11 @@ public class CompressionBackgroundService : BackgroundService
                     "Running compression job for conversation {ConversationId} mode={Mode}.",
                     job.ConversationId,
                     job.Mode);
-                await orchestrator.RunAsync(job.ConversationId, job.Mode, linked.Token);
+                await orchestrator.RunAsync(
+                    job.ConversationId,
+                    job.Mode,
+                    linked.Token,
+                    job.PreferredModel);
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
             {

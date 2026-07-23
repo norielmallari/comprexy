@@ -3,8 +3,8 @@ namespace Comprexy.Application.Configuration;
 /// <summary>
 /// Configuration for the model used to perform LLM-based context compression. When any field is
 /// left unset, the corresponding value from <see cref="ProviderOptions"/> is used. When both
-/// <see cref="Model"/> and <see cref="ProviderOptions.Model"/> are null, compression calls have no
-/// model id (set one of them explicitly).
+/// <see cref="Model"/> and <see cref="ProviderOptions.Model"/> are null, compression uses the
+/// client chat model from the turn that enqueued the job (or the emergency request).
 /// </summary>
 public class CompressionOptions
 {

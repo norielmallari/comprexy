@@ -22,9 +22,9 @@ public class ProviderOptions
     public string? ApiKey { get; set; }
 
     /// <summary>
-    /// Upstream model id. When null or whitespace, chat requests keep the client's
-    /// <c>model</c> field. Compression still needs a model via <c>Compression:Model</c>
-    /// or this property.
+    /// Upstream model id. When null or whitespace, chat and compression use the client's
+    /// <c>model</c> from the request that triggered the work. Set <c>Compression:Model</c> to
+    /// force a dedicated compression model.
     /// </summary>
     public string? Model { get; set; }
 

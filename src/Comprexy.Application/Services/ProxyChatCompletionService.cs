@@ -297,7 +297,11 @@ public class ProxyChatCompletionService
                 "Hard limit exceeded before first compression for conversation {ConversationId}; running emergency compression.",
                 conversation.Id);
             await _unitOfWork.SaveChangesAsync(cancellationToken);
-            await _compressionOrchestrator.RunAsync(conversation.Id, CompressionMode.Emergency, cancellationToken);
+            await _compressionOrchestrator.RunAsync(
+                conversation.Id,
+                CompressionMode.Emergency,
+                cancellationToken,
+                _endpointResolver.ResolveUpstream().ResolveOutboundModel(request.RawRequest));
             ranPreCompressionEmergency = true;
             workingMemory = await _workingMemoryRepository.GetLatestAsync(conversation.Id, cancellationToken);
             var refreshedAfterFirstCompression = await _messageRepository.GetByConversationIdAsync(
@@ -354,7 +358,11 @@ public class ProxyChatCompletionService
             && _policy.EmergencyCompression == EmergencyCompressionMode.Sync)
         {
             await _unitOfWork.SaveChangesAsync(cancellationToken);
-            await _compressionOrchestrator.RunAsync(conversation.Id, CompressionMode.Emergency, cancellationToken);
+            await _compressionOrchestrator.RunAsync(
+                conversation.Id,
+                CompressionMode.Emergency,
+                cancellationToken,
+                _endpointResolver.ResolveUpstream().ResolveOutboundModel(request.RawRequest));
 
             workingMemory = await _workingMemoryRepository.GetLatestAsync(conversation.Id, cancellationToken);
             var refreshed = await _messageRepository.GetByConversationIdAsync(conversation.Id, cancellationToken);
@@ -758,7 +766,9 @@ public class ProxyChatCompletionService
             var jobMode = prepared.Decision == ContextBudgetDecision.ForwardWithHighPriorityCompression
                 ? CompressionMode.HighPriorityBackground
                 : CompressionMode.Background;
-            _compressionQueue.Enqueue(new CompressionJob(prepared.Conversation.Id, jobMode));
+            var preferredModel = prepared.Endpoint.ResolveOutboundModel(
+                prepared.UpstreamRequest.OriginalClientRequest);
+            _compressionQueue.Enqueue(new CompressionJob(prepared.Conversation.Id, jobMode, preferredModel));
             _logger.LogInformation(
                 "Post-response compression enqueued for conversation {ConversationId}: mode={Mode} estimatedTokens={EstimatedTokens} softLimit={SoftLimitTokens}.",
                 prepared.Conversation.Id,

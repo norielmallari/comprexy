@@ -25,6 +25,17 @@ public class ProviderEndpointTests
     }
 
     [Fact]
+    public void WithPreferredModel_AppliesOnlyWhenUnset()
+    {
+        var configured = new ProviderEndpoint("http://localhost/v1", null, "provider", 60);
+        var unset = new ProviderEndpoint("http://localhost/v1", null, null, 60);
+
+        Assert.Equal("provider", configured.WithPreferredModel("client").Model);
+        Assert.Equal("client", unset.WithPreferredModel("client").Model);
+        Assert.Null(unset.WithPreferredModel(" ").Model);
+    }
+
+    [Fact]
     public void SharesKvCacheWith_RequiresConcreteMatchingModels()
     {
         var a = new ProviderEndpoint("http://localhost/v1", null, null, 60);

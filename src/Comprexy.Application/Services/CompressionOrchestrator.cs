@@ -68,7 +68,11 @@ public class CompressionOrchestrator : ICompressionOrchestrator
         _logger = logger;
     }
 
-    public async Task<CompressionEvent?> RunAsync(Guid conversationId, CompressionMode mode, CancellationToken cancellationToken)
+    public async Task<CompressionEvent?> RunAsync(
+        Guid conversationId,
+        CompressionMode mode,
+        CancellationToken cancellationToken,
+        string? preferredModel = null)
     {
         var conversation = await _conversationRepository.FindByIdAsync(conversationId, cancellationToken);
         if (conversation is null)
@@ -268,11 +272,18 @@ public class CompressionOrchestrator : ICompressionOrchestrator
         try
         {
             // Prefer the chat endpoint when it shares KV cache with compression (same host+model).
-            var compressionEndpoint = _endpointResolver.ResolveCompression();
-            var chatEndpoint = _endpointResolver.ResolveUpstream();
+            // When Provider/Compression model are unset, apply preferredModel (client chat model).
+            var compressionEndpoint = _endpointResolver.ResolveCompression().WithPreferredModel(preferredModel);
+            var chatEndpoint = _endpointResolver.ResolveUpstream().WithPreferredModel(preferredModel);
             var endpoint = useSmart && chatEndpoint.SharesKvCacheWith(compressionEndpoint)
                 ? chatEndpoint
                 : compressionEndpoint;
+            if (!endpoint.HasConfiguredModel)
+            {
+                throw new InvalidOperationException(
+                    "Compression requires a model. Set Provider:Model or Compression:Model, or send model on the chat request.");
+            }
+
             var callOptions = new ChatCompletionCallOptions(Temperature: _compressionOptions.Temperature);
 
             var result = await _chatCompletionClient.CompleteAsync(
