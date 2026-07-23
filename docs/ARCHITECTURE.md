@@ -60,7 +60,7 @@ flowchart TB
 2. **Gate** — exclusive lease on the conversation key via `ConversationRequestGate` (serializes chat vs soft compression for that key).
 3. **Prepare** — load/create conversation; stage new client messages; load latest working memory + unfolded messages; build outgoing context; evaluate soft/hard budget; optionally run sync emergency compression; apply send-time retain trim when still over hard.
 4. **Upstream** — non-stream `CompleteAsync` or stream with SSE; model comes from `Provider:Model` when set, otherwise the client's request `model`.
-5. **Complete** — persist assistant (and staged user) turns; if above soft limit and tool chains allow, enqueue soft compression.
+5. **Complete** — persist assistant (and staged user) turns; if above soft limit and tool chains allow, enqueue soft compression (job carries the resolved chat model so compression still works when `Provider:Model` / `Compression:Model` are unset).
 
 Persistence timing: new non-assistant messages are staged in prepare and saved in complete after a successful upstream call. Treat the DB as a record of completed turns unless that contract changes (see TODO-002).
 

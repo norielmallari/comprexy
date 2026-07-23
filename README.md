@@ -65,7 +65,7 @@ Configure upstream in `src/Comprexy.Api/appsettings.json`, or copy `appsettings.
 }
 ```
 
-Omit `Model` (or set it `null`) to forward the client's `model` field instead.
+Omit `Model` (or set it `null`) to forward the client's `model` field instead. Soft/emergency compression then reuses that same client model unless `Compression:Model` is set.
 ```bash
 dotnet run --project src/Comprexy.Api
 ```

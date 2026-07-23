@@ -8,5 +8,13 @@ namespace Comprexy.Application.Abstractions;
 /// </summary>
 public interface ICompressionOrchestrator
 {
-    Task<CompressionEvent?> RunAsync(Guid conversationId, CompressionMode mode, CancellationToken cancellationToken);
+    /// <param name="preferredModel">
+    /// Used when neither <c>Compression:Model</c> nor <c>Provider:Model</c> is configured
+    /// (usually the client chat model for this turn).
+    /// </param>
+    Task<CompressionEvent?> RunAsync(
+        Guid conversationId,
+        CompressionMode mode,
+        CancellationToken cancellationToken,
+        string? preferredModel = null);
 }

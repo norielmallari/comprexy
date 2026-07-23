@@ -28,12 +28,17 @@ public class CompressionOrchestratorTests
         CompressionMaxInputTokens = 52_000
     };
 
-    private CompressionOrchestrator CreateOrchestrator()
+    private CompressionOrchestrator CreateOrchestrator(
+        ProviderOptions? providerOptions = null,
+        CompressionOptions? compressionOptions = null)
     {
         _clock.Setup(c => c.UtcNow).Returns(DateTimeOffset.UtcNow);
         _tokenEstimator
             .Setup(t => t.CountTokens(It.IsAny<string>()))
             .Returns((string text) => string.IsNullOrEmpty(text) ? 0 : 10);
+
+        providerOptions ??= new ProviderOptions { BaseUrl = "http://upstream", ApiKey = "k", Model = "m" };
+        compressionOptions ??= new CompressionOptions();
 
         return new CompressionOrchestrator(
             _conversationRepository.Object,
@@ -45,15 +50,15 @@ public class CompressionOrchestratorTests
             _unitOfWork.Object,
             _clock.Object,
             new ProviderEndpointResolver(
-                Options.Create(new ProviderOptions { BaseUrl = "http://upstream", ApiKey = "k", Model = "m" }),
-                Options.Create(new CompressionOptions())),
+                Options.Create(providerOptions),
+                Options.Create(compressionOptions)),
             new CompressionPromptFactory(
                 "You are updating working memory.",
                 "Update working memory. End with ## Retain Sequences."),
             new ContextBuilder(),
             new RecentContextSelector(Options.Create(_policy)),
             Options.Create(_policy),
-            Options.Create(new CompressionOptions()),
+            Options.Create(compressionOptions),
             NullLogger<CompressionOrchestrator>.Instance);
     }
 
@@ -209,6 +214,37 @@ public class CompressionOrchestratorTests
         Assert.False(messages[3].IsFolded);
         Assert.False(messages[4].IsFolded);
         Assert.Equal(50, result!.OriginalTokens); // 5 messages * 10
+    }
+
+    [Fact]
+    public async Task RunAsync_WhenProviderModelNull_UsesPreferredModel()
+    {
+        var conversationId = Guid.NewGuid();
+        var conversation = Conversation.Create("key", DateTimeOffset.UtcNow);
+        var messages = Enumerable.Range(0, 5)
+            .Select(sequence => Message(conversationId, sequence))
+            .ToList();
+
+        _conversationRepository.Setup(r => r.FindByIdAsync(conversationId, It.IsAny<CancellationToken>())).ReturnsAsync(conversation);
+        SetupMessages(conversationId, messages);
+        ProviderEndpoint? usedEndpoint = null;
+        _chatCompletionClient
+            .Setup(c => c.CompleteAsync(It.IsAny<ProviderEndpoint>(), It.IsAny<UpstreamRequest>(), It.IsAny<CancellationToken>()))
+            .Callback<ProviderEndpoint, UpstreamRequest, CancellationToken>((endpoint, _, _) => usedEndpoint = endpoint)
+            .ReturnsAsync(new UpstreamChatResult("# Working Memory\n## Current Goal\nDone", "stop", 50, 20));
+
+        var orchestrator = CreateOrchestrator(
+            new ProviderOptions { BaseUrl = "http://upstream", ApiKey = "k", Model = null });
+
+        var result = await orchestrator.RunAsync(
+            conversationId,
+            CompressionMode.Background,
+            CancellationToken.None,
+            preferredModel: "client-model");
+
+        Assert.NotNull(result);
+        Assert.NotNull(usedEndpoint);
+        Assert.Equal("client-model", usedEndpoint!.Model);
     }
 
     [Fact]

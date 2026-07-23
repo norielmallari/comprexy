@@ -114,7 +114,7 @@ public class ProxyChatCompletionServiceTests
         _messageRepository.Verify(r => r.Add(It.IsAny<ConversationMessage>()), Times.Exactly(2));
         _compressionQueue.Verify(q => q.Enqueue(It.IsAny<CompressionJob>()), Times.Never);
         _compressionOrchestrator.Verify(
-            o => o.RunAsync(It.IsAny<Guid>(), It.IsAny<CompressionMode>(), It.IsAny<CancellationToken>()), Times.Never);
+            o => o.RunAsync(It.IsAny<Guid>(), It.IsAny<CompressionMode>(), It.IsAny<CancellationToken>(), It.IsAny<string?>()), Times.Never);
     }
 
     [Fact]
@@ -155,9 +155,11 @@ public class ProxyChatCompletionServiceTests
         await service.HandleAsync(BuildRequest(), CancellationToken.None);
 
         _compressionQueue.Verify(
-            q => q.Enqueue(It.Is<CompressionJob>(j => j.Mode == CompressionMode.HighPriorityBackground)), Times.Once);
+            q => q.Enqueue(It.Is<CompressionJob>(j =>
+                j.Mode == CompressionMode.HighPriorityBackground &&
+                j.PreferredModel == "target-model")), Times.Once);
         _compressionOrchestrator.Verify(
-            o => o.RunAsync(It.IsAny<Guid>(), It.IsAny<CompressionMode>(), It.IsAny<CancellationToken>()), Times.Never);
+            o => o.RunAsync(It.IsAny<Guid>(), It.IsAny<CompressionMode>(), It.IsAny<CancellationToken>(), It.IsAny<string?>()), Times.Never);
     }
 
     [Fact]
@@ -208,7 +210,7 @@ public class ProxyChatCompletionServiceTests
             () => service.HandleAsync(BuildRequest(), CancellationToken.None));
 
         _compressionOrchestrator.Verify(
-            o => o.RunAsync(It.IsAny<Guid>(), CompressionMode.Emergency, It.IsAny<CancellationToken>()), Times.Never);
+            o => o.RunAsync(It.IsAny<Guid>(), CompressionMode.Emergency, It.IsAny<CancellationToken>(), It.IsAny<string?>()), Times.Never);
         _chatCompletionClient.Verify(
             c => c.CompleteAsync(It.IsAny<ProviderEndpoint>(), It.IsAny<UpstreamRequest>(), It.IsAny<CancellationToken>()),
             Times.Never);
@@ -235,7 +237,7 @@ public class ProxyChatCompletionServiceTests
             () => service.HandleAsync(BuildRequest(), CancellationToken.None));
 
         _compressionOrchestrator.Verify(
-            o => o.RunAsync(It.IsAny<Guid>(), CompressionMode.Emergency, It.IsAny<CancellationToken>()), Times.Once);
+            o => o.RunAsync(It.IsAny<Guid>(), CompressionMode.Emergency, It.IsAny<CancellationToken>(), It.IsAny<string?>()), Times.Once);
         _chatCompletionClient.Verify(
             c => c.CompleteAsync(It.IsAny<ProviderEndpoint>(), It.IsAny<UpstreamRequest>(), It.IsAny<CancellationToken>()),
             Times.Never);
@@ -384,7 +386,7 @@ public class ProxyChatCompletionServiceTests
 
         _workingMemoryRepository.Verify(r => r.GetLatestAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()), Times.Never);
         _compressionOrchestrator.Verify(
-            o => o.RunAsync(It.IsAny<Guid>(), It.IsAny<CompressionMode>(), It.IsAny<CancellationToken>()), Times.Never);
+            o => o.RunAsync(It.IsAny<Guid>(), It.IsAny<CompressionMode>(), It.IsAny<CancellationToken>(), It.IsAny<string?>()), Times.Never);
         _compressionQueue.Verify(q => q.Enqueue(It.IsAny<CompressionJob>()), Times.Never);
     }
 
@@ -497,7 +499,7 @@ public class ProxyChatCompletionServiceTests
         _workingMemoryRepository.Setup(r => r.GetLatestAsync(conversation.Id, It.IsAny<CancellationToken>()))
             .ReturnsAsync(workingMemory);
         _compressionOrchestrator
-            .Setup(o => o.RunAsync(conversation.Id, CompressionMode.Emergency, It.IsAny<CancellationToken>()))
+            .Setup(o => o.RunAsync(conversation.Id, CompressionMode.Emergency, It.IsAny<CancellationToken>(), It.IsAny<string?>()))
             .ReturnsAsync((CompressionEvent?)null);
 
         _chatCompletionClient
@@ -518,7 +520,7 @@ public class ProxyChatCompletionServiceTests
         Assert.Contains(forwarded.Messages, m => m.Content == "msg-9");
         Assert.Equal("next tip", forwarded.Messages[^1].Content);
         _compressionOrchestrator.Verify(
-            o => o.RunAsync(conversation.Id, CompressionMode.Emergency, It.IsAny<CancellationToken>()),
+            o => o.RunAsync(conversation.Id, CompressionMode.Emergency, It.IsAny<CancellationToken>(), It.IsAny<string?>()),
             Times.Once);
         _chatCompletionClient.Verify(
             c => c.CompleteAsync(It.IsAny<ProviderEndpoint>(), It.IsAny<UpstreamRequest>(), It.IsAny<CancellationToken>()),
@@ -560,7 +562,7 @@ public class ProxyChatCompletionServiceTests
         _workingMemoryRepository.Setup(r => r.GetLatestAsync(conversation.Id, It.IsAny<CancellationToken>()))
             .ReturnsAsync(workingMemory);
         _compressionOrchestrator
-            .Setup(o => o.RunAsync(conversation.Id, CompressionMode.Emergency, It.IsAny<CancellationToken>()))
+            .Setup(o => o.RunAsync(conversation.Id, CompressionMode.Emergency, It.IsAny<CancellationToken>(), It.IsAny<string?>()))
             .ReturnsAsync((CompressionEvent?)null);
 
         var service = CreateService();
@@ -631,7 +633,7 @@ public class ProxyChatCompletionServiceTests
 
         Assert.NotNull(forwarded);
         _compressionOrchestrator.Verify(
-            o => o.RunAsync(It.IsAny<Guid>(), CompressionMode.Emergency, It.IsAny<CancellationToken>()),
+            o => o.RunAsync(It.IsAny<Guid>(), CompressionMode.Emergency, It.IsAny<CancellationToken>(), It.IsAny<string?>()),
             Times.Never);
         Assert.DoesNotContain(forwarded!.Messages, m => m.Content == "msg-0");
         Assert.Equal("next tip", forwarded.Messages[^1].Content);

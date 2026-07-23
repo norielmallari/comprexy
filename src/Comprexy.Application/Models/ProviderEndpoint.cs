@@ -22,6 +22,19 @@ public sealed record ProviderEndpoint(string BaseUrl, string? ApiKey, string? Mo
     public bool HasConfiguredModel => !string.IsNullOrWhiteSpace(Model);
 
     /// <summary>
+    /// When this endpoint has no configured model, returns a copy with <paramref name="preferredModel"/>.
+    /// </summary>
+    public ProviderEndpoint WithPreferredModel(string? preferredModel)
+    {
+        if (HasConfiguredModel || string.IsNullOrWhiteSpace(preferredModel))
+        {
+            return this;
+        }
+
+        return this with { Model = preferredModel };
+    }
+
+    /// <summary>
     /// Configured model when set; otherwise the client's <c>model</c> from
     /// <paramref name="originalClientRequest"/>; otherwise empty.
     /// </summary>
