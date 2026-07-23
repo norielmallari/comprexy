@@ -9,7 +9,7 @@ public class ConversationMessageConfiguration : IEntityTypeConfiguration<Convers
     public void Configure(EntityTypeBuilder<ConversationMessage> builder)
     {
         builder.ToTable("ConversationMessages");
-        builder.HasKey(m => m.Id);
+        EntityBaseConfiguration.ConfigureKeys(builder);
 
         builder.Property(m => m.Role).HasConversion<string>().IsRequired();
         builder.Property(m => m.Content).IsRequired();

@@ -9,7 +9,7 @@ public class ConversationConfiguration : IEntityTypeConfiguration<Conversation>
     public void Configure(EntityTypeBuilder<Conversation> builder)
     {
         builder.ToTable("Conversations");
-        builder.HasKey(c => c.Id);
+        EntityBaseConfiguration.ConfigureKeys(builder);
 
         builder.Property(c => c.ConversationKey).IsRequired();
         builder.HasIndex(c => c.ConversationKey).IsUnique();

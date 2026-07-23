@@ -19,6 +19,7 @@ public class ComprexyDbContext : DbContext
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
+        modelBuilder.Ignore<EntityBase>();
         modelBuilder.ApplyConfigurationsFromAssembly(typeof(ComprexyDbContext).Assembly);
     }
 }

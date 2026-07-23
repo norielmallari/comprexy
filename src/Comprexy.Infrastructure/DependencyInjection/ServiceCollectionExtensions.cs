@@ -20,11 +20,14 @@ public static class ServiceCollectionExtensions
         var connectionString = configuration.GetConnectionString("Comprexy")
             ?? "Data Source=comprexy.db;Cache=Shared";
         services.AddSingleton<SqliteWalConnectionInterceptor>();
+        services.AddSingleton<ClusterIdSaveChangesInterceptor>();
         services.AddDbContext<ComprexyDbContext>((sp, options) =>
         {
             options.UseSqlite(connectionString, sqlite =>
                 sqlite.UseQuerySplittingBehavior(QuerySplittingBehavior.SplitQuery));
-            options.AddInterceptors(sp.GetRequiredService<SqliteWalConnectionInterceptor>());
+            options.AddInterceptors(
+                sp.GetRequiredService<SqliteWalConnectionInterceptor>(),
+                sp.GetRequiredService<ClusterIdSaveChangesInterceptor>());
         });
 
         services.AddScoped<IConversationRepository, EfConversationRepository>();

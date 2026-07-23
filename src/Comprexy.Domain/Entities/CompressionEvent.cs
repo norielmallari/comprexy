@@ -5,10 +5,8 @@ namespace Comprexy.Domain.Entities;
 /// <summary>
 /// Diagnostic record of a single compression attempt, used for observability and troubleshooting.
 /// </summary>
-public class CompressionEvent
+public class CompressionEvent : EntityBase
 {
-    public Guid Id { get; private set; }
-
     public Guid ConversationId { get; private set; }
 
     public CompressionMode Mode { get; private set; }

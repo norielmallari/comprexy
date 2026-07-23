@@ -6,10 +6,8 @@ namespace Comprexy.Domain.Entities;
 /// A single raw message (user, assistant, or tool) belonging to a conversation. Messages remain
 /// until folded into a <see cref="WorkingMemory"/> version by a compression job.
 /// </summary>
-public class ConversationMessage
+public class ConversationMessage : EntityBase
 {
-    public Guid Id { get; private set; }
-
     public Guid ConversationId { get; private set; }
 
     /// <summary>Ordinal position of this message within the conversation, starting at 0.</summary>

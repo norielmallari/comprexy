@@ -1,13 +1,13 @@
+using Comprexy.Domain.Entities;
+
 namespace Comprexy.Domain.Entities;
 
 /// <summary>
 /// A single long-running logical conversation tracked by Comprexy, identified either by a
 /// client-supplied key or by a fingerprint derived from the earliest messages of the exchange.
 /// </summary>
-public class Conversation
+public class Conversation : EntityBase
 {
-    public Guid Id { get; private set; }
-
     /// <summary>Stable identity for this conversation (client header value or content fingerprint).</summary>
     public string ConversationKey { get; private set; } = string.Empty;
 
