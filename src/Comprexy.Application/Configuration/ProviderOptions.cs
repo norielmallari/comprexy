@@ -21,7 +21,12 @@ public class ProviderOptions
     /// </summary>
     public string? ApiKey { get; set; }
 
-    public string Model { get; set; } = "local-model";
+    /// <summary>
+    /// Upstream model id. When null or whitespace, chat requests keep the client's
+    /// <c>model</c> field. Compression still needs a model via <c>Compression:Model</c>
+    /// or this property.
+    /// </summary>
+    public string? Model { get; set; }
 
     /// <summary>Request timeout, in seconds, for upstream chat completion calls.</summary>
     public int TimeoutSeconds { get; set; } = 120;

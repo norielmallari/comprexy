@@ -774,7 +774,7 @@ public class ProxyChatCompletionService
             upstreamResult.FinishReason,
             promptTokens,
             assistantTokenCount,
-            prepared.Endpoint.Model,
+            prepared.Endpoint.ResolveOutboundModel(prepared.UpstreamRequest.OriginalClientRequest),
             prepared.EstimatedTokens,
             prepared.Decision,
             prepared.SkipCompression,

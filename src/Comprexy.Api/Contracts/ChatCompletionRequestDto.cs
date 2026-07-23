@@ -4,9 +4,9 @@ using Comprexy.Api.Serialization;
 namespace Comprexy.Api.Contracts;
 
 /// <summary>
-/// OpenAI-compatible <c>/v1/chat/completions</c> request body. The <see cref="Model"/> field is
-/// accepted for client compatibility but Comprexy always forwards to its configured upstream
-/// provider and model.
+/// OpenAI-compatible <c>/v1/chat/completions</c> request body. When <c>Provider:Model</c> is
+/// set, Comprexy replaces <see cref="Model"/> with that value; when it is null, the client's
+/// model is forwarded upstream.
 /// </summary>
 public sealed class ChatCompletionRequestDto
 {
