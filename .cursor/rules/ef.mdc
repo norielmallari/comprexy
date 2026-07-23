@@ -1,12 +1,60 @@
 ---
-description: EF Core query and tracking conventions (AsNoTracking, split queries, N+1)
-globs: **/Persistence/**/*.cs,**/*Repository*.cs,**/*DbContext*.cs
+description: EF Core query, tracking, keys, and index conventions
+globs: **/Persistence/**/*.cs,**/*Repository*.cs,**/*DbContext*.cs,**/Entities/**/*.cs,**/*Configuration*.cs
 alwaysApply: false
 ---
 
 # EF Core
 
 Follow current EF Core performance practice: prefer lean queries, explicit loading shape, and tracking only when `SaveChanges` must see mutations.
+
+## Keys and clustering (SQL Server–ready)
+
+Persisted entities inherit a shared base (`EntityBase` once introduced):
+
+| Column | Role |
+| --- | --- |
+| `Id` (`Guid`) | **Primary key** — nonclustered on SQL Server. App identity and FKs. |
+| `ClusterId` (`long`) | **Clustered index only** — sequential append key. **Not** the PK. DB-generated; never used as domain identity. |
+
+```csharp
+// ✅ GUID PK + long clustered surrogate
+builder.HasKey(e => e.Id);
+// SQL Server: PK nonclustered; ClusterId unique clustered + identity/value-generated
+
+// ❌ Do not make ClusterId / long the primary key
+// ❌ Do not cluster on random Guid Id on SQL Server
+```
+
+- Factories assign `Id = Guid.NewGuid()`; leave `ClusterId` to the database.
+- FKs reference `Guid Id` (e.g. `ConversationId`), never `ClusterId`.
+- Use a shared EF configuration for `EntityBase`; table configs add only table-specific indexes and columns.
+- Prefer a plain abstract base class (shared columns), **not** EF TPH, for Conversation / Message / WorkingMemory / CompressionEvent.
+
+## Indexes — required with schema changes
+
+When adding a table, column filter, join, or ordered hot read, define supporting indexes in the **same** change. Escalate if a production-bound heavy read would lack an index.
+
+Minimum patterns already in use (preserve / mirror on new tables):
+
+| Access path | Index |
+| --- | --- |
+| Message window by conversation | UNIQUE `(ConversationId, Sequence)` |
+| Unfolded messages | `(ConversationId, FoldedIntoWorkingMemoryVersion)` |
+| Working memory versions | UNIQUE `(ConversationId, Version)` |
+| Conversation lookup by client key | UNIQUE `ConversationKey` |
+| Row by id | PK on `Id` (GUID) |
+| SQL Server append locality | UNIQUE clustered on `ClusterId` |
+
+```csharp
+// ✅ Natural business key as unique NCI (not a substitute for Guid PK)
+builder.HasIndex(m => new { m.ConversationId, m.Sequence }).IsUnique();
+
+// ❌ Filter/order in hot path with no matching index
+```
+
+- Unique business keys (`ConversationKey`, `(ConversationId, Sequence)`, …) are **additional** unique indexes — they do not replace the GUID PK.
+- Prefer covering considerations only when profiling shows key-lookup cost on wide columns (`Content`, `RawWireJson`).
 
 ## AsNoTracking — pure reads only
 
@@ -67,5 +115,4 @@ await db.Blogs.AsNoTracking()
 - Prefer async EF APIs (`ToListAsync`, `FirstOrDefaultAsync`, …).
 - Bound list queries (`.Take` / paging); do not load unbounded graphs on hot paths.
 - Filter and project in LINQ so SQL does the work; avoid `ToList` then filter in memory.
-- Ensure indexes exist for filter/join/order columns used by hot queries; escalate if a new heavy read lacks an index.
 - Migrations: create only via `dotnet ef migrations` — never hand-author migration files.

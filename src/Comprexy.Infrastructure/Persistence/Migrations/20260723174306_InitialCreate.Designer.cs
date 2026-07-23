@@ -11,7 +11,7 @@ using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 namespace Comprexy.Infrastructure.Persistence.Migrations
 {
     [DbContext(typeof(ComprexyDbContext))]
-    [Migration("20260719161635_InitialCreate")]
+    [Migration("20260723174306_InitialCreate")]
     partial class InitialCreate
     {
         /// <inheritdoc />
@@ -23,8 +23,10 @@ namespace Comprexy.Infrastructure.Persistence.Migrations
             modelBuilder.Entity("Comprexy.Domain.Entities.CompressionEvent", b =>
                 {
                     b.Property<Guid>("Id")
-                        .ValueGeneratedOnAdd()
                         .HasColumnType("TEXT");
+
+                    b.Property<long>("ClusterId")
+                        .HasColumnType("INTEGER");
 
                     b.Property<DateTimeOffset?>("CompletedAt")
                         .HasColumnType("TEXT");
@@ -66,7 +68,10 @@ namespace Comprexy.Infrastructure.Persistence.Migrations
 
                     b.HasKey("Id");
 
-                    b.HasIndex("ConversationId");
+                    b.HasIndex("ClusterId")
+                        .IsUnique();
+
+                    b.HasIndex("ConversationId", "CreatedAt");
 
                     b.ToTable("CompressionEvents", (string)null);
                 });
@@ -74,8 +79,10 @@ namespace Comprexy.Infrastructure.Persistence.Migrations
             modelBuilder.Entity("Comprexy.Domain.Entities.Conversation", b =>
                 {
                     b.Property<Guid>("Id")
-                        .ValueGeneratedOnAdd()
                         .HasColumnType("TEXT");
+
+                    b.Property<long>("ClusterId")
+                        .HasColumnType("INTEGER");
 
                     b.Property<string>("ConversationKey")
                         .IsRequired()
@@ -95,6 +102,9 @@ namespace Comprexy.Infrastructure.Persistence.Migrations
 
                     b.HasKey("Id");
 
+                    b.HasIndex("ClusterId")
+                        .IsUnique();
+
                     b.HasIndex("ConversationKey")
                         .IsUnique();
 
@@ -104,8 +114,10 @@ namespace Comprexy.Infrastructure.Persistence.Migrations
             modelBuilder.Entity("Comprexy.Domain.Entities.ConversationMessage", b =>
                 {
                     b.Property<Guid>("Id")
-                        .ValueGeneratedOnAdd()
                         .HasColumnType("TEXT");
+
+                    b.Property<long>("ClusterId")
+                        .HasColumnType("INTEGER");
 
                     b.Property<string>("Content")
                         .IsRequired()
@@ -135,6 +147,9 @@ namespace Comprexy.Infrastructure.Persistence.Migrations
 
                     b.HasKey("Id");
 
+                    b.HasIndex("ClusterId")
+                        .IsUnique();
+
                     b.HasIndex("ConversationId", "FoldedIntoWorkingMemoryVersion");
 
                     b.HasIndex("ConversationId", "Sequence")
@@ -146,8 +161,10 @@ namespace Comprexy.Infrastructure.Persistence.Migrations
             modelBuilder.Entity("Comprexy.Domain.Entities.WorkingMemory", b =>
                 {
                     b.Property<Guid>("Id")
-                        .ValueGeneratedOnAdd()
                         .HasColumnType("TEXT");
+
+                    b.Property<long>("ClusterId")
+                        .HasColumnType("INTEGER");
 
                     b.Property<string>("Content")
                         .IsRequired()
@@ -166,6 +183,9 @@ namespace Comprexy.Infrastructure.Persistence.Migrations
                         .HasColumnType("INTEGER");
 
                     b.HasKey("Id");
+
+                    b.HasIndex("ClusterId")
+                        .IsUnique();
 
                     b.HasIndex("ConversationId", "Version")
                         .IsUnique();

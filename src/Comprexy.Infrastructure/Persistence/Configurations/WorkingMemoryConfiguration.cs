@@ -9,7 +9,7 @@ public class WorkingMemoryConfiguration : IEntityTypeConfiguration<WorkingMemory
     public void Configure(EntityTypeBuilder<WorkingMemory> builder)
     {
         builder.ToTable("WorkingMemories");
-        builder.HasKey(w => w.Id);
+        EntityBaseConfiguration.ConfigureKeys(builder);
 
         builder.Property(w => w.Content).IsRequired();
         builder.Property(w => w.TokenCount).IsRequired();

@@ -27,7 +27,8 @@ namespace Comprexy.Infrastructure.Persistence.Migrations
                     DurationMs = table.Column<long>(type: "INTEGER", nullable: false),
                     ErrorMessage = table.Column<string>(type: "TEXT", nullable: true),
                     CreatedAt = table.Column<DateTimeOffset>(type: "TEXT", nullable: false),
-                    CompletedAt = table.Column<DateTimeOffset>(type: "TEXT", nullable: true)
+                    CompletedAt = table.Column<DateTimeOffset>(type: "TEXT", nullable: true),
+                    ClusterId = table.Column<long>(type: "INTEGER", nullable: false)
                 },
                 constraints: table =>
                 {
@@ -46,7 +47,8 @@ namespace Comprexy.Infrastructure.Persistence.Migrations
                     RawWireJson = table.Column<string>(type: "TEXT", nullable: true),
                     TokenCount = table.Column<int>(type: "INTEGER", nullable: false),
                     CreatedAt = table.Column<DateTimeOffset>(type: "TEXT", nullable: false),
-                    FoldedIntoWorkingMemoryVersion = table.Column<int>(type: "INTEGER", nullable: true)
+                    FoldedIntoWorkingMemoryVersion = table.Column<int>(type: "INTEGER", nullable: true),
+                    ClusterId = table.Column<long>(type: "INTEGER", nullable: false)
                 },
                 constraints: table =>
                 {
@@ -62,7 +64,8 @@ namespace Comprexy.Infrastructure.Persistence.Migrations
                     SystemPrompt = table.Column<string>(type: "TEXT", nullable: true),
                     SyncedMessageCount = table.Column<int>(type: "INTEGER", nullable: false),
                     CreatedAt = table.Column<DateTimeOffset>(type: "TEXT", nullable: false),
-                    UpdatedAt = table.Column<DateTimeOffset>(type: "TEXT", nullable: false)
+                    UpdatedAt = table.Column<DateTimeOffset>(type: "TEXT", nullable: false),
+                    ClusterId = table.Column<long>(type: "INTEGER", nullable: false)
                 },
                 constraints: table =>
                 {
@@ -78,7 +81,8 @@ namespace Comprexy.Infrastructure.Persistence.Migrations
                     Version = table.Column<int>(type: "INTEGER", nullable: false),
                     Content = table.Column<string>(type: "TEXT", nullable: false),
                     TokenCount = table.Column<int>(type: "INTEGER", nullable: false),
-                    CreatedAt = table.Column<DateTimeOffset>(type: "TEXT", nullable: false)
+                    CreatedAt = table.Column<DateTimeOffset>(type: "TEXT", nullable: false),
+                    ClusterId = table.Column<long>(type: "INTEGER", nullable: false)
                 },
                 constraints: table =>
                 {
@@ -86,9 +90,21 @@ namespace Comprexy.Infrastructure.Persistence.Migrations
                 });
 
             migrationBuilder.CreateIndex(
-                name: "IX_CompressionEvents_ConversationId",
+                name: "IX_CompressionEvents_ClusterId",
                 table: "CompressionEvents",
-                column: "ConversationId");
+                column: "ClusterId",
+                unique: true);
+
+            migrationBuilder.CreateIndex(
+                name: "IX_CompressionEvents_ConversationId_CreatedAt",
+                table: "CompressionEvents",
+                columns: new[] { "ConversationId", "CreatedAt" });
+
+            migrationBuilder.CreateIndex(
+                name: "IX_ConversationMessages_ClusterId",
+                table: "ConversationMessages",
+                column: "ClusterId",
+                unique: true);
 
             migrationBuilder.CreateIndex(
                 name: "IX_ConversationMessages_ConversationId_FoldedIntoWorkingMemoryVersion",
@@ -102,9 +118,21 @@ namespace Comprexy.Infrastructure.Persistence.Migrations
                 unique: true);
 
             migrationBuilder.CreateIndex(
+                name: "IX_Conversations_ClusterId",
+                table: "Conversations",
+                column: "ClusterId",
+                unique: true);
+
+            migrationBuilder.CreateIndex(
                 name: "IX_Conversations_ConversationKey",
                 table: "Conversations",
                 column: "ConversationKey",
+                unique: true);
+
+            migrationBuilder.CreateIndex(
+                name: "IX_WorkingMemories_ClusterId",
+                table: "WorkingMemories",
+                column: "ClusterId",
                 unique: true);
 
             migrationBuilder.CreateIndex(

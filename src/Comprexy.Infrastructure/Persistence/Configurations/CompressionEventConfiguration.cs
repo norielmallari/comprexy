@@ -9,13 +9,13 @@ public class CompressionEventConfiguration : IEntityTypeConfiguration<Compressio
     public void Configure(EntityTypeBuilder<CompressionEvent> builder)
     {
         builder.ToTable("CompressionEvents");
-        builder.HasKey(e => e.Id);
+        EntityBaseConfiguration.ConfigureKeys(builder);
 
         builder.Property(e => e.Mode).HasConversion<string>().IsRequired();
         builder.Property(e => e.Status).HasConversion<string>().IsRequired();
         builder.Property(e => e.CreatedAt).IsRequired();
 
-        builder.HasIndex(e => e.ConversationId);
+        builder.HasIndex(e => new { e.ConversationId, e.CreatedAt });
         builder.Ignore(e => e.CompressionRatio);
     }
 }

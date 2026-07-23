@@ -25,7 +25,7 @@ tests/
 | --- | --- |
 | **Api** | Parse OpenAI-shaped JSON, map errors/status codes, stream SSE, optional API-key gate, composition root |
 | **Application** | Conversation identity, prepare/complete chat, budget decisions, context rebuild, compression orchestration |
-| **Domain** | `Conversation`, `ConversationMessage`, `WorkingMemory`, `CompressionEvent` and related enums |
+| **Domain** | `EntityBase`, `Conversation`, `ConversationMessage`, `WorkingMemory`, `CompressionEvent` and related enums |
 | **Infrastructure** | Persistence, OpenAI-compatible HTTP client, tiktoken estimates, in-process compression queue + hosted worker |
 
 Dependency rule: Api → Application → Domain; Infrastructure implements Application ports. Prefer constructor injection; register app services in `AddComprexyApplication`, adapters in `AddComprexyInfrastructure`.
@@ -106,12 +106,18 @@ Jobs flow through `ChannelCompressionQueue` → `CompressionBackgroundService`. 
 
 SQLite via EF Core (`ComprexyDbContext`). Default connection creates `comprexy.db` beside the API; WAL + busy timeout apply on connect. Migrations run at startup; `--clear-db` rebuilds from migrations.
 
+Persisted rows inherit `EntityBase`: GUID `Id` is the primary key and app/FK identity (also returned on `X-Comprexy-Conversation-Id` for conversations). `ClusterId` (`long`) is a sequential surrogate for SQL Server clustering only — not used as domain identity. On SQLite, `ClusterIdSaveChangesInterceptor` assigns values; a future SQL Server provider should use IDENTITY + clustered index on `ClusterId` with a nonclustered GUID PK.
+
+Message conversational order is `ConversationMessage.Sequence` (unique per conversation), not `CreatedAt` or `ClusterId`. Repositories load messages with `OrderBy(Sequence)`.
+
 | Entity | Role |
 | --- | --- |
 | `Conversation` | Stable key, captured system prompt, `SyncedMessageCount` cursor |
 | `ConversationMessage` | Ordered raw turns; optional wire JSON; fold marker |
 | `WorkingMemory` | Immutable versioned markdown snapshot + token count |
 | `CompressionEvent` | Attempt diagnostics (mode, status, tokens, duration, error) |
+
+Natural indexes (in addition to the GUID PK and unique `ClusterId`): `ConversationKey`; `(ConversationId, Sequence)`; `(ConversationId, FoldedIntoWorkingMemoryVersion)`; `(ConversationId, Version)` on working memory; `(ConversationId, CreatedAt)` on compression events.
 
 Repositories and `IUnitOfWork` live behind Application abstractions; implementations under `Infrastructure/Persistence`.
 
@@ -158,7 +164,7 @@ Loaded as: `appsettings.json` → environment-specific → host defaults → opt
 | Fold / WM versions / Soft FullRaw vs merge | `CompressionOrchestrator`, `CompressionPromptFactory` |
 | Outgoing message assembly | `ContextBuilder`, `RecentContextSelector` |
 | Identity / fingerprint | `ConversationIdentityResolver` |
-| Schema / queries | Domain entities + `Infrastructure/Persistence` (migrations via `dotnet ef` only) |
+| Schema / keys / indexes | `EntityBase`, EF configs under `Infrastructure/Persistence` (migrations via `dotnet ef` only) |
 | Upstream HTTP / SSE parse | `OpenAiCompatibleChatCompletionClient`, streaming helpers |
 
 When behavior or config defaults change, update the [README](../README.md) (and this document if the structural map drifts).

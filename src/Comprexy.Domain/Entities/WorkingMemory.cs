@@ -5,10 +5,8 @@ namespace Comprexy.Domain.Entities;
 /// New compressions append a new version rather than mutating an existing one, so a failed
 /// compression can never corrupt the last known-good working memory.
 /// </summary>
-public class WorkingMemory
+public class WorkingMemory : EntityBase
 {
-    public Guid Id { get; private set; }
-
     public Guid ConversationId { get; private set; }
 
     /// <summary>Monotonically increasing version number, starting at 1.</summary>
