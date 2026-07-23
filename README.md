@@ -65,6 +65,7 @@ Configure upstream in `src/Comprexy.Api/appsettings.json`, or copy `appsettings.
 }
 ```
 
+Omit `Model` (or set it `null`) to forward the client's `model` field instead.
 ```bash
 dotnet run --project src/Comprexy.Api
 ```
@@ -90,7 +91,7 @@ curl http://localhost:8129/v1/chat/completions \
   }'
 ```
 
-On the normal path, Comprexy replaces `model` with `Provider:Model`. In `Proxy:PassThrough` mode, the client body (including `model`) is forwarded as sent.
+On the normal path, when `Provider:Model` is set Comprexy replaces `model` with that value; when it is null/omitted, the client's `model` is forwarded. In `Proxy:PassThrough` mode, the client body (including `model`) is forwarded as sent unless `Provider:Model` overrides it.
 
 ## How it works
 
@@ -121,7 +122,7 @@ Settings load in order: `appsettings.json` → `appsettings.{Environment}.json` 
 
 | Section | Role |
 | --- | --- |
-| `Provider` | Upstream OpenAI-compatible chat endpoint (`BaseUrl`, `ApiKey`, `Model`, `TimeoutSeconds`) |
+| `Provider` | Upstream OpenAI-compatible chat endpoint (`BaseUrl`, `ApiKey`, `Model` — optional; null keeps the client model —, `TimeoutSeconds`) |
 | `Compression` | Optional compression endpoint; falls back to `Provider`. `TimeoutSeconds` often longer than chat (default 600). `EnableThinking` (default false) sets `chat_template_kwargs.enable_thinking` on compression calls. `InstructionFile` is the Fixed compression system prompt (`Prompts/compression-fixed.md`); `SmartInstructionFile` is the Smart trailing user instruction (`Prompts/compression-smart.md`, live prefix + retain index) |
 | `ContextPolicy` | Soft/hard token limits, `CompressionMaxInputTokens`, `EmergencyCompression` (`Off` default / `Sync`), `CancelBackgroundCompressionOnChat` (default false — chat waits; `true` cancels soft compression on chat), `RetainSelection` (`Fixed` default / `Smart`), Fixed retain counts (`CompressionRetainMessageCount` / `EmergencyRecentMessageCount` default `1` = tip only; `MaxRecentRawTokens`), Smart caps (`SmartRetainMaxMessages`, `SmartRetainMaxTokens`), `DedupeDuplicateFileReads` (default true), tokenizer encoding |
 | `Auth` | Optional `RequiredApiKey` — Bearer or `X-Api-Key` required on `/v1/*` only; `/` and `/health` stay open |

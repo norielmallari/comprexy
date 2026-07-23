@@ -323,8 +323,12 @@ public class OpenAiCompatibleChatCompletionClient : IChatCompletionClient
             }
         }
 
-        root["model"] = endpoint.Model;
         root["stream"] = request.Stream;
+
+        if (endpoint.HasConfiguredModel)
+        {
+            root["model"] = endpoint.Model;
+        }
 
         if (request.Purpose == UpstreamRequestPurpose.Compression)
         {

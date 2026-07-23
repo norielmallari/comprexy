@@ -10,7 +10,8 @@ public enum UpstreamRequestPurpose
 
 /// <summary>
 /// Upstream chat-completions call. When <see cref="OriginalClientRequest"/> is present, its
-/// fields are preserved and only model/stream/(optionally) messages are overridden.
+/// fields are preserved; stream/(optionally) messages are always applied, and model is overridden
+/// only when the endpoint has a configured model.
 /// </summary>
 public sealed record UpstreamRequest(
     IReadOnlyList<ChatMessage> Messages,

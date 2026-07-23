@@ -59,7 +59,7 @@ flowchart TB
 1. **Identity** — `ConversationIdentityResolver`: prefer `X-Comprexy-Conversation-Id`; else fingerprint system + first two user message texts.
 2. **Gate** — exclusive lease on the conversation key via `ConversationRequestGate` (serializes chat vs soft compression for that key).
 3. **Prepare** — load/create conversation; stage new client messages; load latest working memory + unfolded messages; build outgoing context; evaluate soft/hard budget; optionally run sync emergency compression; apply send-time retain trim when still over hard.
-4. **Upstream** — non-stream `CompleteAsync` or stream with SSE; model comes from `Provider:Model` on the normal path.
+4. **Upstream** — non-stream `CompleteAsync` or stream with SSE; model comes from `Provider:Model` when set, otherwise the client's request `model`.
 5. **Complete** — persist assistant (and staged user) turns; if above soft limit and tool chains allow, enqueue soft compression.
 
 Persistence timing: new non-assistant messages are staged in prepare and saved in complete after a successful upstream call. Treat the DB as a record of completed turns unless that contract changes (see TODO-002).
@@ -133,7 +133,7 @@ Loaded as: `appsettings.json` → environment-specific → host defaults → opt
 
 | Section | Owns |
 | --- | --- |
-| `Provider` | Upstream chat base URL, key, model, timeout |
+| `Provider` | Upstream chat base URL, key, optional model (null → client `model`), timeout |
 | `Compression` | Optional separate compress endpoint/model/prompts; falls back to Provider |
 | `ContextPolicy` | Soft/hard limits, compression input cap, emergency mode, retain Fixed/Smart knobs |
 | `Proxy` | Pass-through; strip reasoning |
