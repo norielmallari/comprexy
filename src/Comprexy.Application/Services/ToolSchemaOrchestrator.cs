@@ -472,7 +472,9 @@ public class ToolSchemaOrchestrator
             if (tracked is not null &&
                 string.Equals(tracked.DefinitionHash, definitionHash, StringComparison.Ordinal))
             {
-                var ack = $$"""{"already_hydrated":true,"tool_name":"{{toolName}}"}""";
+                // Still return the full definition — compact index alone is not enough for
+                // the model to recover after schema_invalid, and pins may have left context.
+                var ack = $$"""{"already_hydrated":true,"tool_name":"{{toolName}}","definition":{{definitionJson}}}""";
                 return (
                     ToolCallWireHelper.BuildToolResultMessage(call.Id, ack),
                     BuildPersistedMetaTurn(call, ack));
@@ -656,17 +658,20 @@ public class ToolSchemaOrchestrator
     private static HashSet<string> ExtractPinnedHydratedToolNames(IReadOnlyList<ConversationMessage> storedMessages)
     {
         var names = new HashSet<string>(StringComparer.Ordinal);
-        foreach (var message in storedMessages.Where(m => m.IsPinnedForToolSchema && m.Role == MessageRole.Tool))
+        // Only unfolded pins count as "present in context". Folded pins are invisible to the
+        // model; ack-only results without a definition also do not satisfy hydrate visibility.
+        foreach (var message in storedMessages.Where(m =>
+                     m.IsPinnedForToolSchema &&
+                     !m.IsFolded &&
+                     m.Role == MessageRole.Tool))
         {
             if (string.IsNullOrWhiteSpace(message.Content))
             {
                 continue;
             }
 
-            if (message.Content.Contains("already_hydrated", StringComparison.Ordinal) &&
-                TryExtractToolNameFromResult(message.Content) is { } ackName)
+            if (!message.Content.Contains("\"definition\"", StringComparison.Ordinal))
             {
-                names.Add(ackName);
                 continue;
             }
 

@@ -14,6 +14,18 @@ namespace Comprexy.Application.Services;
 /// </summary>
 public class ConversationIdentityResolver : IConversationIdentityResolver
 {
+    /// <summary>
+    /// Dynamic metadata blocks injected by Cursor into user message content that change
+    /// between turns (e.g., timestamps, file lists) and should be excluded from the fingerprint.
+    /// </summary>
+    private static readonly string[] DynamicMetadataPatterns =
+    [
+        @"<timestamp>[\s\S]*?</timestamp>",
+        @"<open_and_recently_viewed_files>[\s\S]*?</open_and_recently_viewed_files>",
+        @"<attached_files>[\s\S]*?</attached_files>",
+        @"<user_query>[\s\S]*?</user_query>",
+    ];
+
     public string Resolve(string? conversationIdHeader, IReadOnlyList<ChatMessage> messages)
     {
         if (!string.IsNullOrWhiteSpace(conversationIdHeader))
@@ -24,7 +36,7 @@ public class ConversationIdentityResolver : IConversationIdentityResolver
         var systemMessage = messages.FirstOrDefault(m => m.Role == MessageRole.System)?.Content ?? string.Empty;
         var userMessages = messages
             .Where(m => m.Role == MessageRole.User)
-            .Select(m => m.Content ?? string.Empty)
+            .Select(m => StripDynamicMetadata(m.Content ?? string.Empty))
             .Take(2)
             .ToList();
         var firstUserMessage = userMessages.ElementAtOrDefault(0) ?? string.Empty;
@@ -35,5 +47,18 @@ public class ConversationIdentityResolver : IConversationIdentityResolver
         var hash = Convert.ToHexString(hashBytes);
 
         return $"fingerprint:{hash}";
+    }
+
+    /// <summary>
+    /// Strips dynamic Cursor-injected metadata blocks from message content before fingerprinting.
+    /// </summary>
+    private static string StripDynamicMetadata(string content)
+    {
+        var result = content;
+        foreach (var pattern in DynamicMetadataPatterns)
+        {
+            result = System.Text.RegularExpressions.Regex.Replace(result, pattern, string.Empty);
+        }
+        return result;
     }
 }

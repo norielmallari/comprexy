@@ -138,7 +138,7 @@ When `ToolSchema:Mode` is `CompactIndex` (default; and `Proxy:PassThrough` is fa
 1. **Parse & snapshot** — derive compact rows (`name`, `description`, `required`) from the client `tools[]`; persist catalog + full defs on first activation; on hash mismatch keep snapshot and log.
 2. **Outbound rewrite** — inject stable system rules + compact index; outbound `tools` = `[get_tool_definition]`; token estimates use the rewritten payload.
 3. **Meta loop** — upstream assistant meta calls execute locally; hydrate defs; synthetic JSON tool errors for invalid calls; bounded by `MaxHydrateRoundsPerRequest`. Streaming uses real upstream SSE (not a post-hoc dump): content forwards live; meta/invalid tool tails are held and dropped between rounds.
-4. **Pin / re-insert** — meta assistant+tool turns persist with `IsPinnedForToolSchema`; compression fold and send-time trim never drop pinned messages; missing pins can be re-inserted from DB hydrated defs before upstream.
+4. **Pin / re-insert** — meta assistant+tool turns persist with `IsPinnedForToolSchema`; Fixed and Smart fold sets and send-time trim never drop pinned messages (Smart retain nominations that omit pins are overridden); re-insert from DB hydrated defs when an unfolded pin with a full `definition` is missing from outgoing context.
 5. **Client boundary** — only allowed real tool_calls reach the client; downstream tool results must match open allowed `tool_call_id`s.
 
 Prompt rules: `apps/proxy/Prompts/tool-schema.md`. Configuration: [`SETTINGS.md`](SETTINGS.md#toolschema).

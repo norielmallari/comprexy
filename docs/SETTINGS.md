@@ -84,7 +84,7 @@ Compact tool index for OpenAI-compatible `tools` / `functions` catalogs. Enabled
 | `Mode` | `CompactIndex` | `Off` or `CompactIndex`. |
 | `MinToolCountToActivate` | `1` | Skip rewrite when the client catalog has fewer tools. |
 | `MaxHydrateRoundsPerRequest` | `8` | Caps internal meta-tool + recovery loops per chat request. |
-| `SkipRefetchIfHydrated` | `true` | When true, repeat `get_tool_definition` for an already-hydrated tool returns a short `{ "already_hydrated": true, ... }` ack. |
+| `SkipRefetchIfHydrated` | `true` | When true, repeat `get_tool_definition` for an already-hydrated tool skips re-marking hydration and returns `{ "already_hydrated": true, "tool_name", "definition" }` (definition is always included). |
 | `InstructionFile` | `Prompts/tool-schema.md` | System rules prepended to the compact index (relative to API content root). |
 
 When `CompactIndex` is active:

@@ -375,6 +375,19 @@ public class CompressionOrchestrator : ICompressionOrchestrator
 
             workingMemoryContent = acceptedWorkingMemory;
 
+            // Smart retain can nominate a fold set that omits pins; never fold tool-schema
+            // hydrate turns (full definitions must remain in raw chat context).
+            var pinnedFoldAttempts = messagesToFold.Count(m => m.IsPinnedForToolSchema);
+            if (pinnedFoldAttempts > 0)
+            {
+                _logger.LogInformation(
+                    "compression_preserving_pinned_tool_schema conversationId={ConversationId} mode={Mode} pinnedCount={PinnedCount}",
+                    conversationId,
+                    mode,
+                    pinnedFoldAttempts);
+                messagesToFold = messagesToFold.Where(m => !m.IsPinnedForToolSchema).ToList();
+            }
+
             if (messagesToFold.Count == 0)
             {
                 throw new InvalidOperationException("compression produced an empty fold set.");

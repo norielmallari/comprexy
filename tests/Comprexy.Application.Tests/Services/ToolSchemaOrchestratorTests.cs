@@ -193,7 +193,7 @@ public class ToolSchemaOrchestratorTests
     }
 
     [Fact]
-    public async Task RunInternalLoopAsync_SkipRefetchIfHydrated_ReturnsAlreadyHydratedAck()
+    public async Task RunInternalLoopAsync_SkipRefetchIfHydrated_ReturnsDefinitionWithAlreadyHydratedAck()
     {
         var conversationId = Guid.NewGuid();
         const string definitionJson = """
@@ -240,8 +240,118 @@ public class ToolSchemaOrchestratorTests
             CancellationToken.None);
 
         Assert.Single(session.PendingPersistedTurns);
-        Assert.Contains("already_hydrated", session.PendingPersistedTurns[0].ToolMessage.Content);
+        var content = session.PendingPersistedTurns[0].ToolMessage.Content;
+        Assert.Contains("already_hydrated", content);
+        Assert.Contains("definition", content);
+        Assert.Contains("\"query\"", content);
         _definitionRepository.Verify(r => r.Add(It.IsAny<ConversationToolDefinition>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task TryPrepareRewriteAsync_ReinsertsWhenPinnedDefinitionIsFolded()
+    {
+        var conversationId = Guid.NewGuid();
+        var now = DateTimeOffset.UtcNow;
+        const string definitionJson = """
+            {"type":"function","function":{"name":"lookup","parameters":{"type":"object","required":["query"]}}}
+            """;
+        var definitionHash = ComputeSha256Hex(definitionJson);
+        var hydrated = ConversationToolDefinition.Create(
+            conversationId,
+            "lookup",
+            definitionHash,
+            definitionJson,
+            now);
+
+        var foldedPin = ConversationMessage.Create(
+            conversationId,
+            0,
+            MessageRole.Tool,
+            $$"""{"tool_name":"lookup","definition":{{definitionJson}}}""",
+            10,
+            now);
+        foldedPin.MarkPinnedForToolSchema();
+        foldedPin.MarkFoldedInto(1);
+
+        _clock.Setup(c => c.UtcNow).Returns(now);
+        _catalogRepository
+            .Setup(r => r.GetByConversationIdAsync(conversationId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(ConversationToolCatalog.Create(
+                conversationId,
+                "hash",
+                """[{"name":"lookup","description":"Tool lookup.","required":[]}]""",
+                now));
+        _definitionRepository
+            .Setup(r => r.GetByConversationIdAsync(conversationId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync([hydrated]);
+
+        var orchestrator = CreateOrchestrator();
+        var result = await orchestrator.TryPrepareRewriteAsync(
+            conversationId,
+            [new ChatMessage(MessageRole.User, "hello")],
+            ToolsRequest("lookup"),
+            [foldedPin],
+            CancellationToken.None);
+
+        Assert.NotNull(result);
+        Assert.Contains(
+            result!.OutgoingMessages,
+            m => m.Role == MessageRole.Tool &&
+                 m.Content.Contains("definition", StringComparison.Ordinal) &&
+                 m.Content.Contains("lookup", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task TryPrepareRewriteAsync_DoesNotReinsertWhenUnfoldedPinHasDefinition()
+    {
+        var conversationId = Guid.NewGuid();
+        var now = DateTimeOffset.UtcNow;
+        const string definitionJson = """
+            {"type":"function","function":{"name":"lookup","parameters":{"type":"object","required":["query"]}}}
+            """;
+        var definitionHash = ComputeSha256Hex(definitionJson);
+        var hydrated = ConversationToolDefinition.Create(
+            conversationId,
+            "lookup",
+            definitionHash,
+            definitionJson,
+            now);
+
+        var livePin = ConversationMessage.Create(
+            conversationId,
+            0,
+            MessageRole.Tool,
+            $$"""{"tool_name":"lookup","definition":{{definitionJson}}}""",
+            10,
+            now);
+        livePin.MarkPinnedForToolSchema();
+
+        _clock.Setup(c => c.UtcNow).Returns(now);
+        _catalogRepository
+            .Setup(r => r.GetByConversationIdAsync(conversationId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(ConversationToolCatalog.Create(
+                conversationId,
+                "hash",
+                """[{"name":"lookup","description":"Tool lookup.","required":[]}]""",
+                now));
+        _definitionRepository
+            .Setup(r => r.GetByConversationIdAsync(conversationId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync([hydrated]);
+
+        var orchestrator = CreateOrchestrator();
+        var result = await orchestrator.TryPrepareRewriteAsync(
+            conversationId,
+            [new ChatMessage(MessageRole.User, "hello")],
+            ToolsRequest("lookup"),
+            [livePin],
+            CancellationToken.None);
+
+        Assert.NotNull(result);
+        Assert.DoesNotContain(
+            result!.OutgoingMessages,
+            m => m.Role == MessageRole.Assistant &&
+                 m.RawWireMessage is { ValueKind: JsonValueKind.Object } wire &&
+                 wire.GetRawText().Contains("reinsert_lookup", StringComparison.Ordinal));
     }
 
     [Fact]

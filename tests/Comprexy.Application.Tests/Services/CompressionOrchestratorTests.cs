@@ -571,6 +571,58 @@ public class CompressionOrchestratorTests
     }
 
     [Fact]
+    public async Task RunAsync_SmartFullRaw_NeverFoldsPinnedToolSchemaTurns()
+    {
+        _policy = new ContextPolicyOptions
+        {
+            CompressionRetainMessageCount = 2,
+            EmergencyRecentMessageCount = 1,
+            CompressionMaxInputTokens = 52_000,
+            RetainSelection = RetainSelectionMode.Smart,
+            SmartRetainMaxMessages = 8,
+            SmartRetainMaxTokens = 24_000
+        };
+
+        var conversationId = Guid.NewGuid();
+        var conversation = Conversation.Create("key", DateTimeOffset.UtcNow);
+        var messages = Enumerable.Range(0, 5)
+            .Select(sequence => Message(conversationId, sequence))
+            .ToList();
+        messages[0].MarkPinnedForToolSchema();
+        messages[1].MarkPinnedForToolSchema();
+
+        _conversationRepository.Setup(r => r.FindByIdAsync(conversationId, It.IsAny<CancellationToken>())).ReturnsAsync(conversation);
+        SetupMessages(conversationId, messages);
+        _workingMemoryRepository.Setup(r => r.GetLatestAsync(conversationId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync((WorkingMemory?)null);
+        _chatCompletionClient
+            .Setup(c => c.CompleteAsync(It.IsAny<ProviderEndpoint>(), It.IsAny<UpstreamRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new UpstreamChatResult(
+                """
+                # Working Memory
+                ## Current Goal
+                Done
+
+                ## Retain Sequences
+                4
+                """,
+                "stop",
+                50,
+                20));
+
+        var orchestrator = CreateOrchestrator();
+        var result = await orchestrator.RunAsync(conversationId, CompressionMode.Background, CancellationToken.None);
+
+        Assert.NotNull(result);
+        Assert.Equal(CompressionStatus.Succeeded, result!.Status);
+        Assert.False(messages[0].IsFolded);
+        Assert.False(messages[1].IsFolded);
+        Assert.True(messages[2].IsFolded);
+        Assert.True(messages[3].IsFolded);
+        Assert.False(messages[4].IsFolded);
+    }
+
+    [Fact]
     public async Task RunAsync_SmartMerge_UsesUnfoldedCandidates()
     {
         _policy = new ContextPolicyOptions
