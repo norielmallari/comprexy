@@ -32,6 +32,7 @@ public class ProxyChatCompletionService
     private readonly ICompressionQueue _compressionQueue;
     private readonly ICompressionOrchestrator _compressionOrchestrator;
     private readonly ToolSchemaOrchestrator _toolSchemaOrchestrator;
+    private readonly IConversationMetricsRecorder _metricsRecorder;
     private readonly IUnitOfWork _unitOfWork;
     private readonly IClock _clock;
     private readonly ContextPolicyOptions _policy;
@@ -54,6 +55,7 @@ public class ProxyChatCompletionService
         ICompressionQueue compressionQueue,
         ICompressionOrchestrator compressionOrchestrator,
         ToolSchemaOrchestrator toolSchemaOrchestrator,
+        IConversationMetricsRecorder metricsRecorder,
         IUnitOfWork unitOfWork,
         IClock clock,
         IOptions<ContextPolicyOptions> policy,
@@ -75,6 +77,7 @@ public class ProxyChatCompletionService
         _compressionQueue = compressionQueue;
         _compressionOrchestrator = compressionOrchestrator;
         _toolSchemaOrchestrator = toolSchemaOrchestrator;
+        _metricsRecorder = metricsRecorder;
         _unitOfWork = unitOfWork;
         _clock = clock;
         _policy = policy.Value;
@@ -269,7 +272,20 @@ public class ProxyChatCompletionService
                 request.Messages.Count,
                 WindowStartSequence: null,
                 WindowEndSequence: null,
-                RecentRawCount: 0);
+                RecentRawCount: 0,
+                MetricsPrepare: null);
+        }
+
+        TurnMetricsPrepareData? metricsPrepare = null;
+        if (_metricsRecorder.IsEnabled)
+        {
+            metricsPrepare = new TurnMetricsPrepareData(
+                RequestStartedAt: now,
+                RawInputTokensEstimated: _tokenEstimator.CountPromptTokens(request.Messages, request.RawRequest),
+                RequestHash: MetricsPayloadHasher.HashJsonElement(request.RawRequest),
+                RawMessageCount: request.Messages.Count,
+                WorkingMemoryVersionUsed: null,
+                TrimTriggered: false);
         }
 
         var allMessages = storedMessages.Concat(newlyPersisted).OrderBy(m => m.Sequence).ToList();
@@ -299,6 +315,10 @@ public class ProxyChatCompletionService
 
         var workingMemory = await _workingMemoryRepository.GetLatestAsync(conversation.Id, cancellationToken);
         var ranPreCompressionEmergency = false;
+        if (metricsPrepare is not null)
+        {
+            metricsPrepare = metricsPrepare with { WorkingMemoryVersionUsed = workingMemory?.Version };
+        }
 
         // Until the first successful compression, forward the client's full message list
         // (transparent messages). The retain/sliding window is applied only during compression.
@@ -345,7 +365,8 @@ public class ProxyChatCompletionService
                     allMessages.Count,
                     replaceMessages: false,
                     cancellationToken,
-                    preWmToolSchema);
+                    preWmToolSchema,
+                    metricsPrepare);
             }
 
             if (_policy.EmergencyCompression != EmergencyCompressionMode.Sync)
@@ -371,6 +392,10 @@ public class ProxyChatCompletionService
                 _endpointResolver.ResolveUpstream().ResolveOutboundModel(request.RawRequest));
             ranPreCompressionEmergency = true;
             workingMemory = await _workingMemoryRepository.GetLatestAsync(conversation.Id, cancellationToken);
+            if (metricsPrepare is not null)
+            {
+                metricsPrepare = metricsPrepare with { WorkingMemoryVersionUsed = workingMemory?.Version };
+            }
             var refreshedAfterFirstCompression = await _messageRepository.GetByConversationIdAsync(
                 conversation.Id,
                 cancellationToken);
@@ -440,6 +465,10 @@ public class ProxyChatCompletionService
                 _endpointResolver.ResolveUpstream().ResolveOutboundModel(request.RawRequest));
 
             workingMemory = await _workingMemoryRepository.GetLatestAsync(conversation.Id, cancellationToken);
+            if (metricsPrepare is not null)
+            {
+                metricsPrepare = metricsPrepare with { WorkingMemoryVersionUsed = workingMemory?.Version };
+            }
             var refreshed = await _messageRepository.GetByConversationIdAsync(conversation.Id, cancellationToken);
             recentRaw = PrepareRecentRawForChatTemplate(
                 conversation.Id,
@@ -491,6 +520,11 @@ public class ProxyChatCompletionService
                 currentUserMessage,
                 estimatePayload);
 
+            if (metricsPrepare is not null)
+            {
+                metricsPrepare = metricsPrepare with { TrimTriggered = true };
+            }
+
             if (toolSchema is not null)
             {
                 toolSchema = await TryPrepareToolSchemaAsync(
@@ -540,7 +574,8 @@ public class ProxyChatCompletionService
             recentRaw.Count,
             replaceMessages: true,
             cancellationToken,
-            toolSchema);
+            toolSchema,
+            metricsPrepare);
     }
 
     private async Task<ToolSchemaPrepareResult?> TryPrepareToolSchemaAsync(
@@ -587,7 +622,8 @@ public class ProxyChatCompletionService
         int recentRawCount,
         bool replaceMessages,
         CancellationToken cancellationToken,
-        ToolSchemaPrepareResult? precomputedToolSchema = null)
+        ToolSchemaPrepareResult? precomputedToolSchema = null,
+        TurnMetricsPrepareData? metricsPrepare = null)
     {
         var toolSchema = precomputedToolSchema
             ?? await TryPrepareToolSchemaAsync(
@@ -627,7 +663,8 @@ public class ProxyChatCompletionService
             windowStartSequence,
             windowEndSequence,
             recentRawCount,
-            toolSchema);
+            toolSchema,
+            metricsPrepare);
     }
 
     /// <summary>
@@ -949,6 +986,30 @@ public class ProxyChatCompletionService
         // Next client request should include this assistant as history[IncomingMessageCount].
         prepared.Conversation.SetSyncedMessageCount(prepared.IncomingMessageCount + 1, _clock.UtcNow);
 
+        if (!prepared.SkipCompression && prepared.MetricsPrepare is not null)
+        {
+            var sentPayload = prepared.UpstreamRequest.RewrittenClientRequest
+                ?? prepared.UpstreamRequest.OriginalClientRequest;
+            await _metricsRecorder.RecordSuccessfulTurnAsync(
+                new SuccessfulTurnMetricInput(
+                    prepared.Conversation.Id,
+                    prepared.Endpoint.ResolveOutboundModel(prepared.UpstreamRequest.OriginalClientRequest),
+                    prepared.MetricsPrepare.RequestStartedAt,
+                    prepared.MetricsPrepare.RawInputTokensEstimated,
+                    prepared.EstimatedTokens,
+                    upstreamResult.PromptTokens,
+                    upstreamResult.CompletionTokens,
+                    assistantTokenCount,
+                    prepared.Decision,
+                    prepared.MetricsPrepare.TrimTriggered,
+                    prepared.MetricsPrepare.WorkingMemoryVersionUsed,
+                    prepared.MetricsPrepare.RawMessageCount,
+                    prepared.UpstreamRequest.Messages.Count,
+                    prepared.MetricsPrepare.RequestHash,
+                    MetricsPayloadHasher.HashJsonElement(sentPayload)),
+                cancellationToken);
+        }
+
         await _unitOfWork.SaveChangesAsync(cancellationToken);
 
         if (prepared.SkipCompression)
@@ -1013,5 +1074,6 @@ public class ProxyChatCompletionService
         int? WindowStartSequence,
         int? WindowEndSequence,
         int RecentRawCount,
-        ToolSchemaPrepareResult? ToolSchema = null);
+        ToolSchemaPrepareResult? ToolSchema = null,
+        TurnMetricsPrepareData? MetricsPrepare = null);
 }

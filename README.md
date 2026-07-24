@@ -33,6 +33,7 @@ If you need routing, spend tracking, or broad agent wrappers, tools like LiteLLM
 | Feature | Description |
 | --- | --- |
 | OpenAI-compatible `/v1` | `POST /v1/chat/completions` is compressed (roles: `system` / `user` / `assistant` / `tool`). Other `/v1/*` routes reverse-proxy to `Provider` unchanged |
+| Token metrics API | `GET /v1/comprexy/conversations` (+ `/metrics`, `/metrics/turns`) reports raw vs compressed token savings per conversation |
 | Rolling working memory | Older context compressed into a versioned summary the model can trust |
 | Soft / hard budgets | Soft (`> soft`) → queue compression after the response. By default chat waits for in-flight soft compression (`CancelBackgroundCompressionOnChat: false`); set it `true` to cancel soft compression when the next chat request arrives. Soft prefers a **full-raw** rebuild when stored message tokens ≤ `CompressionMaxInputTokens`; otherwise merges into working memory. Hard (`>= hard`) → send-time retain trim then HTTP 413 by default (`EmergencyCompression: Off`). Set `EmergencyCompression: Sync` for blocking emergency compact before trim/413. Token estimates use tiktoken for text and OpenAI-style vision tiles for `image_url` (base64 is not BPE-counted) |
 | Transparent until first memory | Before working memory exists, client messages pass through unchanged |

@@ -115,6 +115,26 @@ See [`ARCHITECTURE.md`](ARCHITECTURE.md#tool-schema-compact-index) for the runti
 
 ---
 
+## Metrics
+
+Token proof ledger for successful compressed-path turns. Persisted in SQLite (not Trace logs).
+
+| Key | Default | Description |
+| --- | --- | --- |
+| `Enabled` | `true` | When true, records per-turn raw vs compressed token metrics and folds compression LLM usage into conversation summaries. |
+
+Operator read API (same `/v1/*` API-key gate as chat):
+
+| Method | Path | Description |
+| --- | --- | --- |
+| `GET` | `/v1/comprexy/conversations` | List conversation metric summaries |
+| `GET` | `/v1/comprexy/conversations/{conversationId}/metrics` | Conversation rollup |
+| `GET` | `/v1/comprexy/conversations/{conversationId}/metrics/turns` | Per-turn breakdown |
+
+Pass-through turns and failed/413 requests do not write turn metrics. See [`ARCHITECTURE.md`](ARCHITECTURE.md) and the internal metrics plan for formulas.
+
+---
+
 ## Trace
 
 Console payload categories require `Logging:LogLevel:Comprexy` = `Trace`. `RequestFiles` writes audit files regardless of console toggles.

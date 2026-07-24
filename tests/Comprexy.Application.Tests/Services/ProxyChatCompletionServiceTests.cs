@@ -79,6 +79,7 @@ public class ProxyChatCompletionServiceTests
                 _tokenEstimator.Object,
                 _clock.Object,
                 NullLogger<ToolSchemaOrchestrator>.Instance),
+            Mock.Of<IConversationMetricsRecorder>(m => m.IsEnabled == false),
             _unitOfWork.Object,
             _clock.Object,
             Options.Create(_policy),

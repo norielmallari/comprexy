@@ -37,6 +37,9 @@ public static class ServiceCollectionExtensions
         services.AddOptions<ToolSchemaOptions>()
             .Bind(configuration.GetSection(ToolSchemaOptions.SectionName));
 
+        services.AddOptions<MetricsOptions>()
+            .Bind(configuration.GetSection(MetricsOptions.SectionName));
+
         services.AddSingleton<IRequestTraceFileSession, RequestTraceFileSession>();
         services.AddSingleton<IPayloadTraceLogger, PayloadTraceLogger>();
         services.AddSingleton<IConversationIdentityResolver, ConversationIdentityResolver>();
@@ -51,6 +54,8 @@ public static class ServiceCollectionExtensions
         services.AddScoped<ToolSchemaOrchestrator>();
         services.AddSingleton<ProviderEndpointResolver>();
         services.AddScoped<ICompressionOrchestrator, CompressionOrchestrator>();
+        services.AddScoped<IConversationMetricsRecorder, ConversationMetricsRecorder>();
+        services.AddScoped<IConversationMetricsQueryService, ConversationMetricsQueryService>();
         services.AddScoped<ProxyChatCompletionService>();
 
         return services;

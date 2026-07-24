@@ -57,6 +57,7 @@ public class CompressionOrchestratorTests
                 "Update working memory. End with ## Retain Sequences."),
             new ContextBuilder(),
             new RecentContextSelector(Options.Create(_policy)),
+            Mock.Of<IConversationMetricsRecorder>(m => m.IsEnabled == false),
             Options.Create(_policy),
             Options.Create(compressionOptions),
             NullLogger<CompressionOrchestrator>.Instance);

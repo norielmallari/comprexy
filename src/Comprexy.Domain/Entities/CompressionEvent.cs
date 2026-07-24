@@ -27,6 +27,18 @@ public class CompressionEvent : EntityBase
 
     public string? ErrorMessage { get; private set; }
 
+    /// <summary>Provider or estimated prompt tokens for the compression LLM call.</summary>
+    public int? PromptTokens { get; private set; }
+
+    /// <summary>Provider or estimated completion tokens for the compression LLM call.</summary>
+    public int? CompletionTokens { get; private set; }
+
+    /// <summary>Prompt + completion tokens for the compression LLM call.</summary>
+    public int? TotalTokens { get; private set; }
+
+    /// <summary>True when <see cref="TotalTokens"/> came from local estimation rather than provider usage.</summary>
+    public bool TokensAreEstimated { get; private set; }
+
     public DateTimeOffset CreatedAt { get; private set; }
 
     public DateTimeOffset? CompletedAt { get; private set; }
@@ -61,13 +73,26 @@ public class CompressionEvent : EntityBase
             ? Math.Round((double)CompressedTokens.Value / OriginalTokens, 4)
             : null;
 
-    public void Succeed(int compressedTokens, int workingMemoryVersionAfter, DateTimeOffset completedAt)
+    public void Succeed(
+        int compressedTokens,
+        int workingMemoryVersionAfter,
+        DateTimeOffset completedAt,
+        int? promptTokens = null,
+        int? completionTokens = null,
+        bool tokensAreEstimated = false)
     {
         Status = CompressionStatus.Succeeded;
         CompressedTokens = compressedTokens;
         WorkingMemoryVersionAfter = workingMemoryVersionAfter;
         CompletedAt = completedAt;
         DurationMs = (long)(completedAt - CreatedAt).TotalMilliseconds;
+        PromptTokens = promptTokens;
+        CompletionTokens = completionTokens;
+        if (promptTokens.HasValue || completionTokens.HasValue)
+        {
+            TotalTokens = (promptTokens ?? 0) + (completionTokens ?? 0);
+            TokensAreEstimated = tokensAreEstimated;
+        }
     }
 
     public void Fail(string errorMessage, DateTimeOffset completedAt)
