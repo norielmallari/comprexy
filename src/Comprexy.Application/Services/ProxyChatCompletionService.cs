@@ -369,6 +369,11 @@ public class ProxyChatCompletionService
                     metricsPrepare);
             }
 
+            // Evaluate only returns EmergencyCompressionRequired when HardLimitTokens is set.
+            var hardLimitTokens = _policy.HardLimitTokens
+                ?? throw new InvalidOperationException(
+                    "EmergencyCompressionRequired requires ContextPolicy:HardLimitTokens.");
+
             if (_policy.EmergencyCompression != EmergencyCompressionMode.Sync)
             {
                 _logger.LogInformation(
@@ -378,7 +383,7 @@ public class ProxyChatCompletionService
                 throw new ContextBudgetExceededException(
                     conversation.Id,
                     preCompressionTokens,
-                    _policy.HardLimitTokens);
+                    hardLimitTokens);
             }
 
             _logger.LogInformation(
@@ -412,7 +417,7 @@ public class ProxyChatCompletionService
                 throw new ContextBudgetExceededException(
                     conversation.Id,
                     preCompressionTokens,
-                    _policy.HardLimitTokens);
+                    hardLimitTokens);
             }
         }
 
@@ -429,7 +434,7 @@ public class ProxyChatCompletionService
             allMessages,
             currentMessageEntity.Sequence);
 
-        var outgoing = _contextBuilder.Build(conversation.SystemPrompt, workingMemory, recentRaw, currentUserMessage);
+        var outgoing = _contextBuilder.Build(conversation.SystemPrompt, workingMemory, recentRaw, currentUserMessage, conversation.Id);
         var toolSchema = await TryPrepareToolSchemaAsync(
             conversation.Id,
             outgoing,
@@ -480,13 +485,7 @@ public class ProxyChatCompletionService
                 refreshed,
                 currentMessageEntity.Sequence);
 
-            outgoing = _contextBuilder.Build(conversation.SystemPrompt, workingMemory, recentRaw, currentUserMessage);
-            toolSchema = await TryPrepareToolSchemaAsync(
-                conversation.Id,
-                outgoing,
-                request.RawRequest,
-                refreshed,
-                cancellationToken);
+            outgoing = _contextBuilder.Build(conversation.SystemPrompt, workingMemory, recentRaw, currentUserMessage, conversation.Id);
             estimateMessages = toolSchema?.OutgoingMessages ?? outgoing;
             estimatePayload = toolSchema?.RewrittenClientRequest ?? request.RawRequest;
             estimatedTokens = _tokenEstimator.CountPromptTokens(estimateMessages, estimatePayload);
@@ -511,7 +510,7 @@ public class ProxyChatCompletionService
                 _policy.EmergencyCompression);
         }
 
-        if (estimatedTokens >= _policy.HardLimitTokens)
+        if (_policy.HardLimitTokens.HasValue && estimatedTokens >= _policy.HardLimitTokens.Value)
         {
             (recentRaw, outgoing, estimatedTokens, windowStart) = ApplySendTimeEmergencyTrim(
                 conversation,
@@ -548,12 +547,12 @@ public class ProxyChatCompletionService
                 windowEndSequence: windowEnd,
                 recentRawCount: recentRaw.Count);
 
-            if (estimatedTokens >= _policy.HardLimitTokens)
+            if (_policy.HardLimitTokens.HasValue && estimatedTokens >= _policy.HardLimitTokens.Value)
             {
                 throw new ContextBudgetExceededException(
                     conversation.Id,
                     estimatedTokens,
-                    _policy.HardLimitTokens);
+                    _policy.HardLimitTokens.Value);
             }
         }
 
@@ -760,7 +759,8 @@ public class ProxyChatCompletionService
             conversation.SystemPrompt,
             workingMemory,
             trimmed,
-            currentUserMessage);
+            currentUserMessage,
+            conversation.Id);
         var estimatedTokens = _tokenEstimator.CountPromptTokens(outgoing, rawRequest);
         var windowStart = trimmed.Count > 0 ? trimmed[0].Sequence : (int?)null;
         return (trimmed, outgoing, estimatedTokens, windowStart);

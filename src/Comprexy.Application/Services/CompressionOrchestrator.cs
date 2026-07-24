@@ -121,7 +121,7 @@ public class CompressionOrchestrator : ICompressionOrchestrator
 
         var existingWorkingMemory = await _workingMemoryRepository.GetLatestAsync(conversationId, cancellationToken);
         var rawTokens = allMessages.Sum(m => Math.Max(0, m.TokenCount));
-        var maxInput = Math.Max(1, _policy.CompressionMaxInputTokens);
+        var maxInput = _policy.CompressionMaxInputTokens ?? int.MaxValue;
         var useSmart = mode != CompressionMode.Emergency &&
                        _policy.RetainSelection == RetainSelectionMode.Smart;
         var useFullRaw = mode != CompressionMode.Emergency && rawTokens <= maxInput;

@@ -1,5 +1,6 @@
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.RegularExpressions;
 using Comprexy.Application.Abstractions;
 using Comprexy.Application.Models;
 using Comprexy.Domain.Enums;
@@ -23,8 +24,11 @@ public class ConversationIdentityResolver : IConversationIdentityResolver
         @"<timestamp>[\s\S]*?</timestamp>",
         @"<open_and_recently_viewed_files>[\s\S]*?</open_and_recently_viewed_files>",
         @"<attached_files>[\s\S]*?</attached_files>",
-        @"<user_query>[\s\S]*?</user_query>",
     ];
+
+    private static readonly Regex UserQueryPattern = new(
+        @"<user_query>([\s\S]*?)</user_query>",
+        RegexOptions.CultureInvariant | RegexOptions.Compiled);
 
     public string Resolve(string? conversationIdHeader, IReadOnlyList<ChatMessage> messages)
     {
@@ -36,7 +40,7 @@ public class ConversationIdentityResolver : IConversationIdentityResolver
         var systemMessage = messages.FirstOrDefault(m => m.Role == MessageRole.System)?.Content ?? string.Empty;
         var userMessages = messages
             .Where(m => m.Role == MessageRole.User)
-            .Select(m => StripDynamicMetadata(m.Content ?? string.Empty))
+            .Select(m => NormalizeForFingerprint(m.Content ?? string.Empty))
             .Take(2)
             .ToList();
         var firstUserMessage = userMessages.ElementAtOrDefault(0) ?? string.Empty;
@@ -50,15 +54,25 @@ public class ConversationIdentityResolver : IConversationIdentityResolver
     }
 
     /// <summary>
-    /// Strips dynamic Cursor-injected metadata blocks from message content before fingerprinting.
+    /// Normalizes user message text for fingerprinting: when Cursor wraps the turn in
+    /// <c>user_query</c>, use only that inner text; otherwise strip dynamic metadata blocks.
     /// </summary>
-    private static string StripDynamicMetadata(string content)
+    private static string NormalizeForFingerprint(string content)
     {
+        var queryMatches = UserQueryPattern.Matches(content);
+        if (queryMatches.Count > 0)
+        {
+            return string.Join(
+                "\n",
+                queryMatches.Select(match => match.Groups[1].Value.Trim()));
+        }
+
         var result = content;
         foreach (var pattern in DynamicMetadataPatterns)
         {
-            result = System.Text.RegularExpressions.Regex.Replace(result, pattern, string.Empty);
+            result = Regex.Replace(result, pattern, string.Empty);
         }
-        return result;
+
+        return result.Trim();
     }
 }

@@ -86,10 +86,11 @@ Before the first successful compression, client messages pass through without a 
 | Above soft (after reply) | Enqueue soft job (`Background` / `HighPriorityBackground`) |
 | At/above hard, `EmergencyCompression: Off` (default) | Send-time retain trim → forward if under budget, else HTTP 413 |
 | At/above hard, `EmergencyCompression: Sync` | Sync emergency compact when tool chains are closed → trim if needed → forward or 413 |
+| `HardLimitTokens` / `CompressionMaxInputTokens` null | Hard-budget and compression-input-cap checks disabled |
 
 Soft vs emergency:
 
-- **Soft** (`CompressionOrchestrator`): prefer **full-raw** rebuild when total stored message tokens ≤ `CompressionMaxInputTokens`; otherwise merge a fold segment into existing working memory. Retain selection is `Fixed` (default) or `Smart` (soft-only; live chat prefix + retain-index instruction). Both Fixed and Smart retain keep assistant tool-call turns atomic with their tool results so rebuilt chat never starts a tool turn after working memory / user.
+- **Soft** (`CompressionOrchestrator`): prefer **full-raw** rebuild when total stored message tokens ≤ `CompressionMaxInputTokens` (or always when that cap is `null`); otherwise merge a fold segment into existing working memory. Retain selection is `Fixed` (default) or `Smart` (soft-only; live chat prefix + retain-index instruction). Both Fixed and Smart retain keep assistant tool-call turns atomic with their tool results so rebuilt chat never starts a tool turn after working memory / user.
 - **Emergency**: always bounded Fixed merge path; never Smart.
 - **Working memory**: append-only versions. Failed compressions must not overwrite the last known-good version. Folding sets `ConversationMessage.FoldedIntoWorkingMemoryVersion`.
 

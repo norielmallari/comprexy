@@ -22,9 +22,10 @@ public class ContextBuilder
         string? systemPrompt,
         WorkingMemory? workingMemory,
         IReadOnlyList<ConversationMessage> recentRawMessages,
-        ChatMessage currentUserMessage)
+        ChatMessage currentUserMessage,
+        Guid conversationId = default)
     {
-        var messages = BuildLivePrefix(systemPrompt, workingMemory, recentRawMessages).ToList();
+        var messages = BuildLivePrefix(systemPrompt, workingMemory, recentRawMessages, conversationId).ToList();
 
         // Avoid duplicating the tip when it was already persisted (client replayed it).
         if (messages.Count > 0 && AreSameMessage(messages[^1], currentUserMessage))
@@ -54,7 +55,8 @@ public class ContextBuilder
     public IReadOnlyList<ChatMessage> BuildLivePrefix(
         string? systemPrompt,
         WorkingMemory? workingMemory,
-        IReadOnlyList<ConversationMessage> rawMessages)
+        IReadOnlyList<ConversationMessage> rawMessages,
+        Guid conversationId = default)
     {
         var messages = new List<ChatMessage>
         {
@@ -65,6 +67,11 @@ public class ContextBuilder
         {
             var memoryContent = $"{WorkingMemoryPreamble.Trim()}\n\n{workingMemory.Content.Trim()}";
             messages.Add(new ChatMessage(MessageRole.System, memoryContent));
+        }
+
+        if (conversationId != default)
+        {
+            messages.Add(new ChatMessage(MessageRole.System, $"Conversation ID: {conversationId}"));
         }
 
         foreach (var message in rawMessages.OrderBy(m => m.Sequence))
