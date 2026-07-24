@@ -7,7 +7,19 @@
             "type": "process",
             "args": [
                 "build",
-                "${workspaceFolder}/src/Comprexy.Api/Comprexy.Api.csproj",
+                "${workspaceFolder}/apps/proxy/Comprexy.Api.csproj",
+                "/property:GenerateFullPaths=true",
+                "/consoleloggerparameters:NoSummary;ForceNoAlign"
+            ],
+            "problemMatcher": "$msCompile"
+        },
+        {
+            "label": "build-control-api",
+            "command": "dotnet",
+            "type": "process",
+            "args": [
+                "build",
+                "${workspaceFolder}/apps/control-api/Comprexy.ControlApi.csproj",
                 "/property:GenerateFullPaths=true",
                 "/consoleloggerparameters:NoSummary;ForceNoAlign"
             ],
@@ -19,7 +31,7 @@
             "type": "process",
             "args": [
                 "publish",
-                "${workspaceFolder}/src/Comprexy.Api/Comprexy.Api.csproj",
+                "${workspaceFolder}/apps/proxy/Comprexy.Api.csproj",
                 "/property:GenerateFullPaths=true",
                 "/consoleloggerparameters:NoSummary;ForceNoAlign"
             ],
@@ -33,7 +45,7 @@
                 "watch",
                 "run",
                 "--project",
-                "${workspaceFolder}/src/Comprexy.Api/Comprexy.Api.csproj"
+                "${workspaceFolder}/apps/proxy/Comprexy.Api.csproj"
             ],
             "problemMatcher": "$msCompile"
         }

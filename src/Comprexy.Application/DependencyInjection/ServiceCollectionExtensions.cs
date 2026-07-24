@@ -9,8 +9,28 @@ namespace Comprexy.Application.DependencyInjection;
 
 public static class ServiceCollectionExtensions
 {
-    public static IServiceCollection AddComprexyApplication(this IServiceCollection services, IConfiguration configuration)
+    /// <param name="enableProxyServices">
+    /// When true (proxy default), registers chat/compression application services.
+    /// Control-plane hosts should pass false and only keep options + metrics query.
+    /// </param>
+    public static IServiceCollection AddComprexyApplication(
+        this IServiceCollection services,
+        IConfiguration configuration,
+        bool enableProxyServices = true)
     {
+        services.AddOptions<AuthOptions>()
+            .Bind(configuration.GetSection(AuthOptions.SectionName));
+
+        services.AddOptions<MetricsOptions>()
+            .Bind(configuration.GetSection(MetricsOptions.SectionName));
+
+        services.AddScoped<IConversationMetricsQueryService, ConversationMetricsQueryService>();
+
+        if (!enableProxyServices)
+        {
+            return services;
+        }
+
         services.AddSingleton<IValidateOptions<ProviderOptions>, ProviderOptionsValidator>();
         services.AddOptions<ProviderOptions>()
             .Bind(configuration.GetSection(ProviderOptions.SectionName))
@@ -21,9 +41,6 @@ public static class ServiceCollectionExtensions
 
         services.AddOptions<ContextPolicyOptions>()
             .Bind(configuration.GetSection(ContextPolicyOptions.SectionName));
-
-        services.AddOptions<AuthOptions>()
-            .Bind(configuration.GetSection(AuthOptions.SectionName));
 
         services.AddOptions<ProxyOptions>()
             .Bind(configuration.GetSection(ProxyOptions.SectionName));
@@ -36,9 +53,6 @@ public static class ServiceCollectionExtensions
 
         services.AddOptions<ToolSchemaOptions>()
             .Bind(configuration.GetSection(ToolSchemaOptions.SectionName));
-
-        services.AddOptions<MetricsOptions>()
-            .Bind(configuration.GetSection(MetricsOptions.SectionName));
 
         services.AddSingleton<IRequestTraceFileSession, RequestTraceFileSession>();
         services.AddSingleton<IPayloadTraceLogger, PayloadTraceLogger>();
@@ -55,7 +69,6 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<ProviderEndpointResolver>();
         services.AddScoped<ICompressionOrchestrator, CompressionOrchestrator>();
         services.AddScoped<IConversationMetricsRecorder, ConversationMetricsRecorder>();
-        services.AddScoped<IConversationMetricsQueryService, ConversationMetricsQueryService>();
         services.AddScoped<ProxyChatCompletionService>();
 
         return services;

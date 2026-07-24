@@ -5,7 +5,7 @@ namespace Comprexy.Infrastructure.Persistence;
 /// <summary>
 /// Drops and recreates the SQLite database from EF Core migrations.
 /// Prefer the CLI when the API would otherwise lock the file:
-/// <c>dotnet run --project src/Comprexy.Api -- --clear-db</c>.
+/// <c>dotnet run --project apps/proxy -- --clear-db</c>.
 /// Keep in sync with <c>Scripts/clear-database.sql</c> for manual sqlite3 use.
 /// </summary>
 public static class DatabaseClearer

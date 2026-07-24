@@ -10,6 +10,10 @@
 *.db
 *.db-shm
 *.db-wal
+# Shared SQLite under repo data/ (keep directory via .gitkeep)
+data/*.db
+data/*.db-shm
+data/*.db-wal
 logs/
 internal/
 **/appsettings.Local.json

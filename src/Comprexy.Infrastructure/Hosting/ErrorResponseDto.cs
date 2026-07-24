@@ -1,6 +1,6 @@
 using System.Text.Json.Serialization;
 
-namespace Comprexy.Api.Contracts;
+namespace Comprexy.Infrastructure.Hosting;
 
 public sealed class ErrorResponseDto
 {

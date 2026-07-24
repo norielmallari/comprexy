@@ -109,20 +109,25 @@ Deferred and planned work for Comprexy. Prefer [GitHub Issues](https://github.co
 | --- | --- |
 | **Status** | `open` |
 | **Priority** | Medium |
-| **Area** | `AuthOptions`, `ApiKeyAuthMiddleware`, conversation identity |
+| **Area** | `apps/control-api` (issuance/admin), proxy auth enforce, conversation identity |
 
 **Summary:** `Auth:RequiredApiKey` is a single shared secret. That fits local single-tenant use. On a shared server, every client with that key is the same principal — there is no per-user or per-tenant credential.
 
 **Workaround:** Single-tenant deploy, or require a unique `X-Comprexy-Conversation-Id` per logical session and treat the shared API key as a gate only.
 
+**Home (repo restructure):** Key **administration** (create/revoke/list, tenant mapping) belongs on the control plane (`apps/control-api`, `/v1/comprexy/api-keys` and related). The proxy **enforces** resolved key/tenant/quota/policy state on the data plane and must not own issuance or billing. See [`internal/repo-restructure.md`](../internal/repo-restructure.md) (Phase 7). Scaffolding `apps/control-api` and moving metrics query routes does **not** close this item.
+
 **Acceptance criteria:**
 
 - [ ] Support multiple client API keys (config and/or store), each mappable to a stable tenant/principal id (not the raw secret in conversation keys or logs).
-- [ ] Auth middleware accepts any configured key; rejects unknown keys when auth is enabled.
+- [ ] Control-api (or equivalent documented API) can manage keys for operators/dashboard; proxy does not expose key-admin as chat-adjacent endpoints.
+- [ ] Auth middleware on the proxy accepts any valid key; rejects unknown keys when auth is enabled.
+- [ ] Proxy obtains enforceable key/tenant/policy state without calling billing providers (shared store and/or cached policy — **decide after repo restructure**, with this item; not in the control-api metrics-move PR).
 - [ ] Optional: scope fingerprint / conversation lookup by tenant id so identical opening text does not cross tenants (coordinate with [TODO-001](#todo-001--stronger-conversation-identity)).
-- [ ] Docs for single-key local vs multi-key shared deploy.
+- [ ] Docs for single-key local vs multi-key shared deploy; default remains single-key/single-tenant until multi-tenant is explicitly enabled.
+- [ ] Persist tenant id on tenant-scoped records even in local single-tenant mode (deterministic default tenant; avoid nullable tenant ids).
 
-**Notes:** Do not hash a single shared `RequiredApiKey` into fingerprints — it adds no separation. Prefer key-id / tenant-id after multi-key auth exists.
+**Notes:** Do not hash a single shared `RequiredApiKey` into fingerprints — it adds no separation. Prefer key-id / tenant-id after multi-key auth exists. Keep this `open` until the acceptance criteria above are met; control-api existence alone is insufficient.
 
 ---
 

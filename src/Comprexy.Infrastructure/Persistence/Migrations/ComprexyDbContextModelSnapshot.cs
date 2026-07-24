@@ -20,13 +20,15 @@ namespace Comprexy.Infrastructure.Persistence.Migrations
             modelBuilder.Entity("Comprexy.Domain.Entities.CompressionEvent", b =>
                 {
                     b.Property<Guid>("Id")
-                        .HasColumnType("TEXT");
+                        .HasColumnType("TEXT")
+                        .HasColumnOrder(1);
 
                     b.Property<long>("ClusterId")
-                        .HasColumnType("INTEGER");
+                        .HasColumnType("INTEGER")
+                        .HasColumnOrder(0);
 
-                    b.Property<DateTimeOffset?>("CompletedAt")
-                        .HasColumnType("TEXT");
+                    b.Property<long?>("CompletedAt")
+                        .HasColumnType("INTEGER");
 
                     b.Property<int?>("CompletionTokens")
                         .HasColumnType("INTEGER");
@@ -37,8 +39,8 @@ namespace Comprexy.Infrastructure.Persistence.Migrations
                     b.Property<Guid>("ConversationId")
                         .HasColumnType("TEXT");
 
-                    b.Property<DateTimeOffset>("CreatedAt")
-                        .HasColumnType("TEXT");
+                    b.Property<long>("CreatedAt")
+                        .HasColumnType("INTEGER");
 
                     b.Property<long>("DurationMs")
                         .HasColumnType("INTEGER");
@@ -88,17 +90,19 @@ namespace Comprexy.Infrastructure.Persistence.Migrations
             modelBuilder.Entity("Comprexy.Domain.Entities.Conversation", b =>
                 {
                     b.Property<Guid>("Id")
-                        .HasColumnType("TEXT");
+                        .HasColumnType("TEXT")
+                        .HasColumnOrder(1);
 
                     b.Property<long>("ClusterId")
-                        .HasColumnType("INTEGER");
+                        .HasColumnType("INTEGER")
+                        .HasColumnOrder(0);
 
                     b.Property<string>("ConversationKey")
                         .IsRequired()
                         .HasColumnType("TEXT");
 
-                    b.Property<DateTimeOffset>("CreatedAt")
-                        .HasColumnType("TEXT");
+                    b.Property<long>("CreatedAt")
+                        .HasColumnType("INTEGER");
 
                     b.Property<int>("SyncedMessageCount")
                         .HasColumnType("INTEGER");
@@ -106,8 +110,8 @@ namespace Comprexy.Infrastructure.Persistence.Migrations
                     b.Property<string>("SystemPrompt")
                         .HasColumnType("TEXT");
 
-                    b.Property<DateTimeOffset>("UpdatedAt")
-                        .HasColumnType("TEXT");
+                    b.Property<long>("UpdatedAt")
+                        .HasColumnType("INTEGER");
 
                     b.HasKey("Id");
 
@@ -123,10 +127,12 @@ namespace Comprexy.Infrastructure.Persistence.Migrations
             modelBuilder.Entity("Comprexy.Domain.Entities.ConversationMessage", b =>
                 {
                     b.Property<Guid>("Id")
-                        .HasColumnType("TEXT");
+                        .HasColumnType("TEXT")
+                        .HasColumnOrder(1);
 
                     b.Property<long>("ClusterId")
-                        .HasColumnType("INTEGER");
+                        .HasColumnType("INTEGER")
+                        .HasColumnOrder(0);
 
                     b.Property<string>("Content")
                         .IsRequired()
@@ -135,8 +141,8 @@ namespace Comprexy.Infrastructure.Persistence.Migrations
                     b.Property<Guid>("ConversationId")
                         .HasColumnType("TEXT");
 
-                    b.Property<DateTimeOffset>("CreatedAt")
-                        .HasColumnType("TEXT");
+                    b.Property<long>("CreatedAt")
+                        .HasColumnType("INTEGER");
 
                     b.Property<int?>("FoldedIntoWorkingMemoryVersion")
                         .HasColumnType("INTEGER");
@@ -175,13 +181,15 @@ namespace Comprexy.Infrastructure.Persistence.Migrations
             modelBuilder.Entity("Comprexy.Domain.Entities.ConversationMetricsSummary", b =>
                 {
                     b.Property<Guid>("Id")
-                        .HasColumnType("TEXT");
+                        .HasColumnType("TEXT")
+                        .HasColumnOrder(1);
 
                     b.Property<double>("AverageTokenSavingsRatio")
                         .HasColumnType("REAL");
 
                     b.Property<long>("ClusterId")
-                        .HasColumnType("INTEGER");
+                        .HasColumnType("INTEGER")
+                        .HasColumnOrder(0);
 
                     b.Property<int>("CompressionEventCount")
                         .HasColumnType("INTEGER");
@@ -189,8 +197,8 @@ namespace Comprexy.Infrastructure.Persistence.Migrations
                     b.Property<Guid>("ConversationId")
                         .HasColumnType("TEXT");
 
-                    b.Property<DateTimeOffset>("CreatedAt")
-                        .HasColumnType("TEXT");
+                    b.Property<long>("CreatedAt")
+                        .HasColumnType("INTEGER");
 
                     b.Property<long>("TotalActualTokensEstimated")
                         .HasColumnType("INTEGER");
@@ -216,8 +224,8 @@ namespace Comprexy.Infrastructure.Persistence.Migrations
                     b.Property<int>("TotalTurns")
                         .HasColumnType("INTEGER");
 
-                    b.Property<DateTimeOffset>("UpdatedAt")
-                        .HasColumnType("TEXT");
+                    b.Property<long>("UpdatedAt")
+                        .HasColumnType("INTEGER");
 
                     b.HasKey("Id");
 
@@ -235,14 +243,16 @@ namespace Comprexy.Infrastructure.Persistence.Migrations
             modelBuilder.Entity("Comprexy.Domain.Entities.ConversationToolCatalog", b =>
                 {
                     b.Property<Guid>("Id")
-                        .HasColumnType("TEXT");
+                        .HasColumnType("TEXT")
+                        .HasColumnOrder(1);
 
                     b.Property<string>("CatalogHash")
                         .IsRequired()
                         .HasColumnType("TEXT");
 
                     b.Property<long>("ClusterId")
-                        .HasColumnType("INTEGER");
+                        .HasColumnType("INTEGER")
+                        .HasColumnOrder(0);
 
                     b.Property<string>("CompactIndexJson")
                         .IsRequired()
@@ -251,8 +261,8 @@ namespace Comprexy.Infrastructure.Persistence.Migrations
                     b.Property<Guid>("ConversationId")
                         .HasColumnType("TEXT");
 
-                    b.Property<DateTimeOffset>("SnapshottedAt")
-                        .HasColumnType("TEXT");
+                    b.Property<long>("SnapshottedAt")
+                        .HasColumnType("INTEGER");
 
                     b.HasKey("Id");
 
@@ -268,10 +278,12 @@ namespace Comprexy.Infrastructure.Persistence.Migrations
             modelBuilder.Entity("Comprexy.Domain.Entities.ConversationToolDefinition", b =>
                 {
                     b.Property<Guid>("Id")
-                        .HasColumnType("TEXT");
+                        .HasColumnType("TEXT")
+                        .HasColumnOrder(1);
 
                     b.Property<long>("ClusterId")
-                        .HasColumnType("INTEGER");
+                        .HasColumnType("INTEGER")
+                        .HasColumnOrder(0);
 
                     b.Property<Guid>("ConversationId")
                         .HasColumnType("TEXT");
@@ -284,8 +296,8 @@ namespace Comprexy.Infrastructure.Persistence.Migrations
                         .IsRequired()
                         .HasColumnType("TEXT");
 
-                    b.Property<DateTimeOffset?>("HydratedAt")
-                        .HasColumnType("TEXT");
+                    b.Property<long?>("HydratedAt")
+                        .HasColumnType("INTEGER");
 
                     b.Property<string>("ToolName")
                         .IsRequired()
@@ -307,7 +319,8 @@ namespace Comprexy.Infrastructure.Persistence.Migrations
             modelBuilder.Entity("Comprexy.Domain.Entities.ConversationTurnMetric", b =>
                 {
                     b.Property<Guid>("Id")
-                        .HasColumnType("TEXT");
+                        .HasColumnType("TEXT")
+                        .HasColumnOrder(1);
 
                     b.Property<int>("ActualCompletionTokens")
                         .HasColumnType("INTEGER");
@@ -319,7 +332,8 @@ namespace Comprexy.Infrastructure.Persistence.Migrations
                         .HasColumnType("INTEGER");
 
                     b.Property<long>("ClusterId")
-                        .HasColumnType("INTEGER");
+                        .HasColumnType("INTEGER")
+                        .HasColumnOrder(0);
 
                     b.Property<int>("CompressedInputTokensEstimated")
                         .HasColumnType("INTEGER");
@@ -330,8 +344,8 @@ namespace Comprexy.Infrastructure.Persistence.Migrations
                     b.Property<Guid>("ConversationId")
                         .HasColumnType("TEXT");
 
-                    b.Property<DateTimeOffset>("CreatedAt")
-                        .HasColumnType("TEXT");
+                    b.Property<long>("CreatedAt")
+                        .HasColumnType("INTEGER");
 
                     b.Property<bool>("HardBudgetExceeded")
                         .HasColumnType("INTEGER");
@@ -358,8 +372,8 @@ namespace Comprexy.Infrastructure.Persistence.Migrations
                         .HasMaxLength(64)
                         .HasColumnType("TEXT");
 
-                    b.Property<DateTimeOffset>("RequestStartedAt")
-                        .HasColumnType("TEXT");
+                    b.Property<long>("RequestStartedAt")
+                        .HasColumnType("INTEGER");
 
                     b.Property<int>("SentMessageCount")
                         .HasColumnType("INTEGER");
@@ -397,10 +411,12 @@ namespace Comprexy.Infrastructure.Persistence.Migrations
             modelBuilder.Entity("Comprexy.Domain.Entities.WorkingMemory", b =>
                 {
                     b.Property<Guid>("Id")
-                        .HasColumnType("TEXT");
+                        .HasColumnType("TEXT")
+                        .HasColumnOrder(1);
 
                     b.Property<long>("ClusterId")
-                        .HasColumnType("INTEGER");
+                        .HasColumnType("INTEGER")
+                        .HasColumnOrder(0);
 
                     b.Property<string>("Content")
                         .IsRequired()
@@ -409,8 +425,8 @@ namespace Comprexy.Infrastructure.Persistence.Migrations
                     b.Property<Guid>("ConversationId")
                         .HasColumnType("TEXT");
 
-                    b.Property<DateTimeOffset>("CreatedAt")
-                        .HasColumnType("TEXT");
+                    b.Property<long>("CreatedAt")
+                        .HasColumnType("INTEGER");
 
                     b.Property<int>("TokenCount")
                         .HasColumnType("INTEGER");

@@ -1,5 +1,5 @@
-using Comprexy.Api.Contracts;
 using Comprexy.Application.Abstractions;
+using Comprexy.Infrastructure.Hosting;
 using Comprexy.Infrastructure.Providers;
 
 namespace Comprexy.Api.Endpoints;
