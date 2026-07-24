@@ -1,6 +1,6 @@
 ---
 description: Keep Unix (.sh) and Windows (.ps1/.cmd) DX scripts in command parity
-globs: "**/*.sh,**/*.ps1,**/*.cmd"
+globs: **/*.sh,**/*.ps1,**/*.cmd
 alwaysApply: false
 ---
 
