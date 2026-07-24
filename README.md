@@ -6,44 +6,12 @@ It sits between your client (Cursor, CLI agents, custom apps) and any OpenAI-com
 
 At or above the hard budget, the default is send-time trim then HTTP 413 (no blocking emergency compact); set `EmergencyCompression` to `Sync` to restore synchronous emergency compression before the call goes out.
 
-[Features](#features) · [Quick start](#quick-start) · [How it works](#how-it-works) · [Configuration](#configuration) · [Limitations](#limitations) · [Architecture](#architecture) · [Contributing](#contributing)
+[Quick start](#quick-start) · [Why Comprexy?](#why-comprexy) · [Features](#features) · [How it works](#how-it-works) · [Configuration](#configuration) · [Limitations](#limitations) · [Architecture](#architecture) · [Contributing](#contributing)
 
 ![.NET](https://img.shields.io/badge/.NET-10-512BD4?logo=dotnet&logoColor=white)
 ![Platform](https://img.shields.io/badge/platform-cross--platform-informational)
 ![License](https://img.shields.io/badge/license-MIT-green)
 ![Status](https://img.shields.io/badge/status-early%20preview-orange)
-
-## Why Comprexy?
-
-Long sessions accumulate history, tool output, and corrections until the prompt is noisy, expensive, or past the model’s useful window. Restarting and re-explaining kills flow; summarizing on every turn adds latency.
-
-Comprexy’s approach:
-
-| Goal | Approach |
-| --- | --- |
-| Stay in flow | Answer first; compact in the background when possible |
-| Preserve what matters | LLM-written rolling working memory, not blind truncation |
-| Stay compatible | OpenAI-compatible `/v1` base URL: chat completions are compressed; other `/v1/*` routes proxy upstream |
-| Stay focused | Context compression only — not a multi-provider gateway or agent framework |
-
-If you need routing, spend tracking, or broad agent wrappers, tools like LiteLLM or Headroom may fit better. Comprexy is intentionally narrower.
-
-## Features
-
-| Feature | Description |
-| --- | --- |
-| OpenAI-compatible `/v1` | `POST /v1/chat/completions` is compressed (roles: `system` / `user` / `assistant` / `tool`). Other `/v1/*` routes reverse-proxy to `Provider` unchanged |
-| Token metrics API | `GET /v1/comprexy/conversations` (+ `/metrics`, `/metrics/turns`) reports raw vs compressed token savings per conversation |
-| Rolling working memory | Older context compressed into a versioned summary the model can trust |
-| Soft / hard budgets | Soft (`> soft`) → queue compression after the response. By default chat waits for in-flight soft compression (`CancelBackgroundCompressionOnChat: false`); set it `true` to cancel soft compression when the next chat request arrives. Soft prefers a **full-raw** rebuild when stored message tokens ≤ `CompressionMaxInputTokens`; otherwise merges into working memory. Hard (`>= hard`) → send-time retain trim then HTTP 413 by default (`EmergencyCompression: Off`). Set `EmergencyCompression: Sync` for blocking emergency compact before trim/413. Token estimates use tiktoken for text and OpenAI-style vision tiles for `image_url` (base64 is not BPE-counted) |
-| Transparent until first memory | Before working memory exists, client messages pass through unchanged |
-| Conversation identity | Prefer a unique `X-Comprexy-Conversation-Id` per session; otherwise fingerprint from system + first two user messages |
-| Local-first, cloud-ready | Point `Provider` at Ollama, LM Studio, vLLM, OpenAI, Azure OpenAI–compatible APIs, and similar |
-| Optional separate compress model | Use a cheaper/faster model for compression via `Compression` settings |
-| Pass-through mode | `Proxy:PassThrough` forwards the original body unmodified — no rebuild, compression, or 413 budget gate. Escape hatch only; leave off for normal use |
-| Strip reasoning | `Proxy:StripReasoningContent` (default off) removes `reasoning_content` / `reasoning` from outbound chat and compression messages when enabled |
-| Request audit files | Optional per-request / per-compression logs under `logs/requests/` (opt in via `appsettings.Local.json`) |
-| SQLite persistence | Conversations, messages, and working memory in a local DB |
 
 ## Quick start
 
@@ -54,7 +22,7 @@ git clone https://github.com/norielmallari/comprexy.git
 cd comprexy
 ```
 
-Configure upstream in `src/Comprexy.Api/appsettings.json`, or copy `appsettings.Local.json.example` → `appsettings.Local.json` for machine-local settings (preferred for keys):
+Configure upstream in `apps/proxy/appsettings.json`, or copy `appsettings.Local.json.example` → `appsettings.Local.json` for machine-local settings (preferred for keys):
 
 ```json
 {
@@ -67,11 +35,26 @@ Configure upstream in `src/Comprexy.Api/appsettings.json`, or copy `appsettings.
 ```
 
 Omit `Model` (or set it `null`) to forward the client's `model` field instead. Soft/emergency compression then reuses that same client model unless `Compression:Model` is set.
+
 ```bash
-dotnet run --project src/Comprexy.Api
+./comprexy.sh proxy          # data plane :8129
+./comprexy.sh control-api    # metrics    :8130
+./comprexy.sh dev            # both (Ctrl-C stops both)
 ```
 
-On first run, Comprexy applies EF Core migrations and creates `comprexy.db` next to the API project. Default listen URL: `http://localhost:8129`.
+Windows (PowerShell or cmd):
+
+```bat
+.\comprexy.cmd proxy
+.\comprexy.cmd control-api
+.\comprexy.cmd dev
+```
+
+If .NET 10 is missing, the script prompts to install the SDK into `~/.dotnet` (or `%USERPROFILE%\.dotnet` on Windows) via the official Microsoft install script. Use `install-dotnet` or `COMPREXY_AUTO_INSTALL_DOTNET=1` for non-interactive installs.
+
+On first run, Comprexy applies EF Core migrations and creates `data/comprexy.db` under the repo root (shared with control-api). Proxy listen URL: `http://localhost:8129`. Control-api: `http://localhost:8130` (e.g. `GET http://localhost:8130/v1/comprexy/conversations`).
+
+Equivalent `dotnet run --project apps/proxy` / `apps/control-api` commands still work; `./comprexy.sh help` / `.\comprexy.cmd help` lists shortcuts (`test`, `build`, `clear-db`).
 
 Point any OpenAI-compatible client at:
 
@@ -93,6 +76,38 @@ curl http://localhost:8129/v1/chat/completions \
 ```
 
 On the normal path, when `Provider:Model` is set Comprexy replaces `model` with that value; when it is null/omitted, the client's `model` is forwarded. In `Proxy:PassThrough` mode, the client body (including `model`) is forwarded as sent unless `Provider:Model` overrides it.
+
+## Why Comprexy?
+
+Long sessions accumulate history, tool output, and corrections until the prompt is noisy, expensive, or past the model’s useful window. Restarting and re-explaining kills flow; summarizing on every turn adds latency.
+
+Comprexy’s approach:
+
+| Goal | Approach |
+| --- | --- |
+| Stay in flow | Answer first; compact in the background when possible |
+| Preserve what matters | LLM-written rolling working memory, not blind truncation |
+| Stay compatible | OpenAI-compatible `/v1` base URL: chat completions are compressed; other `/v1/*` routes proxy upstream |
+| Stay focused | Context compression only — not a multi-provider gateway or agent framework |
+
+If you need routing, spend tracking, or broad agent wrappers, tools like LiteLLM or Headroom may fit better. Comprexy is intentionally narrower.
+
+## Features
+
+| Feature | Description |
+| --- | --- |
+| OpenAI-compatible `/v1` | `POST /v1/chat/completions` is compressed (roles: `system` / `user` / `assistant` / `tool`). Other `/v1/*` routes reverse-proxy to `Provider` unchanged |
+| Token metrics API | Control API `GET /v1/comprexy/conversations` (+ `/metrics`, `/metrics/turns`) on `:8130` reports raw vs compressed token savings per conversation |
+| Rolling working memory | Older context compressed into a versioned summary the model can trust |
+| Soft / hard budgets | Soft (`> soft`) → queue compression after the response. By default chat waits for in-flight soft compression (`CancelBackgroundCompressionOnChat: false`); set it `true` to cancel soft compression when the next chat request arrives. Soft prefers a **full-raw** rebuild when stored message tokens ≤ `CompressionMaxInputTokens`; otherwise merges into working memory. Hard (`>= hard`) → send-time retain trim then HTTP 413 by default (`EmergencyCompression: Off`). Set `EmergencyCompression: Sync` for blocking emergency compact before trim/413. Token estimates use tiktoken for text and OpenAI-style vision tiles for `image_url` (base64 is not BPE-counted) |
+| Transparent until first memory | Before working memory exists, client messages pass through unchanged |
+| Conversation identity | Prefer a unique `X-Comprexy-Conversation-Id` per session; otherwise fingerprint from system + first two user messages |
+| Local-first, cloud-ready | Point `Provider` at Ollama, LM Studio, vLLM, OpenAI, Azure OpenAI–compatible APIs, and similar |
+| Optional separate compress model | Use a cheaper/faster model for compression via `Compression` settings |
+| Pass-through mode | `Proxy:PassThrough` forwards the original body unmodified — no rebuild, compression, or 413 budget gate. Escape hatch only; leave off for normal use |
+| Strip reasoning | `Proxy:StripReasoningContent` (default off) removes `reasoning_content` / `reasoning` from outbound chat and compression messages when enabled |
+| Request audit files | Optional per-request / per-compression logs under `logs/requests/` (opt in via `appsettings.Local.json`) |
+| SQLite persistence | Conversations, messages, and working memory in a local DB |
 
 ## How it works
 

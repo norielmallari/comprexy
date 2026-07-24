@@ -9,18 +9,25 @@ Thanks for contributing.
 ## Build and test
 
 ```bash
-dotnet build
-dotnet test
+./comprexy.sh build
+./comprexy.sh test
 ```
+
+Windows: `.\comprexy.cmd build` / `.\comprexy.cmd test` (thin `.cmd` shim → `comprexy.ps1`).
+
+Or `dotnet build` / `dotnet test`. Local hosts: `proxy`, `control-api`, or `dev` via the same scripts.
 
 ## Project layout
 
 ```text
+apps/
+  proxy/                     # Data-plane host (Comprexy.Api), chat endpoints, prompts
+  control-api/               # Control-plane host: metrics query APIs
+
 src/
   Comprexy.Domain/           Entities & enums
   Comprexy.Application/      Use cases, ports, orchestration
-  Comprexy.Infrastructure/   EF Core, HTTP client, tokenizer, background jobs
-  Comprexy.Api/              Minimal API, DTOs, composition root
+  Comprexy.Infrastructure/   EF Core, HTTP client, tokenizer, background jobs, shared hosting
 
 tests/
   Comprexy.Application.Tests/
@@ -32,22 +39,24 @@ docs/
 
 ## Local database
 
-On first run, the API applies EF Core migrations and creates `comprexy.db` next to the API project.
+On first run, the proxy (or control-api) applies EF Core migrations and creates `data/comprexy.db` under the repo root. Both hosts share that file by default. Override `ConnectionStrings:Comprexy` in `appsettings.Local.json` if you need a different absolute path.
 
-Drop and recreate the database from migrations (deletes all data). Stop the API or any DB browser if the file is locked:
+Drop and recreate the database from migrations (deletes all data). Stop the proxy/control-api or any DB browser if the file is locked:
 
 ```bash
-dotnet run --project src/Comprexy.Api -- --clear-db
+./comprexy.sh clear-db
+# Windows: .\comprexy.cmd clear-db
+# or: dotnet run --project apps/proxy -- --clear-db
 ```
 
-`--clear-database` is accepted as an alias.
+`--clear-database` is accepted as an alias. `--clear-db` is proxy-only (not supported on control-api).
 
 ## EF Core migrations
 
 ```bash
 dotnet ef migrations add <Name> \
   --project src/Comprexy.Infrastructure/Comprexy.Infrastructure.csproj \
-  --startup-project src/Comprexy.Api/Comprexy.Api.csproj \
+  --startup-project apps/proxy/Comprexy.Api.csproj \
   --output-dir Persistence/Migrations
 ```
 
@@ -58,7 +67,9 @@ Do not hand-author migration files; always use `dotnet ef migrations`.
 Copy the template and adjust for your machine (file is gitignored):
 
 ```bash
-cp src/Comprexy.Api/appsettings.Local.json.example src/Comprexy.Api/appsettings.Local.json
+cp apps/proxy/appsettings.Local.json.example apps/proxy/appsettings.Local.json
+# optional for control-api:
+cp apps/control-api/appsettings.Local.json.example apps/control-api/appsettings.Local.json
 ```
 
 Use Local for upstream `Provider` settings and optional `Trace:RequestFiles` audit logging. Omit keys you do not intend to override.

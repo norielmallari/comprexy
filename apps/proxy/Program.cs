@@ -1,12 +1,15 @@
 using Comprexy.Api.Endpoints;
-using Comprexy.Api.Middleware;
 using Comprexy.Application.Configuration;
 using Comprexy.Application.DependencyInjection;
 using Comprexy.Infrastructure.DependencyInjection;
+using Comprexy.Infrastructure.Hosting;
 using Comprexy.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
 
 var builder = WebApplication.CreateBuilder(args);
+
+// Shared SQLite under repo data/ (both hosts). Optional Local.json may override ConnectionStrings.
+SharedSqliteConfiguration.UseRepoSharedDatabase(builder);
 
 // Optional machine-specific overrides (gitignored). Copy from appsettings.Local.json.example.
 builder.Configuration.AddJsonFile("appsettings.Local.json", optional: true, reloadOnChange: true);
@@ -35,7 +38,6 @@ app.UseMiddleware<ApiKeyAuthMiddleware>();
 
 app.MapHealthEndpoints();
 app.MapChatCompletionEndpoints();
-app.MapMetricsEndpoints();
 app.MapPassthroughEndpoints();
 
 var providerOptions = builder.Configuration.GetSection(ProviderOptions.SectionName).Get<ProviderOptions>() ?? new ProviderOptions();
@@ -46,12 +48,12 @@ app.Lifetime.ApplicationStarted.Register(() =>
     var address = app.Urls.FirstOrDefault() ?? "http://localhost:8129";
     startupLogger.LogInformation(
         """
-        Comprexy is running.
+        Comprexy proxy is running.
 
         Proxy endpoint:
           {ProxyEndpoint}
 
-        Metrics:
+        Metrics (control-api):
           {MetricsEndpoint}
 
         Other /v1 routes:
@@ -68,7 +70,7 @@ app.Lifetime.ApplicationStarted.Register(() =>
           API Key: any value, or omit (unless Auth:RequiredApiKey is configured)
         """,
         $"{address}/v1/chat/completions",
-        $"{address}/v1/comprexy/conversations",
+        "http://localhost:8130/v1/comprexy/conversations",
         providerOptions.BaseUrl,
         providerOptions.Model,
         proxyOptions.PassThrough ? "enabled (raw field-preserving chat proxy)" : "disabled",

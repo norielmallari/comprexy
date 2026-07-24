@@ -23,7 +23,7 @@
     <ProjectReference Include="..\..\src\Comprexy.Domain\Comprexy.Domain.csproj" />
     <ProjectReference Include="..\..\src\Comprexy.Application\Comprexy.Application.csproj" />
     <ProjectReference Include="..\..\src\Comprexy.Infrastructure\Comprexy.Infrastructure.csproj" />
-    <ProjectReference Include="..\..\src\Comprexy.Api\Comprexy.Api.csproj" />
+    <ProjectReference Include="..\..\apps\proxy\Comprexy.Api.csproj" />
   </ItemGroup>
 
 </Project>

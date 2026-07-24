@@ -1,7 +1,7 @@
-using Comprexy.Api.Contracts.Metrics;
+using Comprexy.ControlApi.Contracts.Metrics;
 using Comprexy.Application.Abstractions;
 
-namespace Comprexy.Api.Endpoints;
+namespace Comprexy.ControlApi.Endpoints;
 
 public static class MetricsEndpoints
 {

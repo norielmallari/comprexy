@@ -1,10 +1,10 @@
-using Comprexy.Api.Contracts;
 using Comprexy.Application.Configuration;
+using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Options;
 using System.Security.Cryptography;
 using System.Text;
 
-namespace Comprexy.Api.Middleware;
+namespace Comprexy.Infrastructure.Hosting;
 
 /// <summary>
 /// When <see cref="AuthOptions.RequiredApiKey"/> is configured, requires clients to send a

@@ -11,11 +11,13 @@ It is intentionally narrow: chat-completion context management only — not a mu
 ## Solution layout
 
 ```text
+apps/
+  proxy/                     # Data plane: Comprexy.Api host (`Endpoints/`), chat DTOs, prompts
+  control-api/               # Control plane: metrics query (`GET /v1/comprexy/*`)
 src/
-  Comprexy.Api/              Minimal API host (`Endpoints/`), DTOs, auth middleware, prompts
   Comprexy.Application/      Use cases, ports (abstractions), orchestration
   Comprexy.Domain/           Entities and enums (no infrastructure deps)
-  Comprexy.Infrastructure/   EF Core/SQLite, HTTP upstream client, tokenizer, queue/worker
+  Comprexy.Infrastructure/   EF Core/SQLite, HTTP upstream client, tokenizer, queue/worker, shared hosting
 
 tests/
   Comprexy.Application.Tests/
@@ -23,21 +25,22 @@ tests/
 
 | Layer | Responsibility |
 | --- | --- |
-| **Api** | Parse OpenAI-shaped JSON, map errors/status codes, stream SSE, optional API-key gate, composition root |
+| **Proxy (`apps/proxy`)** | Parse OpenAI-shaped JSON, map errors/status codes, stream SSE, optional API-key gate, composition root for chat |
+| **Control API (`apps/control-api`)** | Operator metrics query endpoints; shares Application/Infrastructure and SQLite with the proxy |
 | **Application** | Conversation identity, prepare/complete chat, budget decisions, context rebuild, compression orchestration, token metrics |
 | **Domain** | `EntityBase`, `Conversation`, `ConversationMessage`, `WorkingMemory`, `CompressionEvent`, `ConversationTurnMetric`, `ConversationMetricsSummary`, `ConversationToolCatalog`, `ConversationToolDefinition` and related enums |
-| **Infrastructure** | Persistence, OpenAI-compatible HTTP client, tiktoken estimates, in-process compression queue + hosted worker |
+| **Infrastructure** | Persistence, OpenAI-compatible HTTP client, tiktoken estimates, in-process compression queue + hosted worker (proxy only), shared API-key middleware |
 
-Dependency rule: Api → Application → Domain; Infrastructure implements Application ports. Prefer constructor injection; register app services in `AddComprexyApplication`, adapters in `AddComprexyInfrastructure`.
+Dependency rule: hosts → Application → Domain; Infrastructure implements Application ports. Prefer constructor injection; register app services in `AddComprexyApplication` (pass `enableProxyServices: false` on control-api), adapters in `AddComprexyInfrastructure` (pass `enableCompressionWorker: false` on control-api).
 
 ## Runtime shape
 
 ```mermaid
 flowchart TB
-  Client[LLM client] --> Api["Comprexy.Api /v1"]
+  Client[LLM client] --> Api["apps/proxy /v1"]
   Api --> Proxy[ProxyChatCompletionService]
   Proxy --> Gate[ConversationRequestGate]
-  Proxy --> DB[(SQLite)]
+  Proxy --> DB[(SQLite data/comprexy.db)]
   Proxy --> Upstream[IChatCompletionClient]
   Proxy --> Queue[ICompressionQueue]
   Queue --> Worker[CompressionBackgroundService]
@@ -46,10 +49,12 @@ flowchart TB
   Orch --> DB
   Api --> Pass[UpstreamPassthroughProxy]
   Pass --> Provider[Other /v1/* upstream]
+  Ops[Operator / dashboard] --> Control["apps/control-api /v1/comprexy"]
+  Control --> DB
 ```
 
 - **Chat path:** `POST /v1/chat/completions` → `ProxyChatCompletionService` (rebuild, budget, compress hooks).
-- **Metrics path:** `GET /v1/comprexy/conversations*` → conversation token proof summaries and per-turn breakdown.
+- **Metrics path:** `GET /v1/comprexy/conversations*` on **control-api** (`:8130`) → conversation token proof summaries and per-turn breakdown. Proxy emits/persists metrics; it does not serve query routes.
 - **Passthrough path:** other `/v1/{**path}` → reverse-proxy to `Provider` unchanged.
 - **Escape hatch:** `Proxy:PassThrough` forwards the original chat body with no rebuild, compression, hard-budget 413, or turn metrics.
 
@@ -105,9 +110,11 @@ Jobs flow through `ChannelCompressionQueue` → `CompressionBackgroundService`. 
 
 ## Persistence
 
-SQLite via EF Core (`ComprexyDbContext`). Default connection creates `comprexy.db` beside the API; WAL + busy timeout apply on connect. Migrations run at startup; `--clear-db` rebuilds from migrations.
+SQLite via EF Core (`ComprexyDbContext`). Hosts default to shared `data/comprexy.db` under the repo root; WAL + busy timeout apply on connect. Migrations run at startup; proxy `--clear-db` rebuilds from migrations.
 
-Persisted rows inherit `EntityBase`: GUID `Id` is the primary key and app/FK identity (also returned on `X-Comprexy-Conversation-Id` for conversations). `ClusterId` (`long`) is a sequential surrogate for SQL Server clustering only — not used as domain identity. On SQLite, `ClusterIdSaveChangesInterceptor` assigns values; a future SQL Server provider should use IDENTITY + clustered index on `ClusterId` with a nonclustered GUID PK.
+Persisted rows inherit `EntityBase`: sequential `ClusterId` (`long`, physical column 0 / SQL Server clustering surrogate) then GUID `Id` (physical column 1, primary key and app/FK identity, also returned on `X-Comprexy-Conversation-Id` for conversations). `ClusterId` is not domain identity. On SQLite, `ClusterIdSaveChangesInterceptor` assigns values; a future SQL Server provider should use IDENTITY + clustered index on `ClusterId` with a nonclustered GUID PK. Shared EF layout: `EntityBaseConfiguration.ConfigureKeys` (`HasColumnOrder` 0 / 1).
+
+`DateTimeOffset` columns are stored as UTC ticks (`INTEGER`) so SQLite can filter/order timestamps server-side; converters live under `Persistence/Converters` and are registered in `ComprexyDbContext.ConfigureConventions`. EF query warnings default to throw — do not materialize then sort/filter in memory.
 
 Message conversational order is `ConversationMessage.Sequence` (unique per conversation), not `CreatedAt` or `ClusterId`. Repositories load messages with `OrderBy(Sequence)`.
 
@@ -134,7 +141,7 @@ When `ToolSchema:Mode` is `CompactIndex` (default; and `Proxy:PassThrough` is fa
 4. **Pin / re-insert** — meta assistant+tool turns persist with `IsPinnedForToolSchema`; compression fold and send-time trim never drop pinned messages; missing pins can be re-inserted from DB hydrated defs before upstream.
 5. **Client boundary** — only allowed real tool_calls reach the client; downstream tool results must match open allowed `tool_call_id`s.
 
-Prompt rules: `Comprexy.Api/Prompts/tool-schema.md`. Configuration: [`SETTINGS.md`](SETTINGS.md#toolschema).
+Prompt rules: `apps/proxy/Prompts/tool-schema.md`. Configuration: [`SETTINGS.md`](SETTINGS.md#toolschema).
 
 ## Supporting pieces
 
@@ -144,10 +151,10 @@ Prompt rules: `Comprexy.Api/Prompts/tool-schema.md`. Configuration: [`SETTINGS.m
 | Retain windows | `RecentContextSelector` (Fixed atomic groups), `SmartRetainResolver` / `RetainIndexBuilder` |
 | Duplicate file reads | `DuplicateFileReadDeduper` + `FileReadPathExtractor` (soft path, when enabled) |
 | Reasoning strip | `ReasoningContentStripper` before chat/compression upstream calls |
-| Auth | `ApiKeyAuthMiddleware` — optional single `Auth:RequiredApiKey` on `/v1/*` only |
+| Auth | `ApiKeyAuthMiddleware` (Infrastructure.Hosting) — optional single `Auth:RequiredApiKey` on `/v1/*` only |
 | Tracing | `IPayloadTraceLogger`, optional `IRequestTraceFileSession` under `logs/requests/` |
-| Compression prompts | `Prompts/compression-fixed.md`, `Prompts/compression-smart.md` |
-| Tool schema prompts | `Prompts/tool-schema.md` |
+| Compression prompts | `apps/proxy/Prompts/compression-fixed.md`, `compression-smart.md` |
+| Tool schema prompts | `apps/proxy/Prompts/tool-schema.md` |
 
 Repositories and `IUnitOfWork` live behind Application abstractions; implementations under `Infrastructure/Persistence`.
 
@@ -177,7 +184,7 @@ Loaded as: `appsettings.json` → environment-specific → host defaults → opt
 | `Metrics` | Token ledger capture (default enabled) |
 | `Auth` | Optional required API key |
 | `Trace` | Console payload categories / request audit files |
-| `ConnectionStrings:Comprexy` | SQLite path |
+| `ConnectionStrings:Comprexy` | SQLite path (hosts rewrite to shared `data/comprexy.db` under the repo by default) |
 
 ## Boundaries and constraints
 
@@ -191,10 +198,12 @@ Loaded as: `appsettings.json` → environment-specific → host defaults → opt
 
 | If you are changing… | Start here |
 | --- | --- |
-| HTTP contract, status codes, streaming | `Comprexy.Api/Endpoints/*`, mappers, middleware |
+| HTTP contract, status codes, streaming (chat) | `apps/proxy` `Endpoints/*`, mappers, streaming |
+| Metrics query HTTP | `apps/control-api` `Endpoints/MetricsEndpoints.cs` |
+| Shared API-key middleware | `Infrastructure/Hosting/ApiKeyAuthMiddleware` |
 | Turn prepare/complete, budget gate, enqueue, tool-schema rewrite | `ProxyChatCompletionService`, `ToolSchemaOrchestrator` |
 | Fold / WM versions / Soft FullRaw vs merge | `CompressionOrchestrator`, `CompressionPromptFactory` |
-| Token metrics / conversation proof totals | `ConversationTurnMetric`, `ConversationMetricsSummary`, `ConversationMetricsRecorder`, `Endpoints/MetricsEndpoints.cs` |
+| Token metrics / conversation proof totals | `ConversationTurnMetric`, `ConversationMetricsSummary`, `ConversationMetricsRecorder`, control-api metrics endpoints |
 | Outgoing message assembly | `ContextBuilder`, `RecentContextSelector` |
 | Identity / fingerprint | `ConversationIdentityResolver` |
 | Schema / keys / indexes | `EntityBase`, EF configs under `Infrastructure/Persistence` (migrations via `dotnet ef` only) |

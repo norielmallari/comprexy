@@ -1,11 +1,11 @@
 using System.Text;
 using System.Text.Json;
-using Comprexy.Api.Contracts;
 using Comprexy.Api.Mapping;
 using Comprexy.Api.Streaming;
 using Comprexy.Application.Abstractions;
 using Comprexy.Application.Services;
 using Comprexy.Application.Tracing;
+using Comprexy.Infrastructure.Hosting;
 
 namespace Comprexy.Api.Endpoints;
 

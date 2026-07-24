@@ -1,6 +1,9 @@
 <Solution>
+  <Folder Name="/apps/">
+    <Project Path="apps/proxy/Comprexy.Api.csproj" />
+    <Project Path="apps/control-api/Comprexy.ControlApi.csproj" />
+  </Folder>
   <Folder Name="/src/">
-    <Project Path="src/Comprexy.Api/Comprexy.Api.csproj" />
     <Project Path="src/Comprexy.Application/Comprexy.Application.csproj" />
     <Project Path="src/Comprexy.Domain/Comprexy.Domain.csproj" />
     <Project Path="src/Comprexy.Infrastructure/Comprexy.Infrastructure.csproj" />

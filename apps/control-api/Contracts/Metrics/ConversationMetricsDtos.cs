@@ -1,6 +1,6 @@
 using Comprexy.Domain.Entities;
 
-namespace Comprexy.Api.Contracts.Metrics;
+namespace Comprexy.ControlApi.Contracts.Metrics;
 
 public sealed class ConversationMetricsListItemDto
 {

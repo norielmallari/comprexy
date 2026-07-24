@@ -1,4 +1,4 @@
-using Comprexy.Api.Middleware;
+using Comprexy.Infrastructure.Hosting;
 using Comprexy.Application.Configuration;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Options;

@@ -6,10 +6,11 @@ Operator reference for Comprexy configuration. Structural behavior is described 
 
 Settings load in order (later sources override earlier ones):
 
-1. `src/Comprexy.Api/appsettings.json`
-2. `src/Comprexy.Api/appsettings.{Environment}.json`
-3. Optional `src/Comprexy.Api/appsettings.Local.json` (gitignored)
-4. User secrets, environment variables, command-line arguments (host defaults)
+1. `apps/proxy/appsettings.json` (proxy) or `apps/control-api/appsettings.json` (control-api)
+2. `apps/*/appsettings.{Environment}.json`
+3. Shared default: hosts rewrite `ConnectionStrings:Comprexy` to `data/comprexy.db` under the repo root
+4. Optional `apps/*/appsettings.Local.json` (gitignored) — may override connection string and other settings
+5. User secrets, environment variables, command-line arguments (host defaults)
 
 Copy `appsettings.Local.json.example` → `appsettings.Local.json` for machine-local upstream URL, API keys, and audit logging.
 
@@ -173,7 +174,7 @@ In-memory cache for tiktoken estimates.
 
 | Key | Default | Description |
 | --- | --- | --- |
-| `Comprexy` | `Data Source=comprexy.db;Cache=Shared` | SQLite database path. WAL and 5s busy timeout are applied on connect. |
+| `Comprexy` | rewritten to `data/comprexy.db` under repo root | SQLite database path. Hosts call `SharedSqliteConfiguration.UseRepoSharedDatabase`; override via Local.json / env. WAL and 5s busy timeout are applied on connect. |
 
 Migrations run at startup. Pass `--clear-db` to rebuild from migrations.
 

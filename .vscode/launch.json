@@ -2,19 +2,14 @@
     "version": "0.2.0",
     "configurations": [
         {
-            // Use IntelliSense to find out which attributes exist for C# debugging
-            // Use hover for the description of the existing attributes
-            // For further information visit https://github.com/dotnet/vscode-csharp/blob/main/debugger-launchjson.md.
-            "name": ".NET Core Launch (web)",
+            "name": "Proxy (Comprexy.Api)",
             "type": "coreclr",
             "request": "launch",
             "preLaunchTask": "build",
-            // If you have changed target frameworks, make sure to update the program path.
-            "program": "${workspaceFolder}/src/Comprexy.Api/bin/Debug/net10.0/Comprexy.Api.dll",
+            "program": "${workspaceFolder}/apps/proxy/bin/Debug/net10.0/Comprexy.Api.dll",
             "args": [],
-            "cwd": "${workspaceFolder}/src/Comprexy.Api",
+            "cwd": "${workspaceFolder}/apps/proxy",
             "stopAtEntry": false,
-            // Enable launching a web browser when ASP.NET Core starts. For more information: https://aka.ms/VSCode-CS-LaunchJson-WebBrowser
             "serverReadyAction": {
                 "action": "openExternally",
                 "pattern": "\\bNow listening on:\\s+(https?://\\S+)"
@@ -27,9 +22,29 @@
             }
         },
         {
+            "name": "Control API",
+            "type": "coreclr",
+            "request": "launch",
+            "preLaunchTask": "build-control-api",
+            "program": "${workspaceFolder}/apps/control-api/bin/Debug/net10.0/Comprexy.ControlApi.dll",
+            "args": [],
+            "cwd": "${workspaceFolder}/apps/control-api",
+            "stopAtEntry": false,
+            "env": {
+                "ASPNETCORE_ENVIRONMENT": "Development"
+            }
+        },
+        {
             "name": ".NET Core Attach",
             "type": "coreclr",
             "request": "attach"
+        }
+    ],
+    "compounds": [
+        {
+            "name": "Proxy + Control API",
+            "configurations": ["Proxy (Comprexy.Api)", "Control API"],
+            "stopAll": true
         }
     ]
 }
