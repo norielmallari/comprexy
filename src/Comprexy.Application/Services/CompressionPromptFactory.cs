@@ -23,7 +23,7 @@ public class CompressionPromptFactory
     public CompressionPromptFactory(
         string fixedInstruction,
         string? smartInstruction = null,
-        bool stripReasoningContent = true)
+        bool stripReasoningContent = false)
     {
         if (string.IsNullOrWhiteSpace(fixedInstruction))
         {

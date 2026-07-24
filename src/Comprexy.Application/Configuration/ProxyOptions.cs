@@ -16,9 +16,9 @@ public class ProxyOptions
     public bool PassThrough { get; set; }
 
     /// <summary>
-    /// When true (default), strip assistant reasoning fields (<c>reasoning_content</c>,
+    /// When true, strip assistant reasoning fields (<c>reasoning_content</c>,
     /// <c>reasoning</c>) from messages before sending them to chat or compression models.
-    /// Persisted wire JSON is unchanged.
+    /// Persisted wire JSON is unchanged. Default is false (forward reasoning fields as sent).
     /// </summary>
-    public bool StripReasoningContent { get; set; } = true;
+    public bool StripReasoningContent { get; set; }
 }
