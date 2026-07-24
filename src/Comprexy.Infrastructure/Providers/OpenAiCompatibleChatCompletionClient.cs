@@ -293,7 +293,8 @@ public class OpenAiCompatibleChatCompletionClient : IChatCompletionClient
     private string BuildWireBody(ProviderEndpoint endpoint, UpstreamRequest request)
     {
         JsonObject root;
-        if (request.OriginalClientRequest is { ValueKind: JsonValueKind.Object } original)
+        var effectiveRequest = request.RewrittenClientRequest ?? request.OriginalClientRequest;
+        if (effectiveRequest is { ValueKind: JsonValueKind.Object } original)
         {
             root = JsonNode.Parse(original.GetRawText()) as JsonObject
                 ?? throw new InvalidOperationException("Unable to parse original client request.");

@@ -17,6 +17,10 @@ public class ComprexyDbContext : DbContext
 
     public DbSet<CompressionEvent> CompressionEvents => Set<CompressionEvent>();
 
+    public DbSet<ConversationToolCatalog> ConversationToolCatalogs => Set<ConversationToolCatalog>();
+
+    public DbSet<ConversationToolDefinition> ConversationToolDefinitions => Set<ConversationToolDefinition>();
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         modelBuilder.Ignore<EntityBase>();

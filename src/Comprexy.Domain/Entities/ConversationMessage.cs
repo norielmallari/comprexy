@@ -33,6 +33,11 @@ public class ConversationMessage : EntityBase
     /// </summary>
     public int? FoldedIntoWorkingMemoryVersion { get; private set; }
 
+    /// <summary>
+    /// When true, compression fold and send-time trim must retain this message (meta tool-schema turns).
+    /// </summary>
+    public bool IsPinnedForToolSchema { get; private set; }
+
     private ConversationMessage()
     {
     }
@@ -66,6 +71,11 @@ public class ConversationMessage : EntityBase
     public void MarkFoldedInto(int workingMemoryVersion)
     {
         FoldedIntoWorkingMemoryVersion = workingMemoryVersion;
+    }
+
+    public void MarkPinnedForToolSchema()
+    {
+        IsPinnedForToolSchema = true;
     }
 
     /// <summary>

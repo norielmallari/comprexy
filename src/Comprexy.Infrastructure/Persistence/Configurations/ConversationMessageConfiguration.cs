@@ -16,6 +16,7 @@ public class ConversationMessageConfiguration : IEntityTypeConfiguration<Convers
         builder.Property(m => m.RawWireJson);
         builder.Property(m => m.TokenCount).IsRequired();
         builder.Property(m => m.CreatedAt).IsRequired();
+        builder.Property(m => m.IsPinnedForToolSchema).IsRequired().HasDefaultValue(false);
 
         builder.HasIndex(m => new { m.ConversationId, m.Sequence }).IsUnique();
         builder.HasIndex(m => new { m.ConversationId, m.FoldedIntoWorkingMemoryVersion });

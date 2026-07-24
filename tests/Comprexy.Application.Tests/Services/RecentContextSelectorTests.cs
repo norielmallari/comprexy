@@ -117,6 +117,107 @@ public class RecentContextSelectorTests
         Assert.Equal(MessageRole.Tool, selected[1].Role);
     }
 
+    [Fact]
+    public void Select_KeepsPinnedToolSchemaMessagesWhenUnpinnedWouldBeTrimmed()
+    {
+        var selector = CreateSelector(recentMessageCount: 2, maxRecentRawTokens: 10_000);
+        var conversationId = Guid.NewGuid();
+        var pinned = ConversationMessage.Create(
+            conversationId,
+            0,
+            MessageRole.User,
+            "pinned meta turn",
+            5,
+            DateTimeOffset.UtcNow);
+        pinned.MarkPinnedForToolSchema();
+
+        var messages = new List<ConversationMessage>
+        {
+            pinned,
+            ConversationMessage.Create(conversationId, 1, MessageRole.User, "m1", 5, DateTimeOffset.UtcNow),
+            ConversationMessage.Create(conversationId, 2, MessageRole.User, "m2", 5, DateTimeOffset.UtcNow),
+            ConversationMessage.Create(conversationId, 3, MessageRole.User, "m3", 5, DateTimeOffset.UtcNow),
+            ConversationMessage.Create(conversationId, 4, MessageRole.User, "m4", 5, DateTimeOffset.UtcNow)
+        };
+
+        var selected = selector.Select(messages);
+
+        Assert.Contains(selected, m => m.Sequence == 0 && m.IsPinnedForToolSchema);
+        Assert.Equal(3, selected.Count);
+        Assert.Equal(0, selected[0].Sequence);
+        Assert.Equal(3, selected[1].Sequence);
+        Assert.Equal(4, selected[2].Sequence);
+    }
+
+    [Fact]
+    public void Select_WhenOnlyPinnedMessages_ReturnsPinned()
+    {
+        var selector = CreateSelector(recentMessageCount: 2, maxRecentRawTokens: 10_000);
+        var conversationId = Guid.NewGuid();
+        var assistant = ConversationMessage.Create(
+            conversationId,
+            0,
+            MessageRole.Assistant,
+            string.Empty,
+            5,
+            DateTimeOffset.UtcNow,
+            """{"role":"assistant","content":null,"tool_calls":[{"id":"call_meta","type":"function","function":{"name":"get_tool_definition","arguments":"{}"}}]}""");
+        assistant.MarkPinnedForToolSchema();
+        var tool = ConversationMessage.Create(
+            conversationId,
+            1,
+            MessageRole.Tool,
+            """{"tool_name":"lookup"}""",
+            5,
+            DateTimeOffset.UtcNow,
+            """{"role":"tool","tool_call_id":"call_meta","content":"{}"}""");
+        tool.MarkPinnedForToolSchema();
+
+        var selected = selector.Select([assistant, tool]);
+
+        Assert.Equal(2, selected.Count);
+        Assert.All(selected, m => Assert.True(m.IsPinnedForToolSchema));
+        Assert.Equal(0, selected[0].Sequence);
+        Assert.Equal(1, selected[1].Sequence);
+    }
+
+    [Fact]
+    public void Select_WhenUnpinnedAreOnlyOrphanTools_StillKeepsPinned()
+    {
+        var selector = CreateSelector(recentMessageCount: 8, maxRecentRawTokens: 10_000);
+        var conversationId = Guid.NewGuid();
+        var orphan = ConversationMessage.Create(
+            conversationId,
+            0,
+            MessageRole.Tool,
+            "orphan",
+            5,
+            DateTimeOffset.UtcNow);
+        var pinnedAssistant = ConversationMessage.Create(
+            conversationId,
+            1,
+            MessageRole.Assistant,
+            string.Empty,
+            5,
+            DateTimeOffset.UtcNow);
+        pinnedAssistant.MarkPinnedForToolSchema();
+        var pinnedTool = ConversationMessage.Create(
+            conversationId,
+            2,
+            MessageRole.Tool,
+            "hydrated",
+            5,
+            DateTimeOffset.UtcNow);
+        pinnedTool.MarkPinnedForToolSchema();
+
+        var selected = selector.Select([orphan, pinnedAssistant, pinnedTool]);
+
+        Assert.Equal(2, selected.Count);
+        Assert.DoesNotContain(selected, m => m.Sequence == 0);
+        Assert.True(selected[0].IsPinnedForToolSchema);
+        Assert.True(selected[1].IsPinnedForToolSchema);
+    }
+
     private static RecentContextSelector CreateSelector(int recentMessageCount, int maxRecentRawTokens) =>
         new(Options.Create(new ContextPolicyOptions
         {

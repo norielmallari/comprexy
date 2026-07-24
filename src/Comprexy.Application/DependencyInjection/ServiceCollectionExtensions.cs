@@ -34,6 +34,9 @@ public static class ServiceCollectionExtensions
         services.AddOptions<TokenEstimateCacheOptions>()
             .Bind(configuration.GetSection(TokenEstimateCacheOptions.SectionName));
 
+        services.AddOptions<ToolSchemaOptions>()
+            .Bind(configuration.GetSection(ToolSchemaOptions.SectionName));
+
         services.AddSingleton<IRequestTraceFileSession, RequestTraceFileSession>();
         services.AddSingleton<IPayloadTraceLogger, PayloadTraceLogger>();
         services.AddSingleton<IConversationIdentityResolver, ConversationIdentityResolver>();
@@ -42,6 +45,10 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<ContextBuilder>();
         services.AddSingleton<RecentContextSelector>();
         services.AddSingleton<CompressionPromptFactory>();
+        services.AddSingleton<ToolSchemaPromptFactory>();
+        services.AddSingleton<ToolCatalogParser>();
+        services.AddSingleton<ToolArgumentValidator>();
+        services.AddScoped<ToolSchemaOrchestrator>();
         services.AddSingleton<ProviderEndpointResolver>();
         services.AddScoped<ICompressionOrchestrator, CompressionOrchestrator>();
         services.AddScoped<ProxyChatCompletionService>();

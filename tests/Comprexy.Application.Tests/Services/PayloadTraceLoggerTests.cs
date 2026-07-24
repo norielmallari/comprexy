@@ -116,6 +116,55 @@ public class PayloadTraceLoggerTests
     }
 
     [Fact]
+    public void LogInput_UsesRelaxedEscapingForReadablePunctuation()
+    {
+        var logger = new CapturingLogger();
+        var tracer = CreateTracer(new TraceOptions { ClientInput = true }, logger);
+
+        tracer.LogInput(
+            PayloadTraceLabels.ClientInput,
+            """{"content":"use `backticks` and Source -> Target"}""");
+
+        var message = Assert.Single(logger.Entries).Message;
+        Assert.Contains("`backticks`", message);
+        Assert.Contains("Source -> Target", message);
+        Assert.DoesNotContain("\\u0060", message);
+        Assert.DoesNotContain("\\u003E", message);
+    }
+
+    [Fact]
+    public void LogInput_ExpandsMultilineContentAsBlock()
+    {
+        var logger = new CapturingLogger();
+        var tracer = CreateTracer(new TraceOptions { ClientInput = true }, logger);
+
+        tracer.LogInput(
+            PayloadTraceLabels.ClientInput,
+            """{"role":"system","content":"line one\nline two"}""");
+
+        var message = Assert.Single(logger.Entries).Message;
+        Assert.Contains("\"content\": |", message);
+        Assert.Contains("line one", message);
+        Assert.Contains("line two", message);
+        Assert.DoesNotContain("line one\\nline two", message);
+    }
+
+    [Fact]
+    public void LogInput_ExpandsNestedJsonArguments()
+    {
+        var logger = new CapturingLogger();
+        var tracer = CreateTracer(new TraceOptions { ModelInput = true }, logger);
+
+        tracer.LogInput(
+            PayloadTraceLabels.ModelInput,
+            """{"function":{"name":"read","arguments":"{\"filePath\":\"/tmp/a.md\"}"}}""");
+
+        var message = Assert.Single(logger.Entries).Message;
+        Assert.Contains("\"arguments\": {", message);
+        Assert.Contains("\"filePath\": \"/tmp/a.md\"", message);
+    }
+
+    [Fact]
     public void LogInput_PrettyPrintsCompactJsonStrings()
     {
         var logger = new CapturingLogger();

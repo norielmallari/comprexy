@@ -31,6 +31,7 @@ public class ProxyChatCompletionService
     private readonly IChatCompletionClient _chatCompletionClient;
     private readonly ICompressionQueue _compressionQueue;
     private readonly ICompressionOrchestrator _compressionOrchestrator;
+    private readonly ToolSchemaOrchestrator _toolSchemaOrchestrator;
     private readonly IUnitOfWork _unitOfWork;
     private readonly IClock _clock;
     private readonly ContextPolicyOptions _policy;
@@ -52,6 +53,7 @@ public class ProxyChatCompletionService
         IChatCompletionClient chatCompletionClient,
         ICompressionQueue compressionQueue,
         ICompressionOrchestrator compressionOrchestrator,
+        ToolSchemaOrchestrator toolSchemaOrchestrator,
         IUnitOfWork unitOfWork,
         IClock clock,
         IOptions<ContextPolicyOptions> policy,
@@ -72,6 +74,7 @@ public class ProxyChatCompletionService
         _chatCompletionClient = chatCompletionClient;
         _compressionQueue = compressionQueue;
         _compressionOrchestrator = compressionOrchestrator;
+        _toolSchemaOrchestrator = toolSchemaOrchestrator;
         _unitOfWork = unitOfWork;
         _clock = clock;
         _policy = policy.Value;
@@ -94,9 +97,9 @@ public class ProxyChatCompletionService
             cancellationToken);
 
         var prepared = await PrepareAsync(request, conversationKey, cancellationToken);
-        var upstreamResult = await _chatCompletionClient.CompleteAsync(
-            prepared.Endpoint,
-            prepared.UpstreamRequest,
+        var upstreamResult = await ExecuteUpstreamWithToolSchemaAsync(
+            prepared,
+            request.Stream,
             cancellationToken);
 
         return await CompleteAsync(prepared, upstreamResult, cancellationToken);
@@ -121,13 +124,51 @@ public class ProxyChatCompletionService
 
         var prepared = await PrepareAsync(request, conversationKey, cancellationToken);
         onConversationReady(prepared.Conversation.Id);
-        var upstreamResult = await _chatCompletionClient.StreamAsync(
+
+        if (prepared.ToolSchema is not null)
+        {
+            var loop = await _toolSchemaOrchestrator.RunStreamingLoopAsync(
+                prepared.ToolSchema.Session,
+                prepared.Endpoint,
+                prepared.UpstreamRequest,
+                onRawSseData,
+                cancellationToken);
+            return await CompleteAsync(prepared, loop.FinalUpstreamResult, cancellationToken);
+        }
+
+        var streamedResult = await _chatCompletionClient.StreamAsync(
             prepared.Endpoint,
             prepared.UpstreamRequest,
             onRawSseData,
             cancellationToken);
 
-        return await CompleteAsync(prepared, upstreamResult, cancellationToken);
+        return await CompleteAsync(prepared, streamedResult, cancellationToken);
+    }
+
+    private async Task<UpstreamChatResult> ExecuteUpstreamWithToolSchemaAsync(
+        PreparedRequest prepared,
+        bool stream,
+        CancellationToken cancellationToken)
+    {
+        var upstreamRequest = prepared.UpstreamRequest with { Stream = stream };
+        var upstreamResult = await _chatCompletionClient.CompleteAsync(
+            prepared.Endpoint,
+            upstreamRequest,
+            cancellationToken);
+
+        if (prepared.ToolSchema is null)
+        {
+            return upstreamResult;
+        }
+
+        var loop = await _toolSchemaOrchestrator.RunInternalLoopAsync(
+            prepared.ToolSchema.Session,
+            prepared.Endpoint,
+            upstreamRequest,
+            upstreamResult,
+            cancellationToken);
+
+        return loop.FinalUpstreamResult;
     }
 
     private async Task<PreparedRequest> PrepareAsync(
@@ -176,6 +217,23 @@ public class ProxyChatCompletionService
         foreach (var message in nonSystemNewMessages)
         {
             newlyPersisted.Add(PersistMessage(conversation.Id, nextSequence++, message, now));
+        }
+
+        if (_toolSchemaOrchestrator.ShouldAttemptActivation(_proxyOptions.PassThrough))
+        {
+            var newToolMessages = nonSystemNewMessages.Where(m => m.Role == MessageRole.Tool).ToList();
+            if (newToolMessages.Count > 0)
+            {
+                // History for announce/close must exclude the tool results under validation;
+                // include same-batch assistants so client-replayed tool_calls are visible.
+                var validationHistory = storedMessages
+                    .Concat(newlyPersisted.Where(m => m.Role != MessageRole.Tool))
+                    .OrderBy(m => m.Sequence)
+                    .ToList();
+                _toolSchemaOrchestrator.ValidateDownstreamToolResults(
+                    newToolMessages,
+                    validationHistory);
+            }
         }
 
         // Absolute sync to this request's history length (avoids drift from partial advances).
@@ -246,7 +304,15 @@ public class ProxyChatCompletionService
         // (transparent messages). The retain/sliding window is applied only during compression.
         if (workingMemory is null)
         {
-            var preCompressionTokens = _tokenEstimator.CountPromptTokens(request.Messages, request.RawRequest);
+            var preWmToolSchema = await TryPrepareToolSchemaAsync(
+                conversation.Id,
+                request.Messages,
+                request.RawRequest,
+                allMessages,
+                cancellationToken);
+            var preWmMessages = preWmToolSchema?.OutgoingMessages ?? request.Messages;
+            var preWmPayload = preWmToolSchema?.RewrittenClientRequest ?? request.RawRequest;
+            var preCompressionTokens = _tokenEstimator.CountPromptTokens(preWmMessages, preWmPayload);
             var preCompressionDecision = _budgetEvaluator.Evaluate(preCompressionTokens);
 
             if (preCompressionDecision != ContextBudgetDecision.EmergencyCompressionRequired)
@@ -262,23 +328,24 @@ public class ProxyChatCompletionService
                     windowEndSequence: currentMessageEntity.Sequence,
                     recentRawCount: allMessages.Count);
 
-                return new PreparedRequest(
+                return await BuildPreparedRequestAsync(
                     conversation,
                     nextSequence,
                     preCompressionTokens,
                     preCompressionDecision,
                     endpoint,
-                    new UpstreamRequest(
-                        request.Messages,
-                        request.Stream,
-                        request.RawRequest,
-                        request.CallOptions,
-                        ReplaceMessages: false),
-                    SkipCompression: false,
+                    request.Messages,
+                    request.RawRequest,
+                    request,
+                    allMessages,
+                    skipCompression: false,
                     request.Messages.Count,
                     allMessages[0].Sequence,
                     currentMessageEntity.Sequence,
-                    allMessages.Count);
+                    allMessages.Count,
+                    replaceMessages: false,
+                    cancellationToken,
+                    preWmToolSchema);
             }
 
             if (_policy.EmergencyCompression != EmergencyCompressionMode.Sync)
@@ -338,7 +405,15 @@ public class ProxyChatCompletionService
             currentMessageEntity.Sequence);
 
         var outgoing = _contextBuilder.Build(conversation.SystemPrompt, workingMemory, recentRaw, currentUserMessage);
-        var estimatedTokens = _tokenEstimator.CountPromptTokens(outgoing, request.RawRequest);
+        var toolSchema = await TryPrepareToolSchemaAsync(
+            conversation.Id,
+            outgoing,
+            request.RawRequest,
+            allMessages,
+            cancellationToken);
+        var estimateMessages = toolSchema?.OutgoingMessages ?? outgoing;
+        var estimatePayload = toolSchema?.RewrittenClientRequest ?? request.RawRequest;
+        var estimatedTokens = _tokenEstimator.CountPromptTokens(estimateMessages, estimatePayload);
         var decision = ranPreCompressionEmergency
             ? ContextBudgetDecision.EmergencyCompressionRequired
             : _budgetEvaluator.Evaluate(estimatedTokens);
@@ -377,7 +452,15 @@ public class ProxyChatCompletionService
                 currentMessageEntity.Sequence);
 
             outgoing = _contextBuilder.Build(conversation.SystemPrompt, workingMemory, recentRaw, currentUserMessage);
-            estimatedTokens = _tokenEstimator.CountPromptTokens(outgoing, request.RawRequest);
+            toolSchema = await TryPrepareToolSchemaAsync(
+                conversation.Id,
+                outgoing,
+                request.RawRequest,
+                refreshed,
+                cancellationToken);
+            estimateMessages = toolSchema?.OutgoingMessages ?? outgoing;
+            estimatePayload = toolSchema?.RewrittenClientRequest ?? request.RawRequest;
+            estimatedTokens = _tokenEstimator.CountPromptTokens(estimateMessages, estimatePayload);
             windowStart = recentRaw.Count > 0 ? recentRaw[0].Sequence : null;
             windowEnd = currentMessageEntity.Sequence;
             LogContextBudget(
@@ -406,7 +489,20 @@ public class ProxyChatCompletionService
                 workingMemory,
                 recentRaw,
                 currentUserMessage,
-                request.RawRequest);
+                estimatePayload);
+
+            if (toolSchema is not null)
+            {
+                toolSchema = await TryPrepareToolSchemaAsync(
+                    conversation.Id,
+                    outgoing,
+                    request.RawRequest,
+                    allMessages,
+                    cancellationToken);
+                estimateMessages = toolSchema?.OutgoingMessages ?? outgoing;
+                estimatePayload = toolSchema?.RewrittenClientRequest ?? estimatePayload;
+                estimatedTokens = _tokenEstimator.CountPromptTokens(estimateMessages, estimatePayload);
+            }
 
             windowEnd = currentMessageEntity.Sequence;
             LogContextBudget(
@@ -427,23 +523,111 @@ public class ProxyChatCompletionService
             }
         }
 
-        return new PreparedRequest(
+        return await BuildPreparedRequestAsync(
             conversation,
             nextSequence,
             estimatedTokens,
             decision,
             endpoint,
-            new UpstreamRequest(
-                outgoing,
-                request.Stream,
-                request.RawRequest,
-                request.CallOptions,
-                ReplaceMessages: true),
-            SkipCompression: false,
+            outgoing,
+            request.RawRequest,
+            request,
+            allMessages,
+            skipCompression: false,
             request.Messages.Count,
             windowStart,
             windowEnd,
-            recentRaw.Count);
+            recentRaw.Count,
+            replaceMessages: true,
+            cancellationToken,
+            toolSchema);
+    }
+
+    private async Task<ToolSchemaPrepareResult?> TryPrepareToolSchemaAsync(
+        Guid conversationId,
+        IReadOnlyList<ChatMessage> outgoingMessages,
+        JsonElement? rawRequest,
+        IReadOnlyList<ConversationMessage> allMessages,
+        CancellationToken cancellationToken)
+    {
+        if (!_toolSchemaOrchestrator.ShouldAttemptActivation(_proxyOptions.PassThrough))
+        {
+            return null;
+        }
+
+        var toolSchema = await _toolSchemaOrchestrator.TryPrepareRewriteAsync(
+            conversationId,
+            outgoingMessages,
+            rawRequest,
+            allMessages,
+            cancellationToken);
+
+        if (toolSchema is not null)
+        {
+            await _unitOfWork.SaveChangesAsync(cancellationToken);
+        }
+
+        return toolSchema;
+    }
+
+    private async Task<PreparedRequest> BuildPreparedRequestAsync(
+        Conversation conversation,
+        int nextSequence,
+        int estimatedTokens,
+        ContextBudgetDecision decision,
+        ProviderEndpoint endpoint,
+        IReadOnlyList<ChatMessage> outgoingMessages,
+        JsonElement? rawRequest,
+        IncomingChatRequest request,
+        IReadOnlyList<ConversationMessage> allMessages,
+        bool skipCompression,
+        int incomingMessageCount,
+        int? windowStartSequence,
+        int? windowEndSequence,
+        int recentRawCount,
+        bool replaceMessages,
+        CancellationToken cancellationToken,
+        ToolSchemaPrepareResult? precomputedToolSchema = null)
+    {
+        var toolSchema = precomputedToolSchema
+            ?? await TryPrepareToolSchemaAsync(
+                conversation.Id,
+                outgoingMessages,
+                rawRequest,
+                allMessages,
+                cancellationToken);
+
+        var messages = outgoingMessages;
+        var tokens = estimatedTokens;
+
+        if (toolSchema is not null)
+        {
+            messages = toolSchema.OutgoingMessages;
+            tokens = _tokenEstimator.CountPromptTokens(messages, toolSchema.RewrittenClientRequest);
+        }
+
+        // ToolSchema injects system rules into Messages — always replace wire messages when active.
+        var effectiveReplaceMessages = toolSchema is not null || replaceMessages;
+
+        return new PreparedRequest(
+            conversation,
+            nextSequence,
+            tokens,
+            decision,
+            endpoint,
+            new UpstreamRequest(
+                messages,
+                request.Stream,
+                request.RawRequest,
+                request.CallOptions,
+                ReplaceMessages: effectiveReplaceMessages,
+                RewrittenClientRequest: toolSchema?.RewrittenClientRequest),
+            skipCompression,
+            incomingMessageCount,
+            windowStartSequence,
+            windowEndSequence,
+            recentRawCount,
+            toolSchema);
     }
 
     /// <summary>
@@ -641,7 +825,8 @@ public class ProxyChatCompletionService
         Guid conversationId,
         int sequence,
         ChatMessage message,
-        DateTimeOffset now)
+        DateTimeOffset now,
+        bool pinForToolSchema = false)
     {
         var tokenCount = _tokenEstimator.CountTokens([message]);
         var rawWireJson = message.RawWireMessage?.GetRawText();
@@ -653,6 +838,11 @@ public class ProxyChatCompletionService
             tokenCount,
             now,
             rawWireJson);
+        if (pinForToolSchema)
+        {
+            entity.MarkPinnedForToolSchema();
+        }
+
         _messageRepository.Add(entity);
         return entity;
     }
@@ -718,6 +908,26 @@ public class ProxyChatCompletionService
         UpstreamChatResult upstreamResult,
         CancellationToken cancellationToken)
     {
+        var sequence = prepared.NextSequence;
+        if (prepared.ToolSchema is not null)
+        {
+            foreach (var turn in prepared.ToolSchema.Session.PendingPersistedTurns)
+            {
+                PersistMessage(
+                    prepared.Conversation.Id,
+                    sequence++,
+                    turn.AssistantMessage,
+                    _clock.UtcNow,
+                    pinForToolSchema: turn.PinBoth);
+                PersistMessage(
+                    prepared.Conversation.Id,
+                    sequence++,
+                    turn.ToolMessage,
+                    _clock.UtcNow,
+                    pinForToolSchema: turn.PinBoth);
+            }
+        }
+
         var assistantContent = string.IsNullOrWhiteSpace(upstreamResult.Content)
             ? SummarizeAssistantContent(upstreamResult.AssistantMessageJson)
             : upstreamResult.Content;
@@ -729,7 +939,7 @@ public class ProxyChatCompletionService
             ?? _tokenEstimator.CountTokens([assistantMessage]);
         var assistantEntity = ConversationMessage.Create(
             prepared.Conversation.Id,
-            prepared.NextSequence,
+            sequence,
             MessageRole.Assistant,
             assistantContent,
             assistantTokenCount,
@@ -802,5 +1012,6 @@ public class ProxyChatCompletionService
         int IncomingMessageCount,
         int? WindowStartSequence,
         int? WindowEndSequence,
-        int RecentRawCount);
+        int RecentRawCount,
+        ToolSchemaPrepareResult? ToolSchema = null);
 }
