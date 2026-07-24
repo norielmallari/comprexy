@@ -60,8 +60,8 @@ Token budgets, compression retain windows, and emergency behavior.
 | Key | Default | Description |
 | --- | --- | --- |
 | `SoftLimitTokens` | `40000` | Above this, background compression is enqueued after a successful reply. |
-| `HardLimitTokens` | `52000` | At/above this, send-time retain trim runs; still over → HTTP 413 (unless sync emergency compacts first). |
-| `CompressionMaxInputTokens` | `52000` | Max tokens in a compression prompt body. Soft jobs prefer full-raw rebuild when stored messages fit; otherwise merge fold. |
+| `HardLimitTokens` | `64000` | At/above this, send-time retain trim runs; still over → HTTP 413 (unless sync emergency compacts first). Set to `null` to disable hard-limit checking (no emergency trim / 413). |
+| `CompressionMaxInputTokens` | `52000` | Max tokens in a compression prompt body. Soft jobs prefer full-raw rebuild when stored messages fit; otherwise merge fold. Set to `null` to disable the compression input cap (always prefer full-raw when soft). |
 | `EmergencyCompression` | `Off` | `Off` (default): trim then 413. `Sync`: blocking emergency compression when tool chains are closed. |
 | `CancelBackgroundCompressionOnChat` | `false` | When `false`, chat waits for in-flight soft compression. When `true`, arriving chat cancels soft compression and continues with last known-good memory. |
 | `RetainSelection` | `Fixed` | `Fixed` or `Smart` (soft only). Smart reuses live chat prefix + retain-index instruction. |

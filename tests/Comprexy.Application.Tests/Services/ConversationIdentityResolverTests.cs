@@ -208,7 +208,7 @@ public class ConversationIdentityResolverTests
     }
 
     [Fact]
-    public void Resolve_WithoutHeader_DifferentUserQuerySameFingerprint()
+    public void Resolve_WithoutHeader_DifferentUserQueryDifferentFingerprint()
     {
         var query1 = "<user_query>what is this?</user_query>";
         var query2 = "<user_query>can you help me?</user_query>";
@@ -225,6 +225,40 @@ public class ConversationIdentityResolverTests
         {
             new(MessageRole.System, "You are a helpful assistant."),
             new(MessageRole.User, $"Fix this bug. {query2}"),
+            new(MessageRole.Assistant, "Sure."),
+            new(MessageRole.User, "Also add tests.")
+        };
+
+        var key1 = _resolver.Resolve(null, messages1);
+        var key2 = _resolver.Resolve(null, messages2);
+
+        Assert.NotEqual(key1, key2);
+    }
+
+    [Fact]
+    public void Resolve_WithoutHeader_SameUserQueryDifferentMetadataSameFingerprint()
+    {
+        var messages1 = new List<ChatMessage>
+        {
+            new(MessageRole.System, "You are a helpful assistant."),
+            new(
+                MessageRole.User,
+                "<open_and_recently_viewed_files>a.cs</open_and_recently_viewed_files>\n" +
+                "<timestamp>2025-01-01T00:00:00Z</timestamp>\n" +
+                "<user_query>Fix this bug.</user_query>"),
+            new(MessageRole.Assistant, "Sure."),
+            new(MessageRole.User, "Also add tests.")
+        };
+
+        var messages2 = new List<ChatMessage>
+        {
+            new(MessageRole.System, "You are a helpful assistant."),
+            new(
+                MessageRole.User,
+                "<open_and_recently_viewed_files>b.cs</open_and_recently_viewed_files>\n" +
+                "<attached_files>note.md</attached_files>\n" +
+                "<timestamp>2025-01-01T00:01:00Z</timestamp>\n" +
+                "<user_query>Fix this bug.</user_query>"),
             new(MessageRole.Assistant, "Sure."),
             new(MessageRole.User, "Also add tests.")
         };

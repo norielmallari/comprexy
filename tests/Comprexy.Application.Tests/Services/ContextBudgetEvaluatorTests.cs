@@ -7,7 +7,7 @@ namespace Comprexy.Application.Tests.Services;
 
 public class ContextBudgetEvaluatorTests
 {
-    private static ContextBudgetEvaluator CreateEvaluator(int soft = 100, int hard = 200)
+    private static ContextBudgetEvaluator CreateEvaluator(int soft = 100, int? hard = 200)
     {
         var options = Options.Create(new ContextPolicyOptions
         {
@@ -76,5 +76,25 @@ public class ContextBudgetEvaluatorTests
         var decision = evaluator.Evaluate(199);
 
         Assert.Equal(ContextBudgetDecision.ForwardWithHighPriorityCompression, decision);
+    }
+
+    [Fact]
+    public void Evaluate_NullHardLimit_AboveSoft_ReturnsHighPriorityCompression()
+    {
+        var evaluator = CreateEvaluator(soft: 100, hard: null);
+
+        var decision = evaluator.Evaluate(10_000);
+
+        Assert.Equal(ContextBudgetDecision.ForwardWithHighPriorityCompression, decision);
+    }
+
+    [Fact]
+    public void Evaluate_NullHardLimit_BelowSoft_ReturnsForwardImmediate()
+    {
+        var evaluator = CreateEvaluator(soft: 100, hard: null);
+
+        var decision = evaluator.Evaluate(50);
+
+        Assert.Equal(ContextBudgetDecision.ForwardImmediate, decision);
     }
 }

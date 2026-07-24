@@ -27,16 +27,17 @@ public class ContextPolicyOptions
     /// <summary>
     /// At or above this: when <see cref="EmergencyCompression"/> is <see cref="EmergencyCompressionMode.Sync"/>,
     /// run synchronous emergency compression before forwarding; otherwise send-time trim then 413 if still over.
+    /// Set to <c>null</c> to disable hard limit checking.
     /// </summary>
-    public int HardLimitTokens { get; set; } = 52_000;
+    public int? HardLimitTokens { get; set; } = 64_000;
 
     /// <summary>
     /// Max tokens allowed in a compression-model prompt body (full raw transcript or WM + fold
     /// segment). Soft compression prefers full raw when total stored message tokens are at or
-    /// below this; otherwise it merges into working memory. Defaults to the same value as
-    /// <see cref="HardLimitTokens"/>.
+    /// below this; otherwise it merges into working memory. Set to <c>null</c> to disable the cap.
+    /// Defaults to the same value as <see cref="HardLimitTokens"/>.
     /// </summary>
-    public int CompressionMaxInputTokens { get; set; } = 52_000;
+    public int? CompressionMaxInputTokens { get; set; } = 52_000;
 
     /// <summary>
     /// Soft compression retain strategy. Default <see cref="RetainSelectionMode.Fixed"/>.

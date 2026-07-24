@@ -19,7 +19,7 @@ public class ContextBudgetEvaluator
 
     public ContextBudgetDecision Evaluate(int estimatedTokens)
     {
-        if (estimatedTokens >= _policy.HardLimitTokens)
+        if (_policy.HardLimitTokens.HasValue && estimatedTokens >= _policy.HardLimitTokens.Value)
         {
             return ContextBudgetDecision.EmergencyCompressionRequired;
         }
