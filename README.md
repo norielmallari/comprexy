@@ -40,7 +40,7 @@ If you need routing, spend tracking, or broad agent wrappers, tools like LiteLLM
 | Local-first, cloud-ready | Point `Provider` at Ollama, LM Studio, vLLM, OpenAI, Azure OpenAI–compatible APIs, and similar |
 | Optional separate compress model | Use a cheaper/faster model for compression via `Compression` settings |
 | Pass-through mode | `Proxy:PassThrough` forwards the original body unmodified — no rebuild, compression, or 413 budget gate. Escape hatch only; leave off for normal use |
-| Strip reasoning | `Proxy:StripReasoningContent` (default on) removes `reasoning_content` / `reasoning` from outbound chat and compression messages |
+| Strip reasoning | `Proxy:StripReasoningContent` (default off) removes `reasoning_content` / `reasoning` from outbound chat and compression messages when enabled |
 | Request audit files | Optional per-request / per-compression logs under `logs/requests/` (opt in via `appsettings.Local.json`) |
 | SQLite persistence | Conversations, messages, and working memory in a local DB |
 
@@ -126,7 +126,7 @@ Settings load in order: `appsettings.json` → `appsettings.{Environment}.json` 
 | `Compression` | Optional compression endpoint; falls back to `Provider`. `TimeoutSeconds` often longer than chat (default 600). `EnableThinking` (default false) sets `chat_template_kwargs.enable_thinking` on compression calls. `InstructionFile` is the Fixed compression system prompt (`Prompts/compression-fixed.md`); `SmartInstructionFile` is the Smart trailing user instruction (`Prompts/compression-smart.md`, live prefix + retain index) |
 | `ContextPolicy` | Soft/hard token limits, `CompressionMaxInputTokens`, `EmergencyCompression` (`Off` default / `Sync`), `CancelBackgroundCompressionOnChat` (default false — chat waits; `true` cancels soft compression on chat), `RetainSelection` (`Fixed` default / `Smart`), Fixed retain counts (`CompressionRetainMessageCount` / `EmergencyRecentMessageCount` default `1` = tip only; `MaxRecentRawTokens`), Smart caps (`SmartRetainMaxMessages`, `SmartRetainMaxTokens`), `DedupeDuplicateFileReads` (default true), tokenizer encoding |
 | `Auth` | Optional `RequiredApiKey` — Bearer or `X-Api-Key` required on `/v1/*` only; `/` and `/health` stay open |
-| `Proxy` | `PassThrough` skips rebuild, compression, and hard-limit enforcement (raw forward). `StripReasoningContent` (default true) drops `reasoning_content` / `reasoning` from messages before chat and compression upstream calls |
+| `Proxy` | `PassThrough` skips rebuild, compression, and hard-limit enforcement (raw forward). `StripReasoningContent` (default false) drops `reasoning_content` / `reasoning` from messages before chat and compression upstream calls when enabled |
 | `Trace` | Console payload categories (need `Logging:LogLevel:Comprexy` = `Trace`) and/or `RequestFiles` for audit files. `MaxPayloadChars: 0` means no truncation |
 | `ConnectionStrings:Comprexy` | SQLite path (default `Data Source=comprexy.db;Cache=Shared`). WAL + 5s busy timeout are applied on connect |
 
