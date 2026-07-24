@@ -99,6 +99,11 @@ public class CompressionOrchestrator : ICompressionOrchestrator
             ? _policy.EmergencyRecentMessageCount
             : _policy.CompressionRetainMessageCount;
         var keepRecent = _recentContextSelector.Select(unfolded, maxMessagesOverride: retainCount).ToList();
+        var pinned = unfolded.Where(m => m.IsPinnedForToolSchema).ToList();
+        keepRecent = keepRecent
+            .Concat(pinned.Where(p => keepRecent.All(k => k.Id != p.Id)))
+            .OrderBy(m => m.Sequence)
+            .ToList();
 
         if (unfolded.Count <= keepRecent.Count)
         {

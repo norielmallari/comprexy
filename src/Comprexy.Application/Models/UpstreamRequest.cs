@@ -19,4 +19,5 @@ public sealed record UpstreamRequest(
     JsonElement? OriginalClientRequest = null,
     ChatCompletionCallOptions? CallOptions = null,
     bool ReplaceMessages = true,
-    UpstreamRequestPurpose Purpose = UpstreamRequestPurpose.Chat);
+    UpstreamRequestPurpose Purpose = UpstreamRequestPurpose.Chat,
+    JsonElement? RewrittenClientRequest = null);

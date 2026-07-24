@@ -1,6 +1,6 @@
 # Architecture
 
-Contributor-oriented map of how Comprexy is structured and how a chat request moves through the system. Operator setup and config tables live in the [README](../README.md); deferred work lives in [`TODO.md`](TODO.md).
+Contributor-oriented map of how Comprexy is structured and how a chat request moves through the system. Operator setup and config tables live in [`SETTINGS.md`](SETTINGS.md); deferred work lives in [`TODO.md`](TODO.md).
 
 ## Purpose
 
@@ -25,7 +25,7 @@ tests/
 | --- | --- |
 | **Api** | Parse OpenAI-shaped JSON, map errors/status codes, stream SSE, optional API-key gate, composition root |
 | **Application** | Conversation identity, prepare/complete chat, budget decisions, context rebuild, compression orchestration |
-| **Domain** | `EntityBase`, `Conversation`, `ConversationMessage`, `WorkingMemory`, `CompressionEvent` and related enums |
+| **Domain** | `EntityBase`, `Conversation`, `ConversationMessage`, `WorkingMemory`, `CompressionEvent`, `ConversationToolCatalog`, `ConversationToolDefinition` and related enums |
 | **Infrastructure** | Persistence, OpenAI-compatible HTTP client, tiktoken estimates, in-process compression queue + hosted worker |
 
 Dependency rule: Api → Application → Domain; Infrastructure implements Application ports. Prefer constructor injection; register app services in `AddComprexyApplication`, adapters in `AddComprexyInfrastructure`.
@@ -58,8 +58,8 @@ flowchart TB
 
 1. **Identity** — `ConversationIdentityResolver`: prefer `X-Comprexy-Conversation-Id`; else fingerprint system + first two user message texts.
 2. **Gate** — exclusive lease on the conversation key via `ConversationRequestGate` (serializes chat vs soft compression for that key).
-3. **Prepare** — load/create conversation; stage new client messages; load latest working memory + unfolded messages; build outgoing context; evaluate soft/hard budget; optionally run sync emergency compression; apply send-time retain trim when still over hard.
-4. **Upstream** — non-stream `CompleteAsync` or stream with SSE; model comes from `Provider:Model` when set, otherwise the client's request `model`.
+3. **Prepare** — load/create conversation; stage new client messages; load latest working memory + unfolded messages; build outgoing context; optionally rewrite tools via ToolSchema; evaluate soft/hard budget; optionally run sync emergency compression; apply send-time retain trim when still over hard.
+4. **Upstream** — non-stream `CompleteAsync` or stream with SSE; when ToolSchema is active, hydrate/meta rounds stay proxy-internal (streaming clients get live content/reasoning with meta `tool_calls` and early `[DONE]` suppressed until the final turn); model comes from `Provider:Model` when set, otherwise the client's request `model`.
 5. **Complete** — persist assistant (and staged user) turns; if above soft limit and tool chains allow, enqueue soft compression (job carries the resolved chat model so compression still works when `Provider:Model` / `Compression:Model` are unset).
 
 Persistence timing: new non-assistant messages are staged in prepare and saved in complete after a successful upstream call. Treat the DB as a record of completed turns unless that contract changes (see TODO-002).
@@ -113,13 +113,25 @@ Message conversational order is `ConversationMessage.Sequence` (unique per conve
 | Entity | Role |
 | --- | --- |
 | `Conversation` | Stable key, captured system prompt, `SyncedMessageCount` cursor |
-| `ConversationMessage` | Ordered raw turns; optional wire JSON; fold marker |
+| `ConversationMessage` | Ordered raw turns; optional wire JSON; fold marker; optional `IsPinnedForToolSchema` for meta hydrate turns |
 | `WorkingMemory` | Immutable versioned markdown snapshot + token count |
 | `CompressionEvent` | Attempt diagnostics (mode, status, tokens, duration, error) |
+| `ConversationToolCatalog` | Per-conversation compact tool index snapshot (hash + JSON) |
+| `ConversationToolDefinition` | Full tool definition JSON; `HydratedAt` set after meta-tool retrieval |
 
-Natural indexes (in addition to the GUID PK and unique `ClusterId`): `ConversationKey`; `(ConversationId, Sequence)`; `(ConversationId, FoldedIntoWorkingMemoryVersion)`; `(ConversationId, Version)` on working memory; `(ConversationId, CreatedAt)` on compression events.
+Natural indexes (in addition to the GUID PK and unique `ClusterId`): `ConversationKey`; `(ConversationId, Sequence)`; `(ConversationId, FoldedIntoWorkingMemoryVersion)`; `(ConversationId, Version)` on working memory; `(ConversationId, CreatedAt)` on compression events; unique `ConversationId` on tool catalog; unique `(ConversationId, ToolName)` on tool definitions.
 
-Repositories and `IUnitOfWork` live behind Application abstractions; implementations under `Infrastructure/Persistence`.
+## Tool schema (compact index)
+
+When `ToolSchema:Mode` is `CompactIndex` (default; and `Proxy:PassThrough` is false):
+
+1. **Parse & snapshot** — derive compact rows (`name`, `description`, `required`) from the client `tools[]`; persist catalog + full defs on first activation; on hash mismatch keep snapshot and log.
+2. **Outbound rewrite** — inject stable system rules + compact index; outbound `tools` = `[get_tool_definition]`; token estimates use the rewritten payload.
+3. **Meta loop** — upstream assistant meta calls execute locally; hydrate defs; synthetic JSON tool errors for invalid calls; bounded by `MaxHydrateRoundsPerRequest`. Streaming uses real upstream SSE (not a post-hoc dump): content forwards live; meta/invalid tool tails are held and dropped between rounds.
+4. **Pin / re-insert** — meta assistant+tool turns persist with `IsPinnedForToolSchema`; compression fold and send-time trim never drop pinned messages; missing pins can be re-inserted from DB hydrated defs before upstream.
+5. **Client boundary** — only allowed real tool_calls reach the client; downstream tool results must match open allowed `tool_call_id`s.
+
+Prompt rules: `Comprexy.Api/Prompts/tool-schema.md`. Configuration: [`SETTINGS.md`](SETTINGS.md#toolschema).
 
 ## Supporting pieces
 
@@ -132,16 +144,32 @@ Repositories and `IUnitOfWork` live behind Application abstractions; implementat
 | Auth | `ApiKeyAuthMiddleware` — optional single `Auth:RequiredApiKey` on `/v1/*` only |
 | Tracing | `IPayloadTraceLogger`, optional `IRequestTraceFileSession` under `logs/requests/` |
 | Compression prompts | `Prompts/compression-fixed.md`, `Prompts/compression-smart.md` |
+| Tool schema prompts | `Prompts/tool-schema.md` |
+
+Repositories and `IUnitOfWork` live behind Application abstractions; implementations under `Infrastructure/Persistence`.
+
+## Debugging with logs
+
+When investigating prepare/upstream/complete failures, ToolSchema hydrate loops, budget 413s, or compression skips, **read the logs before guessing**. Prefer evidence from these sources (in order):
+
+1. **API process console / host logs** — `Comprexy.*` categories (`ProxyChatCompletionService`, `ToolSchemaOrchestrator`, `CompressionOrchestrator`, etc.). Context budget lines, catalog hash mismatches, hydrate-round caps, and unhandled proxy errors appear here.
+2. **Request audit files** — when `Trace:RequestFiles` is true, full per-request / per-compression payloads land under `Trace:RequestLogDirectory` (default `logs/requests/` beside the API content root). Payloads are formatted for human reading (relaxed escaping, multiline content blocks); use them for wire-level `tools`, messages, and upstream bodies.
+3. **Payload trace categories** — `Trace:ClientInput`, `ModelInput`, `ContextBudget`, and related flags emit structured payload traces when `Logging:LogLevel:Comprexy` is `Trace` (see [`SETTINGS.md`](SETTINGS.md#trace)).
+
+SQLite (`comprexy.db`) remains the source of truth for persisted turns, working memory versions, and tool-catalog snapshots after a turn completes; logs explain what happened on the path that produced them.
+
+Do not invent parallel debug dumpers in Application code when these surfaces already cover the request. Toggle Trace/RequestFiles via `appsettings.Local.json` for local debugging.
 
 ## Configuration surfaces
 
-Loaded as: `appsettings.json` → environment-specific → host defaults → optional gitignored `appsettings.Local.json`.
+Loaded as: `appsettings.json` → environment-specific → host defaults → optional gitignored `appsettings.Local.json`. Full tables: [`SETTINGS.md`](SETTINGS.md).
 
 | Section | Owns |
 | --- | --- |
 | `Provider` | Upstream chat base URL, key, optional model (null → client `model`), timeout |
 | `Compression` | Optional separate compress endpoint/model/prompts; falls back to Provider |
 | `ContextPolicy` | Soft/hard limits, compression input cap, emergency mode, retain Fixed/Smart knobs |
+| `ToolSchema` | Compact tool index mode, hydrate loop caps, skip-refetch, rules prompt path |
 | `Proxy` | Pass-through; strip reasoning |
 | `Auth` | Optional required API key |
 | `Trace` | Console payload categories / request audit files |
@@ -160,11 +188,11 @@ Loaded as: `appsettings.json` → environment-specific → host defaults → opt
 | If you are changing… | Start here |
 | --- | --- |
 | HTTP contract, status codes, streaming | `Comprexy.Api/Program.cs`, mappers, middleware |
-| Turn prepare/complete, budget gate, enqueue | `ProxyChatCompletionService` |
+| Turn prepare/complete, budget gate, enqueue, tool-schema rewrite | `ProxyChatCompletionService`, `ToolSchemaOrchestrator` |
 | Fold / WM versions / Soft FullRaw vs merge | `CompressionOrchestrator`, `CompressionPromptFactory` |
 | Outgoing message assembly | `ContextBuilder`, `RecentContextSelector` |
 | Identity / fingerprint | `ConversationIdentityResolver` |
 | Schema / keys / indexes | `EntityBase`, EF configs under `Infrastructure/Persistence` (migrations via `dotnet ef` only) |
 | Upstream HTTP / SSE parse | `OpenAiCompatibleChatCompletionClient`, streaming helpers |
 
-When behavior or config defaults change, update the [README](../README.md) (and this document if the structural map drifts).
+When behavior or config defaults change, update [`SETTINGS.md`](SETTINGS.md) (and this document if the structural map drifts).

@@ -35,12 +35,11 @@ public class RecentContextSelector
         }
 
         var ordered = unfoldedExcludingCurrent.OrderBy(m => m.Sequence).ToList();
-        var groups = BuildAtomicGroups(ordered);
-        if (groups.Count == 0)
-        {
-            return [];
-        }
+        var pinned = ordered.Where(m => m.IsPinnedForToolSchema).ToList();
+        var unpinned = ordered.Where(m => !m.IsPinnedForToolSchema).ToList();
 
+        // Unpinned may be empty (all turns pinned) or yield no retainable groups — still keep pins.
+        var groups = BuildAtomicGroups(unpinned);
         var selectedGroups = new List<IReadOnlyList<ConversationMessage>>();
         var tokens = 0;
         var messageCount = 0;
@@ -63,10 +62,13 @@ public class RecentContextSelector
         }
 
         selectedGroups.Reverse();
-        var selected = selectedGroups.SelectMany(g => g).ToList();
+        var selected = selectedGroups.SelectMany(g => g).Concat(pinned).OrderBy(m => m.Sequence).ToList();
 
         // Drop leading orphan tool messages if an incomplete chain somehow remains.
-        while (selected.Count > 0 && selected[0].Role == MessageRole.Tool)
+        // Never strip pinned tool-schema turns — they must survive fold/trim.
+        while (selected.Count > 0 &&
+               selected[0].Role == MessageRole.Tool &&
+               !selected[0].IsPinnedForToolSchema)
         {
             selected.RemoveAt(0);
         }
