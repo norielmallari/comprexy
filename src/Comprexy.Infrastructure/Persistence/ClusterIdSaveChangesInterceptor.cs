@@ -45,6 +45,8 @@ public sealed class ClusterIdSaveChangesInterceptor : SaveChangesInterceptor
         AssignForClrType<ConversationMessage>(context);
         AssignForClrType<WorkingMemory>(context);
         AssignForClrType<CompressionEvent>(context);
+        AssignForClrType<ConversationTurnMetric>(context);
+        AssignForClrType<ConversationMetricsSummary>(context);
         AssignForClrType<ConversationToolCatalog>(context);
         AssignForClrType<ConversationToolDefinition>(context);
     }

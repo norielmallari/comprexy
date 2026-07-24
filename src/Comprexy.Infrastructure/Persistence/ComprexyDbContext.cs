@@ -17,6 +17,10 @@ public class ComprexyDbContext : DbContext
 
     public DbSet<CompressionEvent> CompressionEvents => Set<CompressionEvent>();
 
+    public DbSet<ConversationTurnMetric> ConversationTurnMetrics => Set<ConversationTurnMetric>();
+
+    public DbSet<ConversationMetricsSummary> ConversationMetricsSummaries => Set<ConversationMetricsSummary>();
+
     public DbSet<ConversationToolCatalog> ConversationToolCatalogs => Set<ConversationToolCatalog>();
 
     public DbSet<ConversationToolDefinition> ConversationToolDefinitions => Set<ConversationToolDefinition>();

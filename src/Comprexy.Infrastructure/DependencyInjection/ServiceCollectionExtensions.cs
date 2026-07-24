@@ -34,6 +34,8 @@ public static class ServiceCollectionExtensions
         services.AddScoped<IConversationMessageRepository, EfConversationMessageRepository>();
         services.AddScoped<IWorkingMemoryRepository, EfWorkingMemoryRepository>();
         services.AddScoped<ICompressionEventRepository, EfCompressionEventRepository>();
+        services.AddScoped<IConversationTurnMetricRepository, EfConversationTurnMetricRepository>();
+        services.AddScoped<IConversationMetricsSummaryRepository, EfConversationMetricsSummaryRepository>();
         services.AddScoped<IConversationToolCatalogRepository, EfConversationToolCatalogRepository>();
         services.AddScoped<IConversationToolDefinitionRepository, EfConversationToolDefinitionRepository>();
         services.AddScoped<IUnitOfWork, EfUnitOfWork>();

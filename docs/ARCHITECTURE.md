@@ -12,7 +12,7 @@ It is intentionally narrow: chat-completion context management only — not a mu
 
 ```text
 src/
-  Comprexy.Api/              Minimal API host, DTOs, auth middleware, prompts
+  Comprexy.Api/              Minimal API host (`Endpoints/`), DTOs, auth middleware, prompts
   Comprexy.Application/      Use cases, ports (abstractions), orchestration
   Comprexy.Domain/           Entities and enums (no infrastructure deps)
   Comprexy.Infrastructure/   EF Core/SQLite, HTTP upstream client, tokenizer, queue/worker
@@ -24,8 +24,8 @@ tests/
 | Layer | Responsibility |
 | --- | --- |
 | **Api** | Parse OpenAI-shaped JSON, map errors/status codes, stream SSE, optional API-key gate, composition root |
-| **Application** | Conversation identity, prepare/complete chat, budget decisions, context rebuild, compression orchestration |
-| **Domain** | `EntityBase`, `Conversation`, `ConversationMessage`, `WorkingMemory`, `CompressionEvent`, `ConversationToolCatalog`, `ConversationToolDefinition` and related enums |
+| **Application** | Conversation identity, prepare/complete chat, budget decisions, context rebuild, compression orchestration, token metrics |
+| **Domain** | `EntityBase`, `Conversation`, `ConversationMessage`, `WorkingMemory`, `CompressionEvent`, `ConversationTurnMetric`, `ConversationMetricsSummary`, `ConversationToolCatalog`, `ConversationToolDefinition` and related enums |
 | **Infrastructure** | Persistence, OpenAI-compatible HTTP client, tiktoken estimates, in-process compression queue + hosted worker |
 
 Dependency rule: Api → Application → Domain; Infrastructure implements Application ports. Prefer constructor injection; register app services in `AddComprexyApplication`, adapters in `AddComprexyInfrastructure`.
@@ -49,8 +49,9 @@ flowchart TB
 ```
 
 - **Chat path:** `POST /v1/chat/completions` → `ProxyChatCompletionService` (rebuild, budget, compress hooks).
+- **Metrics path:** `GET /v1/comprexy/conversations*` → conversation token proof summaries and per-turn breakdown.
 - **Passthrough path:** other `/v1/{**path}` → reverse-proxy to `Provider` unchanged.
-- **Escape hatch:** `Proxy:PassThrough` forwards the original chat body with no rebuild, compression, or hard-budget 413.
+- **Escape hatch:** `Proxy:PassThrough` forwards the original chat body with no rebuild, compression, hard-budget 413, or turn metrics.
 
 ## Chat request lifecycle
 
@@ -115,11 +116,13 @@ Message conversational order is `ConversationMessage.Sequence` (unique per conve
 | `Conversation` | Stable key, captured system prompt, `SyncedMessageCount` cursor |
 | `ConversationMessage` | Ordered raw turns; optional wire JSON; fold marker; optional `IsPinnedForToolSchema` for meta hydrate turns |
 | `WorkingMemory` | Immutable versioned markdown snapshot + token count |
-| `CompressionEvent` | Attempt diagnostics (mode, status, tokens, duration, error) |
+| `CompressionEvent` | Attempt diagnostics (mode, status, WM tokens, compression LLM usage, duration, error) |
+| `ConversationTurnMetric` | Per successful compressed-path turn: raw vs compressed token proof |
+| `ConversationMetricsSummary` | Conversation rollup including compression LLM overhead |
 | `ConversationToolCatalog` | Per-conversation compact tool index snapshot (hash + JSON) |
 | `ConversationToolDefinition` | Full tool definition JSON; `HydratedAt` set after meta-tool retrieval |
 
-Natural indexes (in addition to the GUID PK and unique `ClusterId`): `ConversationKey`; `(ConversationId, Sequence)`; `(ConversationId, FoldedIntoWorkingMemoryVersion)`; `(ConversationId, Version)` on working memory; `(ConversationId, CreatedAt)` on compression events; unique `ConversationId` on tool catalog; unique `(ConversationId, ToolName)` on tool definitions.
+Natural indexes (in addition to the GUID PK and unique `ClusterId`): `ConversationKey`; `(ConversationId, Sequence)`; `(ConversationId, FoldedIntoWorkingMemoryVersion)`; `(ConversationId, Version)` on working memory; `(ConversationId, CreatedAt)` on compression events; unique `(ConversationId, TurnIndex)` on turn metrics; unique `ConversationId` on metrics summary and tool catalog; unique `(ConversationId, ToolName)` on tool definitions.
 
 ## Tool schema (compact index)
 
@@ -171,6 +174,7 @@ Loaded as: `appsettings.json` → environment-specific → host defaults → opt
 | `ContextPolicy` | Soft/hard limits, compression input cap, emergency mode, retain Fixed/Smart knobs |
 | `ToolSchema` | Compact tool index mode, hydrate loop caps, skip-refetch, rules prompt path |
 | `Proxy` | Pass-through; strip reasoning |
+| `Metrics` | Token ledger capture (default enabled) |
 | `Auth` | Optional required API key |
 | `Trace` | Console payload categories / request audit files |
 | `ConnectionStrings:Comprexy` | SQLite path |
@@ -187,9 +191,10 @@ Loaded as: `appsettings.json` → environment-specific → host defaults → opt
 
 | If you are changing… | Start here |
 | --- | --- |
-| HTTP contract, status codes, streaming | `Comprexy.Api/Program.cs`, mappers, middleware |
+| HTTP contract, status codes, streaming | `Comprexy.Api/Endpoints/*`, mappers, middleware |
 | Turn prepare/complete, budget gate, enqueue, tool-schema rewrite | `ProxyChatCompletionService`, `ToolSchemaOrchestrator` |
 | Fold / WM versions / Soft FullRaw vs merge | `CompressionOrchestrator`, `CompressionPromptFactory` |
+| Token metrics / conversation proof totals | `ConversationTurnMetric`, `ConversationMetricsSummary`, `ConversationMetricsRecorder`, `Endpoints/MetricsEndpoints.cs` |
 | Outgoing message assembly | `ContextBuilder`, `RecentContextSelector` |
 | Identity / fingerprint | `ConversationIdentityResolver` |
 | Schema / keys / indexes | `EntityBase`, EF configs under `Infrastructure/Persistence` (migrations via `dotnet ef` only) |

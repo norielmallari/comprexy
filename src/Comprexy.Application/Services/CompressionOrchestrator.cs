@@ -30,6 +30,7 @@ public class CompressionOrchestrator : ICompressionOrchestrator
     private readonly CompressionPromptFactory _promptFactory;
     private readonly ContextBuilder _contextBuilder;
     private readonly RecentContextSelector _recentContextSelector;
+    private readonly IConversationMetricsRecorder _metricsRecorder;
     private readonly ContextPolicyOptions _policy;
     private readonly CompressionOptions _compressionOptions;
     private readonly ILogger<CompressionOrchestrator> _logger;
@@ -47,6 +48,7 @@ public class CompressionOrchestrator : ICompressionOrchestrator
         CompressionPromptFactory promptFactory,
         ContextBuilder contextBuilder,
         RecentContextSelector recentContextSelector,
+        IConversationMetricsRecorder metricsRecorder,
         IOptions<ContextPolicyOptions> policy,
         IOptions<CompressionOptions> compressionOptions,
         ILogger<CompressionOrchestrator> logger)
@@ -63,6 +65,7 @@ public class CompressionOrchestrator : ICompressionOrchestrator
         _promptFactory = promptFactory;
         _contextBuilder = contextBuilder;
         _recentContextSelector = recentContextSelector;
+        _metricsRecorder = metricsRecorder;
         _policy = policy.Value;
         _compressionOptions = compressionOptions.Value;
         _logger = logger;
@@ -392,7 +395,17 @@ public class CompressionOrchestrator : ICompressionOrchestrator
                 message.MarkFoldedInto(newVersion);
             }
 
-            compressionEvent.Succeed(compressedTokens, newVersion, _clock.UtcNow);
+            var tokensAreEstimated = !result.PromptTokens.HasValue || !result.CompletionTokens.HasValue;
+            var promptTokens = result.PromptTokens ?? inputTokens;
+            var completionTokens = result.CompletionTokens ?? _tokenEstimator.CountTokens(result.Content);
+
+            compressionEvent.Succeed(
+                compressedTokens,
+                newVersion,
+                _clock.UtcNow,
+                promptTokens,
+                completionTokens,
+                tokensAreEstimated);
 
             _logger.LogInformation(
                 "context_compression_completed conversationId={ConversationId} mode={Mode} strategy={Strategy} retainSelection={RetainSelection} originalTokens={OriginalTokens} compressedTokens={CompressedTokens} compressionRatio={CompressionRatio} durationMs={DurationMs} workingMemoryVersion={WorkingMemoryVersion} foldCount={FoldCount}",
@@ -406,6 +419,14 @@ public class CompressionOrchestrator : ICompressionOrchestrator
                 compressionEvent.DurationMs,
                 newVersion,
                 messagesToFold.Count);
+
+            if (compressionEvent.TotalTokens is int overheadTokens and > 0)
+            {
+                await _metricsRecorder.RecordCompressionOverheadAsync(
+                    conversationId,
+                    overheadTokens,
+                    cancellationToken);
+            }
 
             await _unitOfWork.SaveChangesAsync(cancellationToken);
         }
