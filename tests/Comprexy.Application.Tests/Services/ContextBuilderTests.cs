@@ -102,4 +102,54 @@ public class ContextBuilderTests
         Assert.Equal("tool-body", result[2].Content);
         Assert.Equal(MessageRole.User, result[3].Role);
     }
+
+    [Fact]
+    public void Build_WithConversationId_InsertsSystemMessageAfterWorkingMemory()
+    {
+        var conversationId = Guid.Parse("dcd03d1d-b473-41b2-ac74-b2e52121eeb4");
+        var workingMemory = WorkingMemory.Create(conversationId, 1, "prior", 1, DateTimeOffset.UtcNow);
+        var currentMessage = new ChatMessage(MessageRole.User, "continue");
+
+        var result = _builder.Build("System.", workingMemory, [], currentMessage, conversationId);
+
+        Assert.Equal(4, result.Count);
+        Assert.Equal(MessageRole.System, result[2].Role);
+        Assert.Equal(ContextBuilder.FormatConversationIdMessage(conversationId), result[2].Content);
+    }
+
+    [Fact]
+    public void EnsureConversationId_WhenMissing_InsertsAfterLeadingSystemMessages()
+    {
+        var conversationId = Guid.NewGuid();
+        var messages = new List<ChatMessage>
+        {
+            new(MessageRole.System, "main system"),
+            new(MessageRole.System, "tool schema rules"),
+            new(MessageRole.User, "hello")
+        };
+
+        var result = _builder.EnsureConversationId(messages, conversationId);
+
+        Assert.Equal(4, result.Count);
+        Assert.Equal(ContextBuilder.FormatConversationIdMessage(conversationId), result[2].Content);
+        Assert.Equal(MessageRole.User, result[3].Role);
+    }
+
+    [Fact]
+    public void EnsureConversationId_WhenAlreadyPresent_IsIdempotent()
+    {
+        var conversationId = Guid.NewGuid();
+        var marker = ContextBuilder.FormatConversationIdMessage(conversationId);
+        var messages = new List<ChatMessage>
+        {
+            new(MessageRole.System, "main system"),
+            new(MessageRole.System, marker),
+            new(MessageRole.User, "hello")
+        };
+
+        var result = _builder.EnsureConversationId(messages, conversationId);
+
+        Assert.Equal(3, result.Count);
+        Assert.Same(messages, result);
+    }
 }

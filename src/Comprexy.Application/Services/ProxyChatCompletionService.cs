@@ -475,17 +475,27 @@ public class ProxyChatCompletionService
                 metricsPrepare = metricsPrepare with { WorkingMemoryVersionUsed = workingMemory?.Version };
             }
             var refreshed = await _messageRepository.GetByConversationIdAsync(conversation.Id, cancellationToken);
+            allMessages = refreshed.Count > 0 ? refreshed : allMessages;
             recentRaw = PrepareRecentRawForChatTemplate(
                 conversation.Id,
-                refreshed
+                allMessages
                     .Where(m => !m.IsFolded && m.Sequence < currentMessageEntity.Sequence)
                     .OrderBy(m => m.Sequence)
                     .ToList(),
                 currentUserMessage,
-                refreshed,
+                allMessages,
                 currentMessageEntity.Sequence);
 
+            // Rebuild + re-prepare ToolSchema against post-emergency context. Reusing the
+            // pre-emergency rewrite would estimate the old OutgoingMessages and drive wrong
+            // hard-limit / send-time trim decisions.
             outgoing = _contextBuilder.Build(conversation.SystemPrompt, workingMemory, recentRaw, currentUserMessage, conversation.Id);
+            toolSchema = await TryPrepareToolSchemaAsync(
+                conversation.Id,
+                outgoing,
+                request.RawRequest,
+                allMessages,
+                cancellationToken);
             estimateMessages = toolSchema?.OutgoingMessages ?? outgoing;
             estimatePayload = toolSchema?.RewrittenClientRequest ?? request.RawRequest;
             estimatedTokens = _tokenEstimator.CountPromptTokens(estimateMessages, estimatePayload);
@@ -641,8 +651,21 @@ public class ProxyChatCompletionService
             tokens = _tokenEstimator.CountPromptTokens(messages, toolSchema.RewrittenClientRequest);
         }
 
+        // Pre-compression passthrough skips ContextBuilder; ToolSchema may also rewrite the
+        // message list. Always ensure the conversation id is visible to the model.
+        var messagesBeforeId = messages;
+        messages = _contextBuilder.EnsureConversationId(messages, conversation.Id);
+        var injectedConversationId = !ReferenceEquals(messages, messagesBeforeId);
+        if (injectedConversationId)
+        {
+            tokens = _tokenEstimator.CountPromptTokens(
+                messages,
+                toolSchema?.RewrittenClientRequest ?? rawRequest);
+        }
+
         // ToolSchema injects system rules into Messages — always replace wire messages when active.
-        var effectiveReplaceMessages = toolSchema is not null || replaceMessages;
+        // Conversation-id injection also requires replacing wire messages on the passthrough path.
+        var effectiveReplaceMessages = toolSchema is not null || replaceMessages || injectedConversationId;
 
         return new PreparedRequest(
             conversation,
@@ -669,7 +692,9 @@ public class ProxyChatCompletionService
     /// <summary>
     /// Repairs unfolded context so tool turns always follow an assistant/tool predecessor:
     /// restore a folded parent assistant when the live tip is a tool result, then drop any
-    /// remaining orphan tools. Logs when recovery runs so bad retain folds stay visible.
+    /// remaining orphan tools. Optionally omits older duplicate file-read tool turns from the
+    /// wire (same path-keyed last-wins as soft compression; does not mark folded). Logs when
+    /// recovery or live dedupe runs so bad retain folds stay visible.
     /// </summary>
     private List<ConversationMessage> PrepareRecentRawForChatTemplate(
         Guid conversationId,
@@ -697,6 +722,62 @@ public class ProxyChatCompletionService
             _logger.LogWarning(
                 "Dropped {DroppedCount} orphan tool message(s) from outgoing context for conversation {ConversationId} (tool must follow assistant or tool).",
                 dropped,
+                conversationId);
+        }
+
+        var list = sanitized as List<ConversationMessage> ?? sanitized.ToList();
+        return ApplyLiveDuplicateFileReadDedupe(conversationId, list, allMessages, tipSequence);
+    }
+
+    /// <summary>
+    /// Wire-only: drop older same-path file reads from the outgoing retain window so repeated
+    /// agent Read loops do not stack identical tool results in model context. Does not
+    /// <c>MarkFoldedInto</c> — soft compression still owns durable folding. Includes the tip
+    /// entity in the corpus so a tip that re-reads a path can displace older copies, then
+    /// strips the tip again (<see cref="ContextBuilder.Build"/> appends it).
+    /// </summary>
+    private List<ConversationMessage> ApplyLiveDuplicateFileReadDedupe(
+        Guid conversationId,
+        List<ConversationMessage> recentRaw,
+        IReadOnlyList<ConversationMessage> allMessages,
+        int tipSequence)
+    {
+        if (!_policy.DedupeDuplicateFileReads || recentRaw.Count == 0)
+        {
+            return recentRaw;
+        }
+
+        var tipEntity = allMessages.FirstOrDefault(m => m.Sequence == tipSequence);
+        IReadOnlyList<ConversationMessage> corpus = recentRaw;
+        if (tipEntity is not null && recentRaw.TrueForAll(m => m.Sequence != tipSequence))
+        {
+            corpus = recentRaw.Append(tipEntity).OrderBy(m => m.Sequence).ToList();
+        }
+
+        var dedupe = DuplicateFileReadDeduper.Apply(corpus, corpus, tipSequence);
+        if (!dedupe.DroppedAny)
+        {
+            return recentRaw;
+        }
+
+        _logger.LogInformation(
+            "duplicate_file_read_dedupe conversationId={ConversationId} phase=live_chat droppedCount={DroppedCount} keptPaths={KeptPaths} droppedSequences={DroppedSequences}",
+            conversationId,
+            dedupe.DroppedSequences.Count,
+            string.Join(',', dedupe.KeptPaths),
+            string.Join(',', dedupe.DroppedSequences));
+
+        var keptPrior = dedupe.Retain
+            .Where(m => m.Sequence < tipSequence)
+            .OrderBy(m => m.Sequence)
+            .ToList();
+
+        var (sanitized, orphanDropped) = ChatTemplateMessageOrder.RemoveOrphanToolMessages(keptPrior);
+        if (orphanDropped > 0)
+        {
+            _logger.LogWarning(
+                "Dropped {DroppedCount} orphan tool message(s) after live duplicate-file-read dedupe for conversation {ConversationId}.",
+                orphanDropped,
                 conversationId);
         }
 

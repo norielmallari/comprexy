@@ -63,16 +63,21 @@ public static class ToolCallChainState
             }
         }
 
-        var unmatched = announced.Count(id => !closed.Contains(id));
+        var openIds = announced
+            .Where(id => !closed.Contains(id))
+            .OrderBy(id => id, StringComparer.Ordinal)
+            .ToArray();
+        var unmatched = openIds.Length;
         if (unparseableToolCallAssistants > 0)
         {
             return new ToolCallChainOpenAssessment(
                 IsOpen: true,
-                UnmatchedCount: unmatched + unparseableToolCallAssistants);
+                UnmatchedCount: unmatched + unparseableToolCallAssistants,
+                OpenToolCallIds: openIds);
         }
 
         return unmatched > 0
-            ? new ToolCallChainOpenAssessment(IsOpen: true, UnmatchedCount: unmatched)
+            ? new ToolCallChainOpenAssessment(IsOpen: true, UnmatchedCount: unmatched, OpenToolCallIds: openIds)
             : ToolCallChainOpenAssessment.Closed;
     }
 
@@ -98,7 +103,13 @@ public static class ToolCallChainState
     }
 }
 
-public readonly record struct ToolCallChainOpenAssessment(bool IsOpen, int UnmatchedCount)
+public readonly record struct ToolCallChainOpenAssessment(
+    bool IsOpen,
+    int UnmatchedCount,
+    IReadOnlyList<string> OpenToolCallIds)
 {
-    public static ToolCallChainOpenAssessment Closed { get; } = new(IsOpen: false, UnmatchedCount: 0);
+    public static ToolCallChainOpenAssessment Closed { get; } = new(
+        IsOpen: false,
+        UnmatchedCount: 0,
+        OpenToolCallIds: Array.Empty<string>());
 }

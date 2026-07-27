@@ -19,5 +19,86 @@ public class EfConversationMessageRepository(ComprexyDbContext dbContext) : ICon
             .OrderBy(m => m.Sequence)
             .ToListAsync(cancellationToken);
 
+    public async Task<IReadOnlyList<ConversationMessage>> ListBySequenceRangeAsync(
+        Guid conversationId,
+        int sequenceStart,
+        int sequenceEnd,
+        int take,
+        CancellationToken cancellationToken)
+    {
+        if (take < 1)
+        {
+            throw new ArgumentOutOfRangeException(nameof(take));
+        }
+
+        return await dbContext.ConversationMessages
+            .AsNoTracking()
+            .Where(m =>
+                m.ConversationId == conversationId &&
+                m.Sequence >= sequenceStart &&
+                m.Sequence <= sequenceEnd)
+            .OrderBy(m => m.Sequence)
+            .Take(take)
+            .ToListAsync(cancellationToken);
+    }
+
+    public async Task<IReadOnlyList<ConversationMessage>> ListRecentAsync(
+        Guid conversationId,
+        int take,
+        bool unfoldedOnly,
+        CancellationToken cancellationToken)
+    {
+        if (take < 1)
+        {
+            throw new ArgumentOutOfRangeException(nameof(take));
+        }
+
+        var query = dbContext.ConversationMessages
+            .AsNoTracking()
+            .Where(m => m.ConversationId == conversationId);
+
+        if (unfoldedOnly)
+        {
+            query = query.Where(m => m.FoldedIntoWorkingMemoryVersion == null);
+        }
+
+        var newestFirst = await query
+            .OrderByDescending(m => m.Sequence)
+            .Take(take)
+            .ToListAsync(cancellationToken);
+
+        newestFirst.Reverse();
+        return newestFirst;
+    }
+
+    public async Task<IReadOnlyList<ConversationMessage>> SearchContentAsync(
+        Guid conversationId,
+        string query,
+        bool includeFolded,
+        int take,
+        CancellationToken cancellationToken)
+    {
+        if (take < 1)
+        {
+            throw new ArgumentOutOfRangeException(nameof(take));
+        }
+
+        ArgumentException.ThrowIfNullOrWhiteSpace(query);
+
+        var efQuery = dbContext.ConversationMessages
+            .AsNoTracking()
+            .Where(m => m.ConversationId == conversationId && m.Content.Contains(query));
+
+        if (!includeFolded)
+        {
+            efQuery = efQuery.Where(m => m.FoldedIntoWorkingMemoryVersion == null);
+        }
+
+        return await efQuery
+            .OrderByDescending(m => m.Sequence)
+            .Take(take)
+            .ToListAsync(cancellationToken);
+    }
+
     public void Add(ConversationMessage message) => dbContext.ConversationMessages.Add(message);
 }

@@ -19,9 +19,11 @@ Treat that document as the map for:
 - Prefer changes that preserve the documented dependency direction and ownership table
 - Update `docs/ARCHITECTURE.md` in the same change when you alter structural behavior (new major path, ownership shift, persistence contract)
 - Point operators at the README for config tables; keep architecture prose structural, not a second config dump
+- Use EF Core abstractions and LINQ for all database access, including read-only and analytical queries
 
 ## Do not
 
 - Invent parallel gateways, shared multi-instance queues, or cross-cutting frameworks the architecture explicitly excludes
 - Bypass Application ports from Api straight into Infrastructure persistence helpers
 - Assume fingerprint identity or PassThrough semantics without checking the architecture + README limitations
+- Write raw SQL, SQL views, stored procedures, Dapper queries, or `FromSql*` calls unless the user explicitly instructs you to use SQL

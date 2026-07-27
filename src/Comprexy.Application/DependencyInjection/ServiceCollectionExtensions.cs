@@ -24,7 +24,10 @@ public static class ServiceCollectionExtensions
         services.AddOptions<MetricsOptions>()
             .Bind(configuration.GetSection(MetricsOptions.SectionName));
 
+        services.AddSingleton<IEvidenceMarkdownService, EvidenceMarkdownService>();
+        services.AddSingleton<IRegressionDetector, RegressionDetector>();
         services.AddScoped<IConversationMetricsQueryService, ConversationMetricsQueryService>();
+        services.AddScoped<IConversationRetrievalQueryService, ConversationRetrievalQueryService>();
 
         if (!enableProxyServices)
         {

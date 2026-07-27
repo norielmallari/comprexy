@@ -1,4 +1,5 @@
 using Comprexy.Application.Abstractions;
+using Comprexy.Application.Models.Telemetry;
 using Comprexy.Domain.Entities;
 using Microsoft.EntityFrameworkCore;
 
@@ -30,5 +31,93 @@ public sealed class EfConversationTurnMetricRepository(ComprexyDbContext dbConte
             .Where(m => m.ConversationId == conversationId)
             .OrderBy(m => m.TurnIndex)
             .ToListAsync(cancellationToken);
+    }
+
+    public async Task<IReadOnlyList<ConversationTurnProjection>> ListBoundedProjectionsAsync(
+        Guid conversationId,
+        int take,
+        CancellationToken cancellationToken)
+    {
+        if (take < 1)
+        {
+            throw new ArgumentOutOfRangeException(nameof(take));
+        }
+
+        return await dbContext.ConversationTurnMetrics
+            .AsNoTracking()
+            .Where(m => m.ConversationId == conversationId)
+            .OrderBy(m => m.TurnIndex)
+            .Take(take)
+            .Select(m => new ConversationTurnProjection
+            {
+                TurnIndex = m.TurnIndex,
+                RequestStartedAt = m.RequestStartedAt,
+                Model = m.Model,
+                RawInputTokensEstimated = m.RawInputTokensEstimated,
+                CompressedInputTokensEstimated = m.CompressedInputTokensEstimated,
+                ActualPromptTokens = m.ActualPromptTokens,
+                ActualCompletionTokens = m.ActualCompletionTokens,
+                BaselineTotalTokensEstimated = m.BaselineTotalTokensEstimated,
+                CompressedTotalTokensEstimated = m.CompressedTotalTokensEstimated,
+                NetTokensSaved = m.NetTokensSaved,
+                NetTokenSavingsRatio = m.NetTokenSavingsRatio,
+                SoftBudgetExceeded = m.SoftBudgetExceeded,
+                HardBudgetExceeded = m.HardBudgetExceeded,
+                TrimTriggered = m.TrimTriggered,
+                WorkingMemoryVersionUsed = m.WorkingMemoryVersionUsed,
+                RawMessageCount = m.RawMessageCount,
+                SentMessageCount = m.SentMessageCount,
+                CreatedAt = m.CreatedAt
+            })
+            .ToListAsync(cancellationToken);
+    }
+
+    public async Task<ConversationTurnProjection?> GetFinalTurnProjectionAsync(
+        Guid conversationId,
+        CancellationToken cancellationToken)
+    {
+        return await dbContext.ConversationTurnMetrics
+            .AsNoTracking()
+            .Where(m => m.ConversationId == conversationId)
+            .OrderByDescending(m => m.TurnIndex)
+            .Select(m => new ConversationTurnProjection
+            {
+                TurnIndex = m.TurnIndex,
+                RequestStartedAt = m.RequestStartedAt,
+                Model = m.Model,
+                RawInputTokensEstimated = m.RawInputTokensEstimated,
+                CompressedInputTokensEstimated = m.CompressedInputTokensEstimated,
+                ActualPromptTokens = m.ActualPromptTokens,
+                ActualCompletionTokens = m.ActualCompletionTokens,
+                BaselineTotalTokensEstimated = m.BaselineTotalTokensEstimated,
+                CompressedTotalTokensEstimated = m.CompressedTotalTokensEstimated,
+                NetTokensSaved = m.NetTokensSaved,
+                NetTokenSavingsRatio = m.NetTokenSavingsRatio,
+                SoftBudgetExceeded = m.SoftBudgetExceeded,
+                HardBudgetExceeded = m.HardBudgetExceeded,
+                TrimTriggered = m.TrimTriggered,
+                WorkingMemoryVersionUsed = m.WorkingMemoryVersionUsed,
+                RawMessageCount = m.RawMessageCount,
+                SentMessageCount = m.SentMessageCount,
+                CreatedAt = m.CreatedAt
+            })
+            .FirstOrDefaultAsync(cancellationToken);
+    }
+
+    public async Task<ConversationTurnSavingsAggregates?> GetSavingsAggregatesAsync(
+        Guid conversationId,
+        CancellationToken cancellationToken)
+    {
+        return await dbContext.ConversationTurnMetrics
+            .AsNoTracking()
+            .Where(m => m.ConversationId == conversationId)
+            .GroupBy(_ => 1)
+            .Select(g => new ConversationTurnSavingsAggregates
+            {
+                PeakNetTokenSavingsRatio = g.Max(m => m.NetTokenSavingsRatio),
+                SimpleAverageNetTokenSavingsRatio = g.Average(m => m.NetTokenSavingsRatio),
+                TurnCount = g.Count()
+            })
+            .FirstOrDefaultAsync(cancellationToken);
     }
 }

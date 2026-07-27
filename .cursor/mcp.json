@@ -1,0 +1,7 @@
+{
+  "mcpServers": {
+    "comprexy-telemetry": {
+      "url": "http://localhost:8130/mcp"
+    }
+  }
+}

@@ -61,7 +61,7 @@ Token budgets, compression retain windows, and emergency behavior.
 | --- | --- | --- |
 | `SoftLimitTokens` | `40000` | Above this, background compression is enqueued after a successful reply. |
 | `HardLimitTokens` | `64000` | At/above this, send-time retain trim runs; still over → HTTP 413 (unless sync emergency compacts first). Set to `null` to disable hard-limit checking (no emergency trim / 413). |
-| `CompressionMaxInputTokens` | `52000` | Max tokens in a compression prompt body. Soft jobs prefer full-raw rebuild when stored messages fit; otherwise merge fold. Set to `null` to disable the compression input cap (always prefer full-raw when soft). |
+| `CompressionMaxInputTokens` | `65536` | Max tokens in a compression prompt body. Soft jobs prefer full-raw rebuild when stored messages fit; otherwise merge fold. Set to `null` to disable the compression input cap (soft compression then always prefers full-raw rebuild; compression still runs). |
 | `EmergencyCompression` | `Off` | `Off` (default): trim then 413. `Sync`: blocking emergency compression when tool chains are closed. |
 | `CancelBackgroundCompressionOnChat` | `false` | When `false`, chat waits for in-flight soft compression. When `true`, arriving chat cancels soft compression and continues with last known-good memory. |
 | `RetainSelection` | `Fixed` | `Fixed` or `Smart` (soft only). Smart reuses live chat prefix + retain-index instruction. |
@@ -70,7 +70,7 @@ Token budgets, compression retain windows, and emergency behavior.
 | `MaxRecentRawTokens` | `24000` | Token budget for Fixed retain window (newest-first). |
 | `SmartRetainMaxMessages` | `8` | Smart retain: max messages after clamp. |
 | `SmartRetainMaxTokens` | `24000` | Smart retain: max tokens after clamp. |
-| `DedupeDuplicateFileReads` | `true` | Soft path: drop older duplicate file-read tool results from compression corpus. |
+| `DedupeDuplicateFileReads` | `true` | Soft path: drop older duplicate file-read tool results from the compression corpus (then fold). Live chat: wire-only omit older same-path reads from the outgoing retain window so Read loops do not stack identical tool results. |
 | `TokenizerEncoding` | `cl100k_base` | Tiktoken encoding for token estimates. |
 
 ---
@@ -103,7 +103,18 @@ See [`ARCHITECTURE.md`](ARCHITECTURE.md#tool-schema-compact-index) for the runti
 
 | Key | Default | Description |
 | --- | --- | --- |
-| `RequiredApiKey` | `null` | When set, `/v1/*` requires `Authorization: Bearer {value}` or `X-Api-Key: {value}`. `/health` stays open. |
+| `RequiredApiKey` | `null` | When set, `/v1/*` and control-api `/mcp` require `Authorization: Bearer {value}` or `X-Api-Key: {value}`. `/health` stays open. |
+
+When unset, those routes accept any (or no) credential. For non-loopback deployments, set a key and prefer HTTPS.
+
+control-api secure host defaults (override via environment / `appsettings.Local.json` for remote hostnames):
+
+| Key | Default | Description |
+| --- | --- | --- |
+| `AllowedHosts` | `localhost;127.0.0.1` | ASP.NET Core host filtering; rejects other `Host` headers. |
+| `Cors:AllowedOrigins` | `[]` (empty) | When empty, the default CORS policy denies all browser origins. List explicit origins to allow browser clients; do not use `*`. |
+
+Server-side MCP clients (Cursor, etc.) do not rely on CORS. Wildcard `AllowedHosts: "*"` is not the control-api default.
 
 ---
 
@@ -133,6 +144,24 @@ Operator read API (same `/v1/*` API-key gate as chat):
 | `GET` | `/v1/comprexy/conversations/{conversationId}/metrics/turns` | Per-turn breakdown |
 
 Pass-through turns and failed/413 requests do not write turn metrics. See [`ARCHITECTURE.md`](ARCHITECTURE.md) and the internal metrics plan for formulas.
+
+---
+
+## McpTelemetry
+
+control-api only. Bounds and timeouts for the remote telemetry + retrieval MCP endpoint (`/mcp`, Streamable HTTP, stateless). REST metrics and MCP share `IConversationMetricsQueryService`; message/working-memory RAG tools share `IConversationRetrievalQueryService`. MCP does not open a separate database path.
+
+| Key | Default | Description |
+| --- | --- | --- |
+| `DefaultRowLimit` | `100` | Default max turns/messages returned by bounded telemetry and retrieval projections (phases, turns, timeline, message windows, search). |
+| `MaxRowLimit` | `1000` | Hard cap applied before EF `Take(...)`. |
+| `QueryTimeoutSeconds` | `5` | Linked cancellation timeout for each MCP telemetry/retrieval query. |
+
+Telemetry summary semantics: `TurnCount`, weighted savings, simple average, peak, and final-turn fields are whole-conversation (rollup + final-turn query + EF aggregates). `MedianSavingsRatio` and `SavingsRegressions` use the bounded `TurnIndex`-ordered sample only; when `IsPartialTurnSample` is true, those sample fields cover `SampleFirstTurnIndex`–`SampleLastTurnIndex` (`SampleTurnCount` turns), not the full conversation.
+
+Retrieval tools (keyword search, sequence windows, recent messages, working-memory snapshot, open tool chains) read `ConversationMessage` / `WorkingMemory` with snippet truncation (500 chars content / 4096 chars optional wire JSON). Message tools use `Sequence`; do not conflate with telemetry `TurnIndex`. Open tool chains reuse `ToolCallChainState` over unfolded messages.
+
+Local MCP URL: `http://localhost:8130/mcp`. Any IDE, coding agent, or MCP client with remote Streamable HTTP support can connect to it. When `Auth:RequiredApiKey` is set, send the same Bearer / `X-Api-Key` credentials used for `/v1`. Argument-free `get_current_*` tools and `comprexy://current/*` resources require `X-Comprexy-Conversation-Id` on the MCP HTTP request; clients that cannot forward that header should call explicit tools with `conversationId` (already injected into model context by the proxy). Metric DTOs omit `RequestHash` / `SentPayloadHash`.
 
 ---
 

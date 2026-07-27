@@ -44,6 +44,7 @@ public static class ServiceCollectionExtensions
                 warnings.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning);
                 warnings.Ignore(CoreEventId.SensitiveDataLoggingEnabledWarning);
                 warnings.Ignore(RelationalEventId.AmbientTransactionWarning);
+                warnings.Ignore(CoreEventId.FirstWithoutOrderByAndFilterWarning);
             });
         });
 

@@ -13,7 +13,7 @@ It is intentionally narrow: chat-completion context management only — not a mu
 ```text
 apps/
   proxy/                     # Data plane: Comprexy.Api host (`Endpoints/`), chat DTOs, prompts
-  control-api/               # Control plane: metrics query (`GET /v1/comprexy/*`)
+  control-api/               # Control plane: REST metrics (`GET /v1/comprexy/*`) + telemetry MCP (`/mcp`)
 src/
   Comprexy.Application/      Use cases, ports (abstractions), orchestration
   Comprexy.Domain/           Entities and enums (no infrastructure deps)
@@ -26,8 +26,8 @@ tests/
 | Layer | Responsibility |
 | --- | --- |
 | **Proxy (`apps/proxy`)** | Parse OpenAI-shaped JSON, map errors/status codes, stream SSE, optional API-key gate, composition root for chat |
-| **Control API (`apps/control-api`)** | Operator metrics query endpoints; shares Application/Infrastructure and SQLite with the proxy |
-| **Application** | Conversation identity, prepare/complete chat, budget decisions, context rebuild, compression orchestration, token metrics |
+| **Control API (`apps/control-api`)** | Operator REST metrics and remote telemetry MCP (Streamable HTTP at `/mcp`); shares Application/Infrastructure and SQLite with the proxy |
+| **Application** | Conversation identity, prepare/complete chat, budget decisions, context rebuild, compression orchestration, token metrics / telemetry query facade, conversation retrieval (RAG) query facade |
 | **Domain** | `EntityBase`, `Conversation`, `ConversationMessage`, `WorkingMemory`, `CompressionEvent`, `ConversationTurnMetric`, `ConversationMetricsSummary`, `ConversationToolCatalog`, `ConversationToolDefinition` and related enums |
 | **Infrastructure** | Persistence, OpenAI-compatible HTTP client, tiktoken estimates, in-process compression queue + hosted worker (proxy only), shared API-key middleware |
 
@@ -49,12 +49,13 @@ flowchart TB
   Orch --> DB
   Api --> Pass[UpstreamPassthroughProxy]
   Pass --> Provider[Other /v1/* upstream]
-  Ops[Operator / dashboard] --> Control["apps/control-api /v1/comprexy"]
+  Ops[Operator / dashboard / MCP client] --> Control["apps/control-api /v1/comprexy + /mcp"]
   Control --> DB
 ```
 
 - **Chat path:** `POST /v1/chat/completions` → `ProxyChatCompletionService` (rebuild, budget, compress hooks).
 - **Metrics path:** `GET /v1/comprexy/conversations*` on **control-api** (`:8130`) → conversation token proof summaries and per-turn breakdown. Proxy emits/persists metrics; it does not serve query routes.
+- **Telemetry MCP path:** Streamable HTTP at `/mcp` on **control-api** — same Application read facades as REST (`IConversationMetricsQueryService` for metrics; `IConversationRetrievalQueryService` for message/WM RAG). Argument-free `get_current_*` tools / `comprexy://current/*` resources use request header `X-Comprexy-Conversation-Id`; explicit tools accept `conversationId`. Stateless transport; no process-wide current-conversation cache. Summary totals, weighted/simple average, peak, and final-turn fields are whole-conversation; median and savings regressions are computed from the bounded `TurnIndex`-ordered sample and are marked via `IsPartialTurnSample` when the conversation exceeds the row cap. Retrieval tools search/window `ConversationMessage` by `Sequence` and expose versioned `WorkingMemory` plus open tool-chain status derived via `ToolCallChainState` (same closed-chain rule as compression). Host filtering defaults to loopback (`AllowedHosts`); CORS denies browser origins unless `Cors:AllowedOrigins` lists them.
 - **Passthrough path:** other `/v1/{**path}` → reverse-proxy to `Provider` unchanged.
 - **Escape hatch:** `Proxy:PassThrough` forwards the original chat body with no rebuild, compression, hard-budget 413, or turn metrics.
 
@@ -74,9 +75,9 @@ Persistence timing: new non-assistant messages are staged in prepare and saved i
 
 After working memory exists, `ContextBuilder` assembles roughly:
 
-`system (first-turn capture) + working-memory system message + still-unfolded raw messages (+ current tip)`
+`system (first-turn capture) + working-memory system message + conversation-id system message + still-unfolded raw messages (+ current tip)`
 
-Before the first successful compression, client messages pass through without a working-memory section. Prefer `RawWireJson` on stored messages when rebuilding wire-faithful turns (tool_calls, multimodal parts).
+Before the first successful compression, client messages pass through without a working-memory section, but the conversation-id system message is still injected before upstream. Prefer `RawWireJson` on stored messages when rebuilding wire-faithful turns (tool_calls, multimodal parts).
 
 ## Budgets and compression
 
@@ -90,7 +91,7 @@ Before the first successful compression, client messages pass through without a 
 
 Soft vs emergency:
 
-- **Soft** (`CompressionOrchestrator`): prefer **full-raw** rebuild when total stored message tokens ≤ `CompressionMaxInputTokens` (or always when that cap is `null`); otherwise merge a fold segment into existing working memory. Retain selection is `Fixed` (default) or `Smart` (soft-only; live chat prefix + retain-index instruction). Both Fixed and Smart retain keep assistant tool-call turns atomic with their tool results so rebuilt chat never starts a tool turn after working memory / user.
+- **Soft** (`CompressionOrchestrator`): prefer **full-raw** rebuild when total stored message tokens ≤ `CompressionMaxInputTokens` (or always when that cap is `null`); otherwise intentionally merge a bounded fold segment into existing working memory so compression requests stay within the configured input budget (important for local LLMs). Retain selection is `Fixed` (default) or `Smart` (soft-only; live chat prefix + retain-index instruction). Both Fixed and Smart retain keep assistant tool-call turns atomic with their tool results so rebuilt chat never starts a tool turn after working memory / user.
 - **Emergency**: always bounded Fixed merge path; never Smart.
 - **Working memory**: append-only versions. Failed compressions must not overwrite the last known-good version. Folding sets `ConversationMessage.FoldedIntoWorkingMemoryVersion`.
 
@@ -150,12 +151,13 @@ Prompt rules: `apps/proxy/Prompts/tool-schema.md`. Configuration: [`SETTINGS.md`
 | --- | --- |
 | Token estimates | `ITokenEstimator` (tiktoken for text; OpenAI-style vision tiles for `image_url` — never BPE of base64) |
 | Retain windows | `RecentContextSelector` (Fixed atomic groups), `SmartRetainResolver` / `RetainIndexBuilder` |
-| Duplicate file reads | `DuplicateFileReadDeduper` + `FileReadPathExtractor` (soft path, when enabled) |
+| Duplicate file reads | `DuplicateFileReadDeduper` + `FileReadPathExtractor` (soft compression corpus + live chat wire omit, when enabled) |
 | Reasoning strip | `ReasoningContentStripper` before chat/compression upstream calls |
-| Auth | `ApiKeyAuthMiddleware` (Infrastructure.Hosting) — optional single `Auth:RequiredApiKey` on `/v1/*` only |
+| Auth | `ApiKeyAuthMiddleware` (Infrastructure.Hosting) — optional single `Auth:RequiredApiKey` on `/v1/*` and control-api `/mcp`; `/health` exempt |
 | Tracing | `IPayloadTraceLogger`, optional `IRequestTraceFileSession` under `logs/requests/` |
 | Compression prompts | `apps/proxy/Prompts/compression-fixed.md`, `compression-smart.md` |
 | Tool schema prompts | `apps/proxy/Prompts/tool-schema.md` |
+| Telemetry MCP | control-api `Mcp/` tools + resources over `IConversationMetricsQueryService` and `IConversationRetrievalQueryService`; options under `McpTelemetry` |
 
 Repositories and `IUnitOfWork` live behind Application abstractions; implementations under `Infrastructure/Persistence`.
 
@@ -183,7 +185,9 @@ Loaded as: `appsettings.json` → environment-specific → host defaults → opt
 | `ToolSchema` | Compact tool index mode, hydrate loop caps, skip-refetch, rules prompt path |
 | `Proxy` | Pass-through; strip reasoning |
 | `Metrics` | Token ledger capture (default enabled) |
+| `McpTelemetry` | control-api MCP row limits and query timeout (default 100 / max 1000 / 5s) |
 | `Auth` | Optional required API key |
+| `AllowedHosts` / `Cors` | control-api host filtering (loopback default) and optional CORS origins (empty = deny browser CORS) |
 | `Trace` | Console payload categories / request audit files |
 | `ConnectionStrings:Comprexy` | SQLite path (hosts rewrite to shared `data/comprexy.db` under the repo by default) |
 
@@ -201,10 +205,12 @@ Loaded as: `appsettings.json` → environment-specific → host defaults → opt
 | --- | --- |
 | HTTP contract, status codes, streaming (chat) | `apps/proxy` `Endpoints/*`, mappers, streaming |
 | Metrics query HTTP | `apps/control-api` `Endpoints/MetricsEndpoints.cs` |
+| Telemetry MCP tools/resources | `apps/control-api` `Mcp/` (`CurrentConversationTools`, `ConversationTools`, retrieval tool/resource twins, `CurrentConversationResolver`) |
 | Shared API-key middleware | `Infrastructure/Hosting/ApiKeyAuthMiddleware` |
 | Turn prepare/complete, budget gate, enqueue, tool-schema rewrite | `ProxyChatCompletionService`, `ToolSchemaOrchestrator` |
 | Fold / WM versions / Soft FullRaw vs merge | `CompressionOrchestrator`, `CompressionPromptFactory` |
-| Token metrics / conversation proof totals | `ConversationTurnMetric`, `ConversationMetricsSummary`, `ConversationMetricsRecorder`, control-api metrics endpoints |
+| Token metrics / conversation proof totals | `ConversationTurnMetric`, `ConversationMetricsSummary`, `ConversationMetricsRecorder`, `IConversationMetricsQueryService`, control-api REST + MCP |
+| Conversation message / WM retrieval (MCP RAG) | `IConversationRetrievalQueryService`, `ConversationMessage` / `WorkingMemory` repos, control-api retrieval MCP tools |
 | Outgoing message assembly | `ContextBuilder`, `RecentContextSelector` |
 | Identity / fingerprint | `ConversationIdentityResolver` |
 | Schema / keys / indexes | `EntityBase`, EF configs under `Infrastructure/Persistence` (migrations via `dotnet ef` only) |

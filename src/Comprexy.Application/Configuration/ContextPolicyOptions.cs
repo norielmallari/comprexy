@@ -34,10 +34,10 @@ public class ContextPolicyOptions
     /// <summary>
     /// Max tokens allowed in a compression-model prompt body (full raw transcript or WM + fold
     /// segment). Soft compression prefers full raw when total stored message tokens are at or
-    /// below this; otherwise it merges into working memory. Set to <c>null</c> to disable the cap.
-    /// Defaults to the same value as <see cref="HardLimitTokens"/>.
+    /// below this; otherwise it merges into working memory. Set to <c>null</c> to disable the cap
+    /// (soft compression then always prefers full-raw rebuild).
     /// </summary>
-    public int? CompressionMaxInputTokens { get; set; } = 52_000;
+    public int? CompressionMaxInputTokens { get; set; } = 65_536;
 
     /// <summary>
     /// Soft compression retain strategy. Default <see cref="RetainSelectionMode.Fixed"/>.
@@ -77,10 +77,11 @@ public class ContextPolicyOptions
     public int SmartRetainMaxTokens { get; set; } = 24_000;
 
     /// <summary>
-    /// When true (default), soft compression drops older duplicate file tool reads from the
-    /// compression prompt corpus before the LLM call (path-keyed last-wins) and shrinks the
-    /// Fixed tip accordingly. Does not rewrite Smart retain after the model responds.
-    /// Emergency compression never runs this pass.
+    /// When true (default), drop older duplicate file tool reads (path-keyed last-wins):
+    /// (1) soft compression — from the compression prompt corpus before the LLM call, shrinking
+    /// the Fixed tip; dropped copies fold on success; (2) live chat prepare — wire-only omit
+    /// from the outgoing retain window (does not mark folded). Does not rewrite Smart retain
+    /// after the model responds. Emergency compression never runs the soft pre-LLM pass.
     /// </summary>
     public bool DedupeDuplicateFileReads { get; set; } = true;
 

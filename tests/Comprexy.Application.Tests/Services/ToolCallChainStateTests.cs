@@ -98,6 +98,7 @@ public class ToolCallChainStateTests
         var assessment = ToolCallChainState.Assess(messages);
         Assert.True(assessment.IsOpen);
         Assert.Equal(2, assessment.UnmatchedCount);
+        Assert.Equal(["c1", "c2"], assessment.OpenToolCallIds);
     }
 
     [Fact]

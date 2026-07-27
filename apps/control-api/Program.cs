@@ -1,5 +1,9 @@
 using Comprexy.Application.DependencyInjection;
+using Comprexy.ControlApi.Configuration;
 using Comprexy.ControlApi.Endpoints;
+using Comprexy.ControlApi.Mcp;
+using Comprexy.ControlApi.Mcp.Resources;
+using Comprexy.ControlApi.Mcp.Tools;
 using Comprexy.Infrastructure.DependencyInjection;
 using Comprexy.Infrastructure.Hosting;
 using Comprexy.Infrastructure.Persistence;
@@ -16,6 +20,42 @@ builder.Configuration.AddJsonFile("appsettings.Local.json", optional: true, relo
 builder.Services.AddComprexyApplication(builder.Configuration, enableProxyServices: false);
 builder.Services.AddComprexyInfrastructure(builder.Configuration, enableCompressionWorker: false);
 
+builder.Services.AddHttpContextAccessor();
+builder.Services.AddOptions<McpTelemetryOptions>()
+    .Bind(builder.Configuration.GetSection(McpTelemetryOptions.SectionName));
+builder.Services.AddSingleton<McpToolCallAuditLogger>();
+builder.Services.AddScoped<CurrentConversationResolver>();
+
+var corsOrigins = builder.Configuration.GetSection("Cors:AllowedOrigins").Get<string[]>() ?? [];
+builder.Services.AddCors(options =>
+{
+    options.AddDefaultPolicy(policy =>
+    {
+        if (corsOrigins.Length == 0)
+        {
+            // Secure default: deny browser cross-origin access (server-side MCP clients are unaffected).
+            policy.SetIsOriginAllowed(_ => false);
+        }
+        else
+        {
+            policy.WithOrigins(corsOrigins)
+                .AllowAnyHeader()
+                .AllowAnyMethod();
+        }
+    });
+});
+
+builder.Services.AddMcpServer()
+    .WithHttpTransport(options => options.Stateless = true)
+    .WithTools<CurrentConversationTools>()
+    .WithTools<ConversationTools>()
+    .WithTools<CurrentConversationRetrievalTools>()
+    .WithTools<ConversationRetrievalTools>()
+    .WithResources<CurrentConversationResources>()
+    .WithResources<ConversationResources>()
+    .WithResources<CurrentConversationRetrievalResources>()
+    .WithResources<ConversationRetrievalResources>();
+
 var app = builder.Build();
 
 using (var scope = app.Services.CreateScope())
@@ -24,10 +64,12 @@ using (var scope = app.Services.CreateScope())
     dbContext.Database.Migrate();
 }
 
+app.UseCors();
 app.UseMiddleware<ApiKeyAuthMiddleware>();
 
 app.MapHealthEndpoints();
 app.MapMetricsEndpoints();
+app.MapMcp("/mcp");
 
 var startupLogger = app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("Comprexy.ControlApi");
 app.Lifetime.ApplicationStarted.Register(() =>
@@ -40,11 +82,20 @@ app.Lifetime.ApplicationStarted.Register(() =>
         Metrics:
           {MetricsEndpoint}
 
+        MCP (Streamable HTTP):
+          {McpEndpoint}
+
         Health:
           {HealthEndpoint}
         """,
         $"{address}/v1/comprexy/conversations",
+        $"{address}/mcp",
         $"{address}/health");
 });
 
 app.Run();
+
+/// <summary>
+/// Marker for <c>WebApplicationFactory&lt;Program&gt;</c> integrated pipeline tests.
+/// </summary>
+public partial class Program;

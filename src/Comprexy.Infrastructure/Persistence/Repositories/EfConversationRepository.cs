@@ -12,5 +12,10 @@ public class EfConversationRepository(ComprexyDbContext dbContext) : IConversati
     public Task<Conversation?> FindByIdAsync(Guid conversationId, CancellationToken cancellationToken) =>
         dbContext.Conversations.FirstOrDefaultAsync(c => c.Id == conversationId, cancellationToken);
 
+    public Task<bool> ExistsAsync(Guid conversationId, CancellationToken cancellationToken) =>
+        dbContext.Conversations
+            .AsNoTracking()
+            .AnyAsync(c => c.Id == conversationId, cancellationToken);
+
     public void Add(Conversation conversation) => dbContext.Conversations.Add(conversation);
 }

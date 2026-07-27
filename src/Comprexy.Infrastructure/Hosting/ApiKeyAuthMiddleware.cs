@@ -8,16 +8,16 @@ namespace Comprexy.Infrastructure.Hosting;
 
 /// <summary>
 /// When <see cref="AuthOptions.RequiredApiKey"/> is configured, requires clients to send a
-/// matching API key on <c>/v1/*</c> via <c>Authorization: Bearer &lt;key&gt;</c>
+/// matching API key on <c>/v1/*</c> and <c>/mcp</c> via <c>Authorization: Bearer &lt;key&gt;</c>
 /// (scheme case-insensitive; surrounding whitespace allowed) or <c>X-Api-Key: &lt;key&gt;</c>.
-/// <c>/health</c> and other non-<c>/v1</c> paths are exempt so probes can stay unauthenticated.
+/// <c>/health</c> and other unprotected paths are exempt so probes can stay unauthenticated.
 /// When the key is unset, any (or no) credential header is accepted.
 /// </summary>
 public class ApiKeyAuthMiddleware(RequestDelegate next, IOptions<AuthOptions> authOptions)
 {
     public async Task InvokeAsync(HttpContext context)
     {
-        if (!context.Request.Path.StartsWithSegments("/v1"))
+        if (!RequiresApiKey(context.Request.Path))
         {
             await next(context);
             return;
@@ -46,6 +46,9 @@ public class ApiKeyAuthMiddleware(RequestDelegate next, IOptions<AuthOptions> au
 
         await next(context);
     }
+
+    private static bool RequiresApiKey(PathString path) =>
+        path.StartsWithSegments("/v1") || path.StartsWithSegments("/mcp");
 }
 
 /// <summary>
