@@ -79,13 +79,19 @@ On the normal path, when `Provider:Model` is set Comprexy replaces `model` with 
 
 ## Why Comprexy?
 
-Long sessions accumulate history, tool output, and corrections until the prompt is noisy, expensive, or past the model’s useful window. Restarting and re-explaining kills flow; summarizing on every turn adds latency. Blind truncation drops corrections and decisions you still need.
+Comprexy was built from a real local LLM limitation: long-running planning workflows in Cursor became impractical as context accumulated. History, tool output, and corrections pile up until each turn is noisy, expensive, or past the model’s useful window. On local runtimes, once the prompt crosses a size threshold, tokens-per-second often drops sharply — prefill gets heavier, streaming feels sticky, and the developer loop slows down even when the model could still answer. Restarting and re-explaining kills flow; summarizing on every turn adds latency; blind truncation drops decisions you still need.
+
+Comprexy keeps the **sent** context manageable — stable information in versioned working memory, older context folded on soft budget pressure — so the model does not need the full accumulated history every turn. Smaller upstream prompts do not guarantee faster inference, but they help keep long sessions in a size range where local tok/s stays usable. The goal is simple: make long-running local LLM workflows practical.
+
+### First validation
+
+In one end-to-end planning run, Comprexy supported a 29-turn Cursor workflow on a local LLM that produced the [Comprexy Metrics Dashboard implementation plan](docs/plans/comprexy-dashboard-implementation-plan.md). The run accumulated an estimated 2.00M baseline tokens across all turns. After compression and trimming, the sent-equivalent volume was about 1.08M tokens (roughly 800k saved). On the final turn, the estimated payload dropped from about 94k baseline tokens to about 37k compressed tokens (77 raw messages → 31 sent); across the run, effective prompt size stayed roughly in the 21–58k range instead of climbing linearly toward ~93k. Full phase breakdown: [`docs/evidence/d2e0faa.md`](docs/evidence/d2e0faa.md). This is one dogfood workflow, not a universal benchmark — and it does not claim measured tok/s gains.
 
 Comprexy’s approach:
 
 | Goal | Approach |
 | --- | --- |
-| Stay in flow | Answer first; fold via Inline wrap-up on eligible soft-pressure turns |
+| Stay in flow | Answer first; fold via Inline wrap-up on eligible soft-pressure turns so prompts stay smaller and local sessions stay responsive longer |
 | Preserve what matters | Persist completed turns; use versioned working memory for the active prompt, not blind truncation |
 | Stay compatible | OpenAI-compatible `/v1` base URL: chat completions are compressed; other `/v1/*` routes proxy upstream |
 | Stay focused | Context compression only — not a multi-provider gateway or agent framework |
@@ -106,7 +112,7 @@ If you need routing, spend tracking, or broad agent wrappers, tools like LiteLLM
 - Not a multi-provider gateway, router, or billing layer.
 - Not a vector database or retrieval framework.
 - Not a static prompt minifier or offline context packer.
-- Not a guarantee of better answers; it manages prompt size and structure so long sessions stay usable.
+- Not a guarantee of better answers or higher tok/s; it manages prompt size and structure so long sessions stay usable.
 
 ## Source of truth
 
