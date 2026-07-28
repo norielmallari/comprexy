@@ -21,8 +21,6 @@ public class ProxyChatCompletionServiceTests
     private readonly Mock<ICompressionEventRepository> _compressionEventRepository = new();
     private readonly Mock<ITokenEstimator> _tokenEstimator = new();
     private readonly Mock<IChatCompletionClient> _chatCompletionClient = new();
-    private readonly Mock<ICompressionQueue> _compressionQueue = new();
-    private readonly Mock<ICompressionOrchestrator> _compressionOrchestrator = new();
     private readonly Mock<IUnitOfWork> _unitOfWork = new();
     private readonly Mock<IClock> _clock = new();
     private readonly Mock<IConversationToolCatalogRepository> _toolCatalogRepository = new();
@@ -30,9 +28,7 @@ public class ProxyChatCompletionServiceTests
 
     private readonly ContextPolicyOptions _policy = new()
     {
-        SoftLimitTokens = 100,
-        HardLimitTokens = 200,
-        RetainSelection = RetainSelectionMode.Fixed
+        SoftLimitTokens = 100
     };
 
     private ProxyOptions _proxyOptions = new();
@@ -53,8 +49,6 @@ public class ProxyChatCompletionServiceTests
     private string? _providerModel = "target-model";
 
     private static readonly CompressionPromptFactory PromptFactory = new(
-        "fixed instruction",
-        "smart instruction",
         "inline instruction",
         """
         # Working Memory
@@ -131,8 +125,6 @@ public class ProxyChatCompletionServiceTests
             new RecentContextSelector(Options.Create(_policy)),
             endpointResolver,
             _chatCompletionClient.Object,
-            _compressionQueue.Object,
-            _compressionOrchestrator.Object,
             _compressionEventRepository.Object,
             PromptFactory,
             new ToolSchemaOrchestrator(
@@ -228,7 +220,6 @@ public class ProxyChatCompletionServiceTests
     /// </summary>
     private MidChainInlineFixture SetupMidChainInlineConversation(string conversationHeader)
     {
-        _policy.RetainSelection = RetainSelectionMode.Inline;
         _policy.CompressionRetainMessageCount = 1;
         _estimatedTokensToReturn = 150;
 
@@ -323,15 +314,11 @@ public class ProxyChatCompletionServiceTests
 
         _conversationRepository.Verify(r => r.Add(It.IsAny<Conversation>()), Times.Once);
         _messageRepository.Verify(r => r.Add(It.IsAny<ConversationMessage>()), Times.Exactly(2));
-        _compressionQueue.Verify(q => q.Enqueue(It.IsAny<CompressionJob>()), Times.Never);
-        _compressionOrchestrator.Verify(
-            o => o.RunAsync(It.IsAny<Guid>(), It.IsAny<CompressionMode>(), It.IsAny<CancellationToken>(), It.IsAny<string?>()), Times.Never);
     }
 
     [Fact]
     public async Task HandleAsync_InlineMode_UnderSoft_DoesNotInjectProtocolOrWrapUp()
     {
-        _policy.RetainSelection = RetainSelectionMode.Inline;
         _estimatedTokensToReturn = 10;
         var captured = new List<UpstreamRequest>();
 
@@ -355,7 +342,6 @@ public class ProxyChatCompletionServiceTests
         Assert.DoesNotContain(
             captured[0].Messages,
             m => m.Content != null && m.Content.Contains("Comprexy Inline", StringComparison.Ordinal));
-        _compressionQueue.Verify(q => q.Enqueue(It.IsAny<CompressionJob>()), Times.Never);
     }
 
     [Fact]
@@ -380,110 +366,9 @@ public class ProxyChatCompletionServiceTests
         _conversationRepository.Verify(r => r.Add(It.IsAny<Conversation>()), Times.Never);
     }
 
-    [Fact]
-    public async Task HandleAsync_EstimatedTokensAboveSoftLimit_EnqueuesHighPriorityCompression()
-    {
-        _estimatedTokensToReturn = 150;
-        _conversationRepository.Setup(r => r.FindByKeyAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync((Conversation?)null);
-        _workingMemoryRepository.Setup(r => r.GetLatestAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync((WorkingMemory?)null);
-        _chatCompletionClient
-            .Setup(c => c.CompleteAsync(It.IsAny<ProviderEndpoint>(), It.IsAny<UpstreamRequest>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new UpstreamChatResult("ack", "stop", 10, 2));
 
-        var service = CreateService();
-        await service.HandleAsync(BuildRequest(), CancellationToken.None);
 
-        _compressionQueue.Verify(
-            q => q.Enqueue(It.Is<CompressionJob>(j =>
-                j.Mode == CompressionMode.HighPriorityBackground &&
-                j.PreferredModel == "target-model")), Times.Once);
-        _compressionOrchestrator.Verify(
-            o => o.RunAsync(It.IsAny<Guid>(), It.IsAny<CompressionMode>(), It.IsAny<CancellationToken>(), It.IsAny<string?>()), Times.Never);
-    }
 
-    [Fact]
-    public async Task HandleAsync_AboveSoftLimit_WithOpenToolCalls_DoesNotEnqueueCompression()
-    {
-        _estimatedTokensToReturn = 150;
-        _conversationRepository.Setup(r => r.FindByKeyAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync((Conversation?)null);
-        _workingMemoryRepository.Setup(r => r.GetLatestAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync((WorkingMemory?)null);
-
-        const string assistantMessageJson = """
-            {"role":"assistant","content":null,"tool_calls":[{"id":"call_1","type":"function","function":{"name":"read_file","arguments":"{\"path\":\"a.cs\"}"}}]}
-            """;
-        _chatCompletionClient
-            .Setup(c => c.CompleteAsync(It.IsAny<ProviderEndpoint>(), It.IsAny<UpstreamRequest>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new UpstreamChatResult(
-                Content: string.Empty,
-                FinishReason: "tool_calls",
-                PromptTokens: 10,
-                CompletionTokens: 5,
-                RawResponseJson: """{"id":"x"}""",
-                AssistantMessageJson: assistantMessageJson));
-
-        var service = CreateService();
-        await service.HandleAsync(BuildRequest(), CancellationToken.None);
-
-        _compressionQueue.Verify(q => q.Enqueue(It.IsAny<CompressionJob>()), Times.Never);
-    }
-
-    [Fact]
-    public async Task HandleAsync_EstimatedTokensAboveHardLimit_EmergencyOffWithoutWorkingMemory_ThrowsWithoutSyncCompact()
-    {
-        _policy.EmergencyCompression = EmergencyCompressionMode.Off;
-        _estimatedTokensToReturn = 250;
-        _conversationRepository.Setup(r => r.FindByKeyAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync((Conversation?)null);
-        _workingMemoryRepository.Setup(r => r.GetLatestAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync((WorkingMemory?)null);
-        _messageRepository.Setup(r => r.GetByConversationIdAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync([]);
-        _chatCompletionClient
-            .Setup(c => c.CompleteAsync(It.IsAny<ProviderEndpoint>(), It.IsAny<UpstreamRequest>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new UpstreamChatResult("ack", "stop", 10, 2));
-
-        var service = CreateService();
-        await Assert.ThrowsAsync<Comprexy.Application.Exceptions.ContextBudgetExceededException>(
-            () => service.HandleAsync(BuildRequest(), CancellationToken.None));
-
-        _compressionOrchestrator.Verify(
-            o => o.RunAsync(It.IsAny<Guid>(), CompressionMode.Emergency, It.IsAny<CancellationToken>(), It.IsAny<string?>()), Times.Never);
-        _chatCompletionClient.Verify(
-            c => c.CompleteAsync(It.IsAny<ProviderEndpoint>(), It.IsAny<UpstreamRequest>(), It.IsAny<CancellationToken>()),
-            Times.Never);
-        _compressionQueue.Verify(q => q.Enqueue(It.IsAny<CompressionJob>()), Times.Never);
-    }
-
-    [Fact]
-    public async Task HandleAsync_EstimatedTokensAboveHardLimit_EmergencySyncWithoutWorkingMemory_RunsThenThrowsIfStillNoMemory()
-    {
-        _policy.EmergencyCompression = EmergencyCompressionMode.Sync;
-        _estimatedTokensToReturn = 250;
-        _conversationRepository.Setup(r => r.FindByKeyAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync((Conversation?)null);
-        _workingMemoryRepository.Setup(r => r.GetLatestAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync((WorkingMemory?)null);
-        _messageRepository.Setup(r => r.GetByConversationIdAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync([]);
-        _chatCompletionClient
-            .Setup(c => c.CompleteAsync(It.IsAny<ProviderEndpoint>(), It.IsAny<UpstreamRequest>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new UpstreamChatResult("ack", "stop", 10, 2));
-
-        var service = CreateService();
-        await Assert.ThrowsAsync<Comprexy.Application.Exceptions.ContextBudgetExceededException>(
-            () => service.HandleAsync(BuildRequest(), CancellationToken.None));
-
-        _compressionOrchestrator.Verify(
-            o => o.RunAsync(It.IsAny<Guid>(), CompressionMode.Emergency, It.IsAny<CancellationToken>(), It.IsAny<string?>()), Times.Once);
-        _chatCompletionClient.Verify(
-            c => c.CompleteAsync(It.IsAny<ProviderEndpoint>(), It.IsAny<UpstreamRequest>(), It.IsAny<CancellationToken>()),
-            Times.Never);
-        _compressionQueue.Verify(q => q.Enqueue(It.IsAny<CompressionJob>()), Times.Never);
-    }
 
     [Fact]
     public async Task HandleAsync_NoMessages_ThrowsArgumentException()
@@ -552,7 +437,6 @@ public class ProxyChatCompletionServiceTests
         Assert.Equal("[DONE]", chunks[2]);
         Assert.NotNull(assistantMessage);
         Assert.Equal("Hello world", assistantMessage!.Content);
-        _compressionQueue.Verify(q => q.Enqueue(It.IsAny<CompressionJob>()), Times.Never);
     }
 
     [Fact]
@@ -626,9 +510,6 @@ public class ProxyChatCompletionServiceTests
         Assert.True(forwarded.OriginalClientRequest.Value.TryGetProperty("temperature", out _));
 
         _workingMemoryRepository.Verify(r => r.GetLatestAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()), Times.Never);
-        _compressionOrchestrator.Verify(
-            o => o.RunAsync(It.IsAny<Guid>(), It.IsAny<CompressionMode>(), It.IsAny<CancellationToken>(), It.IsAny<string?>()), Times.Never);
-        _compressionQueue.Verify(q => q.Enqueue(It.IsAny<CompressionJob>()), Times.Never);
     }
 
     [Fact]
@@ -912,117 +793,7 @@ public class ProxyChatCompletionServiceTests
         Assert.Equal("summarize", forwarded.Messages[^1].Content);
     }
 
-    [Fact]
-    public async Task HandleAsync_AfterEmergencyAndTrimStillOverHardLimit_ThrowsContextBudgetExceeded()
-    {
-        _policy.SoftLimitTokens = 50;
-        _policy.HardLimitTokens = 100;
-        _policy.EmergencyCompression = EmergencyCompressionMode.Sync;
-        _policy.EmergencyRecentMessageCount = 2;
 
-        var conversation = Conversation.Create("header:conv-over", DateTimeOffset.UtcNow);
-        conversation.CaptureSystemPromptIfAbsent("You are helpful.");
-        var workingMemory = WorkingMemory.Create(
-            conversation.Id,
-            1,
-            "# Working Memory",
-            20,
-            DateTimeOffset.UtcNow);
-        var now = DateTimeOffset.UtcNow;
-        var stored = Enumerable.Range(0, 6)
-            .Select(i => ConversationMessage.Create(
-                conversation.Id,
-                i,
-                MessageRole.User,
-                $"msg-{i}",
-                5,
-                now))
-            .ToList();
-
-        conversation.SetSyncedMessageCount(6, now);
-        _conversationRepository.Setup(r => r.FindByKeyAsync("header:conv-over", It.IsAny<CancellationToken>()))
-            .ReturnsAsync(conversation);
-        _messageRepository.Setup(r => r.GetByConversationIdAsync(conversation.Id, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(stored);
-        _workingMemoryRepository.Setup(r => r.GetLatestAsync(conversation.Id, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(workingMemory);
-        _compressionOrchestrator
-            .Setup(o => o.RunAsync(conversation.Id, CompressionMode.Emergency, It.IsAny<CancellationToken>(), It.IsAny<string?>()))
-            .ReturnsAsync((CompressionEvent?)null);
-
-        var service = CreateService();
-        _tokenEstimator
-            .Setup(t => t.CountPromptTokens(It.IsAny<IEnumerable<ChatMessage>>(), It.IsAny<JsonElement?>()))
-            .Returns(200);
-
-        var ex = await Assert.ThrowsAsync<Comprexy.Application.Exceptions.ContextBudgetExceededException>(
-            () => service.HandleAsync(
-                BuildRequest(conversationHeader: "conv-over", userContent: "next tip"),
-                CancellationToken.None));
-
-        Assert.Equal(200, ex.EstimatedTokens);
-        Assert.Equal(100, ex.HardLimitTokens);
-        _chatCompletionClient.Verify(
-            c => c.CompleteAsync(It.IsAny<ProviderEndpoint>(), It.IsAny<UpstreamRequest>(), It.IsAny<CancellationToken>()),
-            Times.Never);
-    }
-
-    [Fact]
-    public async Task HandleAsync_HardLimitWithEmergencyOff_SkipsSyncCompactAppliesTrim()
-    {
-        _policy.SoftLimitTokens = 50;
-        _policy.HardLimitTokens = 100;
-        _policy.EmergencyCompression = EmergencyCompressionMode.Off;
-        _policy.EmergencyRecentMessageCount = 2;
-
-        UpstreamRequest? forwarded = null;
-        var conversation = Conversation.Create("header:conv-off", DateTimeOffset.UtcNow);
-        conversation.CaptureSystemPromptIfAbsent("You are helpful.");
-        var workingMemory = WorkingMemory.Create(
-            conversation.Id,
-            1,
-            "# Working Memory\n## Current Goal\nShip it",
-            20,
-            DateTimeOffset.UtcNow);
-        var now = DateTimeOffset.UtcNow;
-        var stored = Enumerable.Range(0, 10)
-            .Select(i => ConversationMessage.Create(
-                conversation.Id,
-                i,
-                i % 2 == 0 ? MessageRole.User : MessageRole.Assistant,
-                $"msg-{i}",
-                5,
-                now))
-            .ToList();
-
-        conversation.SetSyncedMessageCount(10, now);
-        _conversationRepository.Setup(r => r.FindByKeyAsync("header:conv-off", It.IsAny<CancellationToken>()))
-            .ReturnsAsync(conversation);
-        _messageRepository.Setup(r => r.GetByConversationIdAsync(conversation.Id, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(stored);
-        _workingMemoryRepository.Setup(r => r.GetLatestAsync(conversation.Id, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(workingMemory);
-
-        _chatCompletionClient
-            .Setup(c => c.CompleteAsync(It.IsAny<ProviderEndpoint>(), It.IsAny<UpstreamRequest>(), It.IsAny<CancellationToken>()))
-            .Callback<ProviderEndpoint, UpstreamRequest, CancellationToken>((_, request, _) => forwarded = request)
-            .ReturnsAsync(new UpstreamChatResult("ack", "stop", 10, 2));
-
-        var service = CreateService();
-        var estimates = new Queue<int>([150, 80]);
-        _tokenEstimator
-            .Setup(t => t.CountPromptTokens(It.IsAny<IEnumerable<ChatMessage>>(), It.IsAny<JsonElement?>()))
-            .Returns(() => estimates.Dequeue());
-
-        await service.HandleAsync(BuildRequest(conversationHeader: "conv-off", userContent: "next tip"), CancellationToken.None);
-
-        Assert.NotNull(forwarded);
-        _compressionOrchestrator.Verify(
-            o => o.RunAsync(It.IsAny<Guid>(), CompressionMode.Emergency, It.IsAny<CancellationToken>(), It.IsAny<string?>()),
-            Times.Never);
-        Assert.DoesNotContain(forwarded!.Messages, m => m.Content == "msg-0");
-        Assert.Equal("next tip", forwarded.Messages[^1].Content);
-    }
 
     [Fact]
     public async Task HandleAsync_VirtualWithTools_RewritesOutboundToolsSurface()
@@ -1130,7 +901,6 @@ public class ProxyChatCompletionServiceTests
     public async Task HandleAsync_InlineMode_VirtualTools_WrapUpStripsToolsFromUpstreamRequest()
     {
         _toolSchemaOptions = new ToolSchemaOptions { Mode = ToolSchemaMode.Virtual };
-        _policy.RetainSelection = RetainSelectionMode.Inline;
         _policy.CompressionRetainMessageCount = 1;
         _estimatedTokensToReturn = 150;
 
@@ -1823,7 +1593,6 @@ public class ProxyChatCompletionServiceTests
     [Fact]
     public async Task HandleAsync_InlineMode_RunsWrapUp_PersistsVisibleAssistant_AndSkipsQueue()
     {
-        _policy.RetainSelection = RetainSelectionMode.Inline;
         _policy.CompressionRetainMessageCount = 1;
         _estimatedTokensToReturn = 150;
 
@@ -1940,7 +1709,6 @@ public class ProxyChatCompletionServiceTests
         Assert.DoesNotContain(addedMessages, m => m.Content == ValidWorkingMemory);
         Assert.True(stored[0].IsFolded);
         Assert.Equal(2, stored[0].FoldedIntoWorkingMemoryVersion);
-        _compressionQueue.Verify(q => q.Enqueue(It.IsAny<CompressionJob>()), Times.Never);
         // prepare/persist + inline wrap-up persist (dual-id clear uses isolated map UoW)
         _unitOfWork.Verify(u => u.SaveChangesAsync(It.IsAny<CancellationToken>()), Times.Exactly(2));
         metrics.Verify(
@@ -1951,7 +1719,6 @@ public class ProxyChatCompletionServiceTests
     [Fact]
     public async Task HandleAsync_InlineMode_WhenProviderModelUnset_StampsClientModelOnWrapUpEndpoint()
     {
-        _policy.RetainSelection = RetainSelectionMode.Inline;
         _policy.CompressionRetainMessageCount = 1;
         _estimatedTokensToReturn = 150;
         _providerModel = null;
@@ -2000,55 +1767,10 @@ public class ProxyChatCompletionServiceTests
         Assert.Equal("client-model", wrapEndpoint!.Model);
     }
 
-    [Fact]
-    public async Task HandleAsync_InlineMode_WhenWrapUpWouldExceedHardLimit_SkipsWrapUpAndDoesNotCreateInlineEvent()
-    {
-        _policy.RetainSelection = RetainSelectionMode.Inline;
-        _policy.SoftLimitTokens = 100;
-        _policy.HardLimitTokens = 154;
-        _estimatedTokensToReturn = 150;
-        _wrapUpTipTokens = 5;
-
-        var conversation = Conversation.Create("header:inline-headroom", DateTimeOffset.UtcNow);
-        conversation.CaptureSystemPromptIfAbsent("You are helpful.");
-        conversation.SetSyncedMessageCount(1, DateTimeOffset.UtcNow);
-        var existingWorkingMemory = WorkingMemory.Create(
-            conversation.Id,
-            1,
-            "# Working Memory\n## Current Goal\nExisting",
-            8,
-            DateTimeOffset.UtcNow);
-
-        _conversationRepository.Setup(r => r.FindByKeyAsync("header:inline-headroom", It.IsAny<CancellationToken>()))
-            .ReturnsAsync(conversation);
-        _messageRepository.Setup(r => r.GetByConversationIdAsync(conversation.Id, It.IsAny<CancellationToken>()))
-            .ReturnsAsync([]);
-        _workingMemoryRepository.Setup(r => r.GetLatestAsync(conversation.Id, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(existingWorkingMemory);
-        _chatCompletionClient
-            .Setup(c => c.CompleteAsync(It.IsAny<ProviderEndpoint>(), It.IsAny<UpstreamRequest>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new UpstreamChatResult("no wrap-up", "stop", 10, 2));
-
-        var service = CreateService();
-        var result = await service.HandleAsync(
-            BuildRequest(conversationHeader: "inline-headroom", userContent: "new tip"),
-            CancellationToken.None);
-
-        Assert.Equal("no wrap-up", result.AssistantContent);
-        _chatCompletionClient.Verify(
-            c => c.CompleteAsync(
-                It.IsAny<ProviderEndpoint>(),
-                It.Is<UpstreamRequest>(r => IsWrapUpRequest(r)),
-                It.IsAny<CancellationToken>()),
-            Times.Never);
-        _compressionEventRepository.Verify(r => r.Add(It.IsAny<CompressionEvent>()), Times.Never);
-        _compressionQueue.Verify(q => q.Enqueue(It.IsAny<CompressionJob>()), Times.Never);
-    }
 
     [Fact]
     public async Task HandleAsync_InlineMode_DuringCooldown_SkipsWrapUpAndDoesNotCreateInlineEvent()
     {
-        _policy.RetainSelection = RetainSelectionMode.Inline;
         _policy.MinTurnsBetweenGenerations = 2;
         _estimatedTokensToReturn = 150;
 
@@ -2101,13 +1823,11 @@ public class ProxyChatCompletionServiceTests
                 It.IsAny<CancellationToken>()),
             Times.Never);
         _compressionEventRepository.Verify(r => r.Add(It.IsAny<CompressionEvent>()), Times.Never);
-        _compressionQueue.Verify(q => q.Enqueue(It.IsAny<CompressionJob>()), Times.Never);
     }
 
     [Fact]
     public async Task HandleAsync_InlineMode_WithOpenStoredToolChain_SkipsWrapUp()
     {
-        _policy.RetainSelection = RetainSelectionMode.Inline;
         _estimatedTokensToReturn = 150;
 
         var conversation = Conversation.Create("header:inline-open-tool", DateTimeOffset.UtcNow);
@@ -2153,13 +1873,11 @@ public class ProxyChatCompletionServiceTests
                 It.IsAny<CancellationToken>()),
             Times.Never);
         _compressionEventRepository.Verify(r => r.Add(It.IsAny<CompressionEvent>()), Times.Never);
-        _compressionQueue.Verify(q => q.Enqueue(It.IsAny<CompressionJob>()), Times.Never);
     }
 
     [Fact]
     public async Task HandleAsync_InlineMode_MidChainPrefix_RunsWrapUp_TipOnly_LeavesOpenAssistantUnfolded()
     {
-        _policy.RetainSelection = RetainSelectionMode.Inline;
         _policy.CompressionRetainMessageCount = 1;
         _estimatedTokensToReturn = 150;
 
@@ -2254,14 +1972,12 @@ public class ProxyChatCompletionServiceTests
         Assert.NotNull(addedEvent);
         Assert.Equal(CompressionMode.Inline, addedEvent!.Mode);
         Assert.Equal(CompressionStatus.Succeeded, addedEvent.Status);
-        _compressionQueue.Verify(q => q.Enqueue(It.IsAny<CompressionJob>()), Times.Never);
         _unitOfWork.Verify(u => u.SaveChangesAsync(It.IsAny<CancellationToken>()), Times.Exactly(2));
     }
 
     [Fact]
     public async Task HandleAsync_InlineMode_MidChainPrefix_WhenWrapUpFails_KeepsClientToolCallsAndPriorWm()
     {
-        _policy.RetainSelection = RetainSelectionMode.Inline;
         _policy.CompressionRetainMessageCount = 1;
         _estimatedTokensToReturn = 150;
 
@@ -2326,13 +2042,11 @@ public class ProxyChatCompletionServiceTests
         Assert.Equal("empty_fold", addedEvent.ErrorMessage);
         _workingMemoryRepository.Verify(r => r.Add(It.IsAny<WorkingMemory>()), Times.Never);
         _unitOfWork.Verify(u => u.SaveChangesAsync(It.IsAny<CancellationToken>()), Times.Exactly(2));
-        _compressionQueue.Verify(q => q.Enqueue(It.IsAny<CompressionJob>()), Times.Never);
     }
 
     [Fact]
     public async Task HandleAsync_InlineMode_MidChainPrefix_DuringCooldown_SkipsWrapUp()
     {
-        _policy.RetainSelection = RetainSelectionMode.Inline;
         _policy.MinTurnsBetweenGenerations = 2;
         _estimatedTokensToReturn = 150;
 
@@ -2398,13 +2112,11 @@ public class ProxyChatCompletionServiceTests
                 It.IsAny<CancellationToken>()),
             Times.Never);
         _compressionEventRepository.Verify(r => r.Add(It.IsAny<CompressionEvent>()), Times.Never);
-        _compressionQueue.Verify(q => q.Enqueue(It.IsAny<CompressionJob>()), Times.Never);
     }
 
     [Fact]
     public async Task HandleAsync_InlineMode_WhenWrapUpFailsSanity_PersistsAssistant_KeepsPriorWm()
     {
-        _policy.RetainSelection = RetainSelectionMode.Inline;
         _policy.CompressionRetainMessageCount = 1;
         _estimatedTokensToReturn = 150;
 
@@ -2466,7 +2178,6 @@ public class ProxyChatCompletionServiceTests
     [Fact]
     public async Task HandleAsync_InlineMode_WhenWrapUpReturnsToolCalls_FailsAsToolCalls_KeepsPriorWm()
     {
-        _policy.RetainSelection = RetainSelectionMode.Inline;
         _policy.CompressionRetainMessageCount = 1;
         _estimatedTokensToReturn = 150;
 
@@ -2527,37 +2238,10 @@ public class ProxyChatCompletionServiceTests
         _workingMemoryRepository.Verify(r => r.Add(It.IsAny<WorkingMemory>()), Times.Never);
     }
 
-    [Fact]
-    public async Task HandleAsync_InlineMode_WhenOverHardWithoutWorkingMemory_DoesNotRunEmergencySync()
-    {
-        _policy.RetainSelection = RetainSelectionMode.Inline;
-        _policy.EmergencyCompression = EmergencyCompressionMode.Sync;
-        _estimatedTokensToReturn = 250;
-
-        _conversationRepository.Setup(r => r.FindByKeyAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync((Conversation?)null);
-        _workingMemoryRepository.Setup(r => r.GetLatestAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync((WorkingMemory?)null);
-        _messageRepository.Setup(r => r.GetByConversationIdAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync([]);
-
-        var service = CreateService();
-
-        await Assert.ThrowsAsync<Comprexy.Application.Exceptions.ContextBudgetExceededException>(
-            () => service.HandleAsync(BuildRequest(conversationHeader: "inline-hard"), CancellationToken.None));
-
-        _compressionOrchestrator.Verify(
-            o => o.RunAsync(It.IsAny<Guid>(), CompressionMode.Emergency, It.IsAny<CancellationToken>(), It.IsAny<string?>()),
-            Times.Never);
-        _chatCompletionClient.Verify(
-            c => c.CompleteAsync(It.IsAny<ProviderEndpoint>(), It.IsAny<UpstreamRequest>(), It.IsAny<CancellationToken>()),
-            Times.Never);
-    }
 
     [Fact]
     public async Task HandleStreamingAsync_InlineMode_HoldsDoneUntilWrapUpCompletes()
     {
-        _policy.RetainSelection = RetainSelectionMode.Inline;
         _estimatedTokensToReturn = 150;
 
         var conversation = Conversation.Create("header:inline-stream", DateTimeOffset.UtcNow);
@@ -2639,13 +2323,11 @@ public class ProxyChatCompletionServiceTests
 
         Assert.Equal("Visible answer", result.AssistantContent);
         Assert.Equal("[DONE]", chunks[^1]);
-        _compressionQueue.Verify(q => q.Enqueue(It.IsAny<CompressionJob>()), Times.Never);
     }
 
     [Fact]
     public async Task HandleStreamingAsync_InlineMode_MidChainPrefix_HoldsDoneUntilWrapUpCompletes()
     {
-        _policy.RetainSelection = RetainSelectionMode.Inline;
         _policy.CompressionRetainMessageCount = 1;
         _estimatedTokensToReturn = 150;
 
@@ -2755,13 +2437,11 @@ public class ProxyChatCompletionServiceTests
         Assert.Equal("[DONE]", chunks[^1]);
         Assert.True(olderUser.IsFolded);
         Assert.False(priorAssistant.IsFolded);
-        _compressionQueue.Verify(q => q.Enqueue(It.IsAny<CompressionJob>()), Times.Never);
     }
 
     [Fact]
     public async Task HandleAsync_InlineMode_GateHeldThroughWrapUp()
     {
-        _policy.RetainSelection = RetainSelectionMode.Inline;
         _estimatedTokensToReturn = 150;
 
         var conversation = Conversation.Create("header:inline-gate", DateTimeOffset.UtcNow);
@@ -2838,7 +2518,6 @@ public class ProxyChatCompletionServiceTests
     [Fact]
     public async Task HandleStreamingAsync_InlineMode_ClientAbortAfterMain_StillRunsWrapUp()
     {
-        _policy.RetainSelection = RetainSelectionMode.Inline;
         _estimatedTokensToReturn = 150;
 
         var conversation = Conversation.Create("header:inline-abort", DateTimeOffset.UtcNow);
@@ -3036,7 +2715,6 @@ public class ProxyChatCompletionServiceTests
     [Fact]
     public async Task HandleStreamingAsync_InlineMode_StopTurn_StreamsContentLive_HoldsOnlyDone()
     {
-        _policy.RetainSelection = RetainSelectionMode.Inline;
         _estimatedTokensToReturn = 150;
 
         var conversation = Conversation.Create("header:inline-v3-stop", DateTimeOffset.UtcNow);

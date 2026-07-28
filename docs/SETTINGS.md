@@ -42,43 +42,35 @@ Upstream OpenAI-compatible chat endpoint.
 
 ## Compression
 
-Optional separate endpoint/model for LLM-based context compression. Unset fields fall back to `Provider`.
+Optional separate endpoint/model for ToolSchema mapping and Inline wrap-up prompt files. Unset BaseUrl/ApiKey/Model/Timeout fall back to `Provider`. Inline wrap-up itself uses the live chat endpoint; these knobs still drive the ToolSchema mapper.
 
 | Key | Default | Description |
 | --- | --- | --- |
-| `BaseUrl` | `null` | Compression endpoint. Falls back to `Provider:BaseUrl`. |
+| `BaseUrl` | `null` | Compression endpoint (ToolSchema mapper). Falls back to `Provider:BaseUrl`. |
 | `ApiKey` | `null` | Compression API key. Falls back to `Provider:ApiKey`. |
-| `Model` | `null` | Compression model. Falls back to `Provider:Model`, then the client chat model from the triggering turn. |
-| `TimeoutSeconds` | `600` | Compression timeout. When null/omitted, falls back to `Provider:TimeoutSeconds`. |
-| `Temperature` | `0.6` | Sampling temperature for compression calls. |
-| `EnableThinking` | `false` | When false, sends `chat_template_kwargs.enable_thinking=false` on compression calls. |
-| `InstructionFile` | `Prompts/compression-fixed.md` | Fixed compression system prompt (relative to API content root). |
-| `SmartInstructionFile` | `Prompts/compression-smart.md` | Smart compression trailing user instruction. |
-| `InlineInstructionFile` | `Prompts/compression-inline.md` | Inline follow-up wrap-up **user** prompt (return-only WM) when `RetainSelection=Inline`. |
-| `WorkingMemoryTemplateFile` | `Prompts/working-memory-template.md` | Shared `# Working Memory` markdown skeleton appended to Fixed, Smart, and Inline wrap-up prompts. |
+| `Model` | `null` | Compression model. Falls back to `Provider:Model`, then the client chat model. |
+| `TimeoutSeconds` | `600` | Compression-endpoint timeout. When null/omitted, falls back to `Provider:TimeoutSeconds`. |
+| `Temperature` | `0.6` | Sampling temperature for Compression-endpoint calls. |
+| `EnableThinking` | `false` | When false, sends `chat_template_kwargs.enable_thinking=false` on Compression-endpoint calls. |
+| `InlineInstructionFile` | `Prompts/compression-inline.md` | Inline follow-up wrap-up **user** prompt (return-only WM). |
+| `WorkingMemoryTemplateFile` | `Prompts/working-memory-template.md` | Shared `# Working Memory` markdown skeleton appended to Inline wrap-up prompts. |
 
 ---
 
 ## ContextPolicy
 
-Token budgets, compression retain windows, and emergency behavior.
+Soft token budget and Inline fold retain windows.
 
 | Key | Default | Description |
 | --- | --- | --- |
-| `SoftLimitTokens` | `32000` | Above this after a successful reply: Inline follow-up wrap-up on eligible turns (`RetainSelection=Inline`), or enqueue Fixed/Smart soft compression. |
-| `HardLimitTokens` | `null` | At/above this, send-time retain trim runs; still over → HTTP 413 (unless sync emergency compacts first). Stock config is `null` (hard-limit checking off — no emergency trim / 413). Set an integer to enable. |
-| `CompressionMaxInputTokens` | `null` | Max tokens in a compression prompt body. Soft jobs prefer full-raw rebuild when stored messages fit; otherwise merge fold. Stock config is `null` (input cap off — soft compression always prefers full-raw rebuild; compression still runs). Set an integer to enable the cap. |
-| `EmergencyCompression` | `Sync` | `Off`: trim then 413. `Sync`: blocking emergency compression when tool chains are closed. Ignored when `RetainSelection=Inline` (hard path is trim then 413 when a hard limit is set). With stock `HardLimitTokens: null`, the hard path does not run. |
-| `CancelBackgroundCompressionOnChat` | `false` | When `false`, chat waits for in-flight soft compression. When `true`, arriving chat cancels soft compression and continues with last known-good memory. |
-| `RetainSelection` | `Inline` | `Inline` (default), `Fixed`, or `Smart` (soft only). Inline disables background soft jobs and emergency sync; after an eligible soft-pressure visible answer, a blocking proxy-internal wrap-up produces working memory (including mid-chain tool hops that open a new chain after a closed stored prefix). Wrap-up reuses live sampling / `chat_template_*` but omits tool-calling fields (`tools`, `tool_choice`, `functions`, and related `function_call` / `parallel_tool_calls` when present); a wrap-up that still returns `tool_calls` soft-fails as `wrapup_tool_calls`. Soft-pressure eligible turns hold the streaming tail until wrap-up finishes (success or soft-fail): `[DONE]` on stop turns, and the whole real `tool_calls` tail on mid-chain turns so the client starts tools only after the checkpoint attempt resolves. Tool-marathon hops can therefore add wrap-up latency under soft pressure + cooldown. Smart reuses live chat prefix + retain-index instruction. Fixed uses trailing retain window. Emergency Sync still uses Fixed-style compact when `RetainSelection` is Fixed/Smart (see TODO-013 for Inline emergency). |
-| `MinTurnsBetweenGenerations` | `6` | Inline only: assistant turns after a successful Inline generation before another follow-up wrap-up. Ignored by Fixed/Smart. |
-| `CompressionRetainMessageCount` | `1` | Fixed soft retain: trailing unfolded messages (atomic assistant+tool groups). `1` = tip only. |
-| `EmergencyRecentMessageCount` | `1` | Fixed emergency retain count. |
-| `MaxRecentRawTokens` | `24000` | Token budget for Fixed retain window (newest-first). |
-| `SmartRetainMaxMessages` | `8` | Smart retain: max messages after clamp. |
-| `SmartRetainMaxTokens` | `24000` | Smart retain: max tokens after clamp. |
-| `DedupeDuplicateFileReads` | `true` | Soft path: drop older duplicate file-read tool results from the compression corpus (then fold). Live chat: wire-only omit older same-path reads from the outgoing retain window so Read loops do not stack identical tool results. |
+| `SoftLimitTokens` | `32000` | Above this after a successful reply: Inline follow-up wrap-up on eligible turns (closed stored tool chain + cooldown). |
+| `MinTurnsBetweenGenerations` | `6` | Assistant turns after a successful Inline generation before another follow-up wrap-up. |
+| `CompressionRetainMessageCount` | `1` | Inline fold tip: trailing unfolded messages kept raw (atomic assistant+tool groups). `1` = tip only. |
+| `MaxRecentRawTokens` | `24000` | Token budget for the Inline fold retain window (newest-first). |
+| `DedupeDuplicateFileReads` | `true` | Live chat: wire-only omit older same-path file-read tool results from the outgoing retain window so Read loops do not stack identical tool results. |
 | `TokenizerEncoding` | `cl100k_base` | Tiktoken encoding for token estimates. |
+
+Inline wrap-up reuses live sampling / `chat_template_*` but omits tool-calling fields (`tools`, `tool_choice`, `functions`, and related `function_call` / `parallel_tool_calls` when present); a wrap-up that still returns `tool_calls` soft-fails as `wrapup_tool_calls`. Soft-pressure eligible turns hold the streaming tail until wrap-up finishes (success or soft-fail): `[DONE]` on stop turns, and the whole real `tool_calls` tail on mid-chain turns so the client starts tools only after the checkpoint attempt resolves.
 
 ---
 
@@ -133,7 +125,7 @@ Server-side MCP clients (Cursor, etc.) do not rely on CORS. Wildcard `AllowedHos
 
 | Key | Default | Description |
 | --- | --- | --- |
-| `PassThrough` | `false` | When true, **everything is off**: forwards the original chat body with no context rebuild, no compression / working memory, no hard-limit 413, and no Virtual Tools rewrite. Single escape hatch — there is no separate “pre-WM client history” passthrough. |
+| `PassThrough` | `false` | When true, forwards the original chat body with no context rebuild, compression / working memory, or Virtual Tools rewrite. Escape hatch only. |
 | `StripReasoningContent` | `false` | When true, strips `reasoning_content` / `reasoning` from outbound chat and compression messages. |
 
 ---
@@ -144,7 +136,7 @@ Token proof ledger for successful compressed-path turns. Persisted in SQLite (no
 
 | Key | Default | Description |
 | --- | --- | --- |
-| `Enabled` | `true` | When true, records per-turn raw vs compressed token metrics and folds compression LLM usage (soft/emergency compact, Inline wrap-up, and Tool IR schema mapping) into conversation summaries. |
+| `Enabled` | `true` | When true, records per-turn raw vs compressed token metrics and folds Inline wrap-up and Tool IR schema-mapping LLM usage into conversation summaries. |
 
 Operator read API (same `/v1/*` API-key gate as chat):
 
@@ -154,7 +146,7 @@ Operator read API (same `/v1/*` API-key gate as chat):
 | `GET` | `/v1/comprexy/conversations/{conversationId}/metrics` | Conversation rollup |
 | `GET` | `/v1/comprexy/conversations/{conversationId}/metrics/turns` | Per-turn breakdown |
 
-Pass-through turns and failed/413 requests do not write turn metrics. See [`ARCHITECTURE.md`](ARCHITECTURE.md) and the internal metrics plan for formulas.
+Pass-through turns and failed requests do not write turn metrics. See [`ARCHITECTURE.md`](ARCHITECTURE.md) and the internal metrics plan for formulas.
 
 ---
 

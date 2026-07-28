@@ -9,9 +9,9 @@ public class ProxyOptions
 
     /// <summary>
     /// When true, Comprexy forwards the client's request body to the upstream provider with all
-    /// fields preserved (only rewriting model/stream as required). Context rebuild, soft/hard
-    /// compression, and hard-limit 413 enforcement are skipped. Conversation persistence still
-    /// occurs for diagnostics. Escape hatch — leave false for normal budgeted proxy use.
+    /// fields preserved (only rewriting model/stream as required). Context rebuild, compression,
+    /// and Virtual Tools rewrite are skipped. Conversation persistence still occurs for diagnostics.
+    /// Escape hatch — leave false for normal budgeted proxy use.
     /// </summary>
     public bool PassThrough { get; set; }
 

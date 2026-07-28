@@ -1,7 +1,6 @@
 using Comprexy.Application.Abstractions;
 using Comprexy.Application.Configuration;
 using Comprexy.Application.Services;
-using Comprexy.Infrastructure.BackgroundJobs;
 using Comprexy.Infrastructure.Persistence;
 using Comprexy.Infrastructure.Persistence.Repositories;
 using Comprexy.Infrastructure.Providers;
@@ -16,14 +15,9 @@ namespace Comprexy.Infrastructure.DependencyInjection;
 
 public static class ServiceCollectionExtensions
 {
-    /// <param name="enableCompressionWorker">
-    /// When true (proxy default), registers the in-process compression queue and hosted worker.
-    /// Control-plane hosts should pass false so they share persistence without running compression.
-    /// </param>
     public static IServiceCollection AddComprexyInfrastructure(
         this IServiceCollection services,
-        IConfiguration configuration,
-        bool enableCompressionWorker = true)
+        IConfiguration configuration)
     {
         var connectionString = configuration.GetConnectionString("Comprexy")
             ?? "Data Source=comprexy.db;Cache=Shared";
@@ -67,12 +61,6 @@ public static class ServiceCollectionExtensions
         {
             client.Timeout = TimeSpan.FromSeconds(Math.Max(longestTimeoutSeconds, 120) + 30);
         });
-
-        if (enableCompressionWorker)
-        {
-            services.AddSingleton<ICompressionQueue, ChannelCompressionQueue>();
-            services.AddHostedService<CompressionBackgroundService>();
-        }
 
         return services;
     }

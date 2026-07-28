@@ -472,7 +472,7 @@ public class RequestTraceFileSessionTests
 
         try
         {
-            using (session.BeginCompression(conversationId, "HighPriorityBackground"))
+            using (session.BeginCompression(conversationId, "Inline"))
             {
                 session.Append("compression model input\n  payload:\n    {}");
             }

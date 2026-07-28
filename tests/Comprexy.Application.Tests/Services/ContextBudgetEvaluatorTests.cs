@@ -7,12 +7,11 @@ namespace Comprexy.Application.Tests.Services;
 
 public class ContextBudgetEvaluatorTests
 {
-    private static ContextBudgetEvaluator CreateEvaluator(int soft = 100, int? hard = 200)
+    private static ContextBudgetEvaluator CreateEvaluator(int soft = 100)
     {
         var options = Options.Create(new ContextPolicyOptions
         {
-            SoftLimitTokens = soft,
-            HardLimitTokens = hard
+            SoftLimitTokens = soft
         });
 
         return new ContextBudgetEvaluator(options);
@@ -31,7 +30,7 @@ public class ContextBudgetEvaluatorTests
     [Fact]
     public void Evaluate_AtSoftLimit_ReturnsForwardImmediate()
     {
-        var evaluator = CreateEvaluator(soft: 100, hard: 200);
+        var evaluator = CreateEvaluator(soft: 100);
 
         var decision = evaluator.Evaluate(100);
 
@@ -39,9 +38,9 @@ public class ContextBudgetEvaluatorTests
     }
 
     [Fact]
-    public void Evaluate_BetweenSoftAndHardLimit_ReturnsHighPriorityCompression()
+    public void Evaluate_AboveSoftLimit_ReturnsHighPriorityCompression()
     {
-        var evaluator = CreateEvaluator(soft: 100, hard: 200);
+        var evaluator = CreateEvaluator(soft: 100);
 
         var decision = evaluator.Evaluate(150);
 
@@ -49,52 +48,12 @@ public class ContextBudgetEvaluatorTests
     }
 
     [Fact]
-    public void Evaluate_AtHardLimit_ReturnsEmergencyCompressionRequired()
+    public void Evaluate_FarAboveSoftLimit_ReturnsHighPriorityCompression()
     {
-        var evaluator = CreateEvaluator(soft: 100, hard: 200);
-
-        var decision = evaluator.Evaluate(200);
-
-        Assert.Equal(ContextBudgetDecision.EmergencyCompressionRequired, decision);
-    }
-
-    [Fact]
-    public void Evaluate_AboveHardLimit_ReturnsEmergencyCompressionRequired()
-    {
-        var evaluator = CreateEvaluator(soft: 100, hard: 200);
-
-        var decision = evaluator.Evaluate(201);
-
-        Assert.Equal(ContextBudgetDecision.EmergencyCompressionRequired, decision);
-    }
-
-    [Fact]
-    public void Evaluate_JustBelowHardLimit_ReturnsHighPriorityCompression()
-    {
-        var evaluator = CreateEvaluator(soft: 100, hard: 200);
-
-        var decision = evaluator.Evaluate(199);
-
-        Assert.Equal(ContextBudgetDecision.ForwardWithHighPriorityCompression, decision);
-    }
-
-    [Fact]
-    public void Evaluate_NullHardLimit_AboveSoft_ReturnsHighPriorityCompression()
-    {
-        var evaluator = CreateEvaluator(soft: 100, hard: null);
+        var evaluator = CreateEvaluator(soft: 100);
 
         var decision = evaluator.Evaluate(10_000);
 
         Assert.Equal(ContextBudgetDecision.ForwardWithHighPriorityCompression, decision);
-    }
-
-    [Fact]
-    public void Evaluate_NullHardLimit_BelowSoft_ReturnsForwardImmediate()
-    {
-        var evaluator = CreateEvaluator(soft: 100, hard: null);
-
-        var decision = evaluator.Evaluate(50);
-
-        Assert.Equal(ContextBudgetDecision.ForwardImmediate, decision);
     }
 }

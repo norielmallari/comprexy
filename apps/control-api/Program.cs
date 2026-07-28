@@ -18,7 +18,7 @@ SharedSqliteConfiguration.UseRepoSharedDatabase(builder);
 builder.Configuration.AddJsonFile("appsettings.Local.json", optional: true, reloadOnChange: true);
 
 builder.Services.AddComprexyApplication(builder.Configuration, enableProxyServices: false);
-builder.Services.AddComprexyInfrastructure(builder.Configuration, enableCompressionWorker: false);
+builder.Services.AddComprexyInfrastructure(builder.Configuration);
 
 builder.Services.AddHttpContextAccessor();
 builder.Services.AddOptions<McpTelemetryOptions>()

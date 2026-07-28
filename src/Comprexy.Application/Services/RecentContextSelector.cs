@@ -6,7 +6,7 @@ using Microsoft.Extensions.Options;
 namespace Comprexy.Application.Services;
 
 /// <summary>
-/// Selects which unfolded messages to keep raw when compression runs (message-count and
+/// Selects which unfolded messages to keep raw when Inline wrap-up folds (message-count and
 /// token-budget retain window). Assistant + following tool results stay atomic so chat
 /// templates never see orphaned tool messages. Not used when assembling chat requests after
 /// compression — those include all remaining unfolded messages.
@@ -22,11 +22,9 @@ public class RecentContextSelector
 
     public IReadOnlyList<ConversationMessage> Select(
         IReadOnlyList<ConversationMessage> unfoldedExcludingCurrent,
-        bool emergency = false,
         int? maxMessagesOverride = null)
     {
-        var maxMessages = maxMessagesOverride
-            ?? (emergency ? _policy.EmergencyRecentMessageCount : _policy.CompressionRetainMessageCount);
+        var maxMessages = maxMessagesOverride ?? _policy.CompressionRetainMessageCount;
         var maxTokens = Math.Max(0, _policy.MaxRecentRawTokens);
 
         if (maxMessages <= 0 || unfoldedExcludingCurrent.Count == 0)

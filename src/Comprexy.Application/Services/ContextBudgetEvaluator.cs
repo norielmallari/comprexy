@@ -5,8 +5,7 @@ using Microsoft.Extensions.Options;
 namespace Comprexy.Application.Services;
 
 /// <summary>
-/// Decides how to handle an outgoing request based on its estimated token count relative to the
-/// configured soft and hard context limits.
+/// Decides soft-pressure eligibility from estimated token count relative to the soft limit.
 /// </summary>
 public class ContextBudgetEvaluator
 {
@@ -19,11 +18,6 @@ public class ContextBudgetEvaluator
 
     public ContextBudgetDecision Evaluate(int estimatedTokens)
     {
-        if (_policy.HardLimitTokens.HasValue && estimatedTokens >= _policy.HardLimitTokens.Value)
-        {
-            return ContextBudgetDecision.EmergencyCompressionRequired;
-        }
-
         if (estimatedTokens > _policy.SoftLimitTokens)
         {
             return ContextBudgetDecision.ForwardWithHighPriorityCompression;

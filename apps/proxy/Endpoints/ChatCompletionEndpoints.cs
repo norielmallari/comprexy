@@ -76,15 +76,6 @@ public static class ChatCompletionEndpoints
                 new ErrorResponseDto { Error = new ErrorDetailDto { Message = ex.Message, Type = "invalid_request_error" } },
                 statusCode: StatusCodes.Status400BadRequest);
         }
-        catch (Comprexy.Application.Exceptions.ContextBudgetExceededException ex)
-        {
-            return Results.Json(
-                new ErrorResponseDto
-                {
-                    Error = new ErrorDetailDto { Message = ex.Message, Type = "context_length_exceeded" }
-                },
-                statusCode: StatusCodes.Status413PayloadTooLarge);
-        }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
             return Results.Empty;
@@ -116,7 +107,7 @@ public static class ChatCompletionEndpoints
 
         try
         {
-            // Defer SSE headers until prepare succeeds so context-budget failures can still return JSON 413.
+            // Defer SSE headers until prepare succeeds so prepare failures can still return JSON errors.
             var result = await proxyService.HandleStreamingAsync(
                 request,
                 conversationId =>

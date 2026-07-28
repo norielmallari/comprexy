@@ -16,8 +16,7 @@ Before adding or moving `SaveChangesAsync` / `IUnitOfWork` / `DbContext.SaveChan
 
 | Owner | Unit | Allowed when |
 | --- | --- | --- |
-| `ProxyChatCompletionService` (and prepare helpers it owns) | Request-scoped chat `IUnitOfWork` | Complete; Inline phase 1/2; CatalogMutated; emergency-before-compress; snapshot rewind; inbound distill commit before dual-id Complete |
-| `CompressionOrchestrator` | Scoped UoW for that compression run | Success / Fail / cancel terminal paths |
+| `ProxyChatCompletionService` (and prepare helpers it owns) | Request-scoped chat `IUnitOfWork` | Complete; Inline phase 1/2; CatalogMutated; snapshot rewind; inbound distill commit before dual-id Complete |
 | Dual-id map (`ToolIrCallIdMapService`) | **Isolated** `IToolIrCallIdMapUnitOfWork` from `IToolIrCallIdMapUnitOfWorkFactory` only | Register / Complete / Clear / Sweep |
 
 ### Dual-id rule

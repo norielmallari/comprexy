@@ -121,7 +121,6 @@ public class RecentContextSelectorTests
         new(Options.Create(new ContextPolicyOptions
         {
             CompressionRetainMessageCount = recentMessageCount,
-            EmergencyRecentMessageCount = 1,
             MaxRecentRawTokens = maxRecentRawTokens
         }));
 }

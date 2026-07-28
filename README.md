@@ -2,22 +2,14 @@
 
 **Comprexy™ is an OpenAI-compatible comprehension and context compression proxy for LLMs.** It keeps long-running chats and coding agents coherent by folding older turns into a rolling, versioned working memory without blocking every reply.
 
-It sits between your client (Cursor, CLI agents, custom apps) and any OpenAI-compatible upstream. Soft budget pressure triggers an **Inline** follow-up wrap-up by default (`RetainSelection=Inline`); set `RetainSelection` to `Fixed` or `Smart` for background soft compression instead.
+It sits between your client (Cursor, CLI agents, custom apps) and any OpenAI-compatible upstream. Soft budget pressure triggers an **Inline** follow-up wrap-up on eligible turns (closed stored tool chain + cooldown).
 
-With a hard token limit set, the default hard path is send-time trim then HTTP 413 (no blocking emergency compact when `EmergencyCompression` is `Off`); set `EmergencyCompression` to `Sync` for synchronous emergency compression before the call goes out (Fixed/Smart only — ignored under Inline). Stock proxy config leaves `HardLimitTokens` unset (`null`), so hard-limit trim/413 is off until you set a value.
-
-[Quick start](#quick-start) · [MCP setup](#mcp-setup) · [Source of truth](#source-of-truth) · [Why Comprexy?](#why-comprexy) · [Features](#features) · [How it works](#how-it-works) · [Configuration](#configuration) · [Limitations](#limitations) · [Architecture](#architecture) · [Contributing](#contributing)
+[Quick start](#quick-start) · [Why Comprexy?](#why-comprexy) · [Source of truth](#source-of-truth) · [MCP setup](#mcp-setup) · [Features](#features) · [How it works](#how-it-works) · [Configuration](#configuration) · [Limitations](#limitations) · [Architecture](#architecture) · [Contributing](#contributing)
 
 ![.NET](https://img.shields.io/badge/.NET-10-512BD4?logo=dotnet&logoColor=white)
 ![Platform](https://img.shields.io/badge/platform-cross--platform-informational)
 ![License](https://img.shields.io/badge/license-MIT-green)
 ![Status](https://img.shields.io/badge/status-early%20preview-orange)
-
-## Source of truth
-
-Comprexy persists completed conversation turns as the durable record. Working memory is a derived, versioned representation used to construct bounded upstream prompts. Compression marks messages as folded; it does not delete or replace them.
-
-Soft compression rebuilds working memory from the full transcript when it fits `CompressionMaxInputTokens`. Beyond that cap, Comprexy intentionally merges a bounded fold segment into existing working memory, avoiding unbounded compression requests that can overwhelm local LLMs. Set `CompressionMaxInputTokens` to `null` to remove the input bound (soft compression then always prefers full-raw rebuild); compression itself still runs.
 
 ## Quick start
 
@@ -40,7 +32,7 @@ Configure upstream in `apps/proxy/appsettings.json`, or copy `appsettings.Local.
 }
 ```
 
-Omit `Model` (or set it `null`) to forward the client's `model` field instead. Soft/emergency compression then reuses that same client model unless `Compression:Model` is set.
+Omit `Model` (or set it `null`) to forward the client's `model` field instead. Inline wrap-up and ToolSchema mapping then reuse that same client model unless `Compression:Model` is set (mapper only).
 
 ```bash
 ./comprexy.sh proxy          # data plane :8129
@@ -82,6 +74,27 @@ curl http://localhost:8129/v1/chat/completions \
 ```
 
 On the normal path, when `Provider:Model` is set Comprexy replaces `model` with that value; when it is null/omitted, the client's `model` is forwarded. In `Proxy:PassThrough` mode, the client body (including `model`) is forwarded as sent unless `Provider:Model` overrides it.
+
+## Why Comprexy?
+
+Long sessions accumulate history, tool output, and corrections until the prompt is noisy, expensive, or past the model’s useful window. Restarting and re-explaining kills flow; summarizing on every turn adds latency.
+
+Comprexy’s approach:
+
+| Goal | Approach |
+| --- | --- |
+| Stay in flow | Answer first; compact via Inline wrap-up on eligible soft-pressure turns |
+| Preserve what matters | Persist completed turns; use versioned working memory for the active prompt, not blind truncation |
+| Stay compatible | OpenAI-compatible `/v1` base URL: chat completions are compressed; other `/v1/*` routes proxy upstream |
+| Stay focused | Context compression only — not a multi-provider gateway or agent framework |
+
+If you need routing, spend tracking, or broad agent wrappers, tools like LiteLLM or Headroom may fit better. Comprexy is intentionally narrower.
+
+## Source of truth
+
+Comprexy persists completed conversation turns as the durable record. Working memory is a derived, versioned representation used to construct bounded upstream prompts. Compression marks messages as folded; it does not delete or replace them.
+
+Soft pressure above `SoftLimitTokens` triggers a blocking Inline wrap-up on eligible turns. The wrap-up folds older unfolded messages into a new working-memory version while retaining a tip window (`CompressionRetainMessageCount` / `MaxRecentRawTokens`).
 
 ## MCP setup
 
@@ -130,21 +143,6 @@ Reload the MCP client after starting control-api. If `Auth:RequiredApiKey` is co
 
 Telemetry MCP tools are named `comprexy_*` and require `conversationId` from the proxy meta-tool `comprexy_get_current_conversation_id` (or from operator tooling / response header `X-Comprexy-Conversation-Id`).
 
-## Why Comprexy?
-
-Long sessions accumulate history, tool output, and corrections until the prompt is noisy, expensive, or past the model’s useful window. Restarting and re-explaining kills flow; summarizing on every turn adds latency.
-
-Comprexy’s approach:
-
-| Goal | Approach |
-| --- | --- |
-| Stay in flow | Answer first; compact via Inline wrap-up on eligible soft-pressure turns (or background jobs when `RetainSelection` is Fixed/Smart) |
-| Preserve what matters | Persist completed turns; use versioned working memory for the active prompt, not blind truncation |
-| Stay compatible | OpenAI-compatible `/v1` base URL: chat completions are compressed; other `/v1/*` routes proxy upstream |
-| Stay focused | Context compression only — not a multi-provider gateway or agent framework |
-
-If you need routing, spend tracking, or broad agent wrappers, tools like LiteLLM or Headroom may fit better. Comprexy is intentionally narrower.
-
 ## Features
 
 | Feature | Description |
@@ -152,13 +150,13 @@ If you need routing, spend tracking, or broad agent wrappers, tools like LiteLLM
 | OpenAI-compatible `/v1` | `POST /v1/chat/completions` is compressed (roles: `system` / `user` / `assistant` / `tool`). Other `/v1/*` routes reverse-proxy to `Provider` unchanged |
 | Token metrics API | Control API `GET /v1/comprexy/conversations` (+ `/metrics`, `/metrics/turns`) on `:8130` reports raw vs compressed token savings per conversation |
 | Telemetry MCP | Control API `/mcp` exposes read-only summaries, turns, compression phases, budget events, prompt growth, comparisons, evidence markdown, and conversation retrieval (search / message window / working memory / open tool chains) to MCP clients |
-| Rolling working memory | Versioned compressed representation of older context for prompt reconstruction. Derived from persisted messages; may incorporate earlier working memory when the transcript exceeds `CompressionMaxInputTokens` |
-| Soft / hard budgets | Soft (`> soft`) → Inline follow-up wrap-up on eligible turns by default (`RetainSelection=Inline`); Fixed/Smart queue background compression instead. By default chat waits for in-flight soft compression (`CancelBackgroundCompressionOnChat: false`); set it `true` to cancel soft compression when the next chat request arrives. Soft Fixed/Smart prefer a **full-raw** rebuild when stored message tokens ≤ `CompressionMaxInputTokens` (or always when that cap is `null`); otherwise intentionally merge a bounded fold segment into working memory. Hard (`>= hard`, when `HardLimitTokens` is set) → send-time retain trim then HTTP 413 when `EmergencyCompression: Off`. Set `EmergencyCompression: Sync` for blocking Fixed-style emergency compact before trim/413 (Fixed/Smart only; ignored under Inline — see TODO-013). Stock proxy appsettings leave `HardLimitTokens` and `CompressionMaxInputTokens` as `null` (hard checks and compression input cap off). Token estimates use tiktoken for text and OpenAI-style vision tiles for `image_url` (base64 is not BPE-counted) |
+| Rolling working memory | Versioned compressed representation of older context for prompt reconstruction. Derived from persisted messages via Inline wrap-up |
+| Soft budget | Soft (`> soft`) → Inline follow-up wrap-up on eligible turns (closed stored tool chain + `MinTurnsBetweenGenerations` cooldown). Token estimates use tiktoken for text and OpenAI-style vision tiles for `image_url` (base64 is not BPE-counted) |
 | Context rebuild | Outgoing context is always rebuilt from stored turns (IR-side under Virtual Tools). Working memory is omitted until the first successful compression; `Proxy:PassThrough` is the only full bypass |
 | Conversation identity | Prefer a unique `X-Comprexy-Conversation-Id` per session; otherwise fingerprint from system + first two **plain** user turns (Cursor `<user_query>` when present; tool-echo user turns skipped) |
 | Local-first, cloud-ready | Point `Provider` at Ollama, LM Studio, vLLM, OpenAI, Azure OpenAI–compatible APIs, and similar |
 | Optional separate compress model | Use a cheaper/faster model for compression via `Compression` settings |
-| Pass-through mode | `Proxy:PassThrough` forwards the original body unmodified — no rebuild, compression, or 413 budget gate. Escape hatch only; leave off for normal use |
+| Pass-through mode | `Proxy:PassThrough` forwards the original body unmodified — no rebuild or compression. Escape hatch only; leave off for normal use |
 | Strip reasoning | `Proxy:StripReasoningContent` (default off) removes `reasoning_content` / `reasoning` from outbound chat and compression messages when enabled |
 | Request audit files | Optional per-request / per-compression logs under `logs/requests/` (opt in via `appsettings.Local.json`) |
 | Local persistence | Persists completed conversation turns, working-memory versions, metrics, and compression history. Raw turns remain available after compression |
@@ -169,29 +167,19 @@ If you need routing, spend tracking, or broad agent wrappers, tools like LiteLLM
 flowchart LR
   Client[LLM client] --> Proxy["Comprexy /v1/chat/completions"]
   Proxy --> Store[(Persisted turns)]
-  Store --> Budget{Context budget}
+  Store --> Budget{Soft budget}
   Budget -->|under soft| Rebuild[Prompt rebuild]
-  Budget -->|above soft after reply| SoftPath[Inline wrap-up or background soft]
-  Budget -->|at or above hard when HardLimitTokens set| HardPath[Trim then 413 or Sync emergency]
-  SoftPath --> Compress[Compression / wrap-up model]
-  Compress -->|fits CompressionMaxInputTokens or cap null| FullRaw[Full-raw rebuild]
-  Compress -->|over cap| Merge[Bounded WM merge]
-  FullRaw --> WM[(Versioned working memory)]
-  Merge --> WM
+  Budget -->|above soft after reply + eligible| SoftPath[Inline wrap-up]
+  SoftPath --> WM[(Versioned working memory)]
   WM --> Rebuild
   Store --> Rebuild
   Rebuild --> Upstream[Upstream chat model]
-  HardPath --> Upstream
   Upstream --> Client
 ```
 
-**Normal path:** rebuild prompt → forward → return (or stream) → if above soft limit, run Inline wrap-up on eligible turns (`RetainSelection=Inline`, default) or enqueue Fixed/Smart background compression. Soft compression and chat for the same conversation are serialized by a gate. With `CancelBackgroundCompressionOnChat: false` (default), soft Fixed/Smart jobs take an exclusive lease so chat waits until soft compression finishes. With `true`, soft jobs are preemptible: an arriving chat request cancels in-flight soft compression and continues with last known-good working memory (or stored rebuild without WM if none). Soft jobs rebuild from the full transcript when it fits `CompressionMaxInputTokens` (or always when that cap is `null`); otherwise they intentionally merge a bounded fold segment into existing working memory. Soft and emergency compression both require closed tool chains (every assistant `tool_call` id has a matching tool result); while tools are open, compression is skipped and recovery is the next closed turn (or send-time trim / 413 under hard pressure when a hard limit is set).
+**Normal path:** rebuild prompt → forward → return (or stream) → if above soft limit and eligible (closed stored tool chain + cooldown), run blocking Inline wrap-up under the exclusive conversation gate. Mid-chain turns may checkpoint the closed stored prefix while leaving an open assistant unfolded. Soft failure never overwrites last known-good working memory.
 
-**Hard path (when `HardLimitTokens` is set, `EmergencyCompression: Off`):** at or above hard → temporary send-time retain trim → forward if under budget, else HTTP 413. Soft recovery is Inline wrap-up or Fixed/Smart background compression on the next eligible turn.
-
-**Hard path (`EmergencyCompression: Sync`, Fixed/Smart only):** at or above hard → bounded synchronous emergency compact when tool chains are closed → send-time retain trim if needed → forward, or HTTP 413 if still over. Emergency compaction is skipped while tool calls are open, and is ignored when `RetainSelection=Inline`. Stock proxy config leaves `HardLimitTokens` null, so the hard path does not run until you set a limit.
-
-**After working memory exists:** outgoing context is roughly `system + working memory + still-unfolded messages + current tip`. The retain window is applied at compression time. An additional send-time retain trim runs when the hard limit is still exceeded (it does not permanently fold messages).
+**After working memory exists:** outgoing context is roughly `system + working memory + still-unfolded messages + current tip`. The retain window is applied at Inline fold time.
 
 ### What compression does
 
@@ -201,7 +189,6 @@ Compression in Comprexy:
 - Creates versioned working memory.
 - Marks represented messages as folded.
 - Retains persisted message records.
-- Uses bounded incremental merging when the transcript exceeds `CompressionMaxInputTokens`.
 
 Compression does not delete persisted turns, replace the durable transcript, or wait for summarization on every reply.
 
@@ -212,8 +199,8 @@ Settings load from `appsettings.json`, environment overlays, and optional gitign
 | Section | Role (summary) |
 | --- | --- |
 | `Provider` | Upstream OpenAI-compatible chat endpoint |
-| `Compression` | Optional separate compression model/prompts |
-| `ContextPolicy` | Soft/hard token limits, retain, emergency compression |
+| `Compression` | Optional separate Compression endpoint for ToolSchema mapper; Inline wrap-up prompts |
+| `ContextPolicy` | Soft token limit, Inline cooldown / retain tip |
 | `ToolSchema` | Virtual Tools (`Mode: Virtual` default; set `Off` to disable) |
 | `McpTelemetry` | Control-api MCP row limits and query timeout |
 | `Auth` | Optional API key gate on `/v1/*` and control-api `/mcp` |
@@ -228,8 +215,8 @@ Settings load from `appsettings.json`, environment overlays, and optional gitign
 - Chat compression supports `system`, `user`, `assistant`, and `tool` roles. Other roles (for example `developer`) are rejected on `/v1/chat/completions`.
 - Without `X-Comprexy-Conversation-Id`, conversation identity is a text fingerprint of the system prompt and first two **plain** user turns (Cursor `<user_query>` extraction when present; tool-echo user turns skipped). Use an explicit id for multi-tab or multi-user setups.
 - After working memory exists, the system prompt captured on the first turn is reused when rebuilding context.
-- `Proxy:PassThrough` disables context management entirely, including the hard-limit 413 gate.
-- Soft Fixed/Smart compression runs in-process; the in-memory queue is not shared across multiple API instances.
+- `Proxy:PassThrough` disables context management entirely.
+- Soft Inline wrap-up and the conversation gate are process-local; they are not shared across multiple API instances.
 
 Deferred work is tracked in [`docs/TODO.md`](docs/TODO.md).
 

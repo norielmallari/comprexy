@@ -1,7 +1,6 @@
 using System.Text.Json;
 using Comprexy.Application.Abstractions;
 using Comprexy.Application.Configuration;
-using Comprexy.Application.Exceptions;
 using Comprexy.Application.Models;
 using Comprexy.Application.Tracing;
 using Comprexy.Domain.Entities;
@@ -14,8 +13,8 @@ namespace Comprexy.Application.Services;
 
 /// <summary>
 /// Orchestrates a single proxied chat completion request end to end: resolves conversation
-/// identity, persists new messages, builds the budget-aware outgoing context, forwards to the
-/// upstream model, and queues follow-up compression work.
+/// identity, persists new messages, builds soft-budget-aware outgoing context, forwards to the
+/// upstream model, and runs Inline wrap-up when eligible.
 /// </summary>
 public class ProxyChatCompletionService
 {
@@ -30,8 +29,6 @@ public class ProxyChatCompletionService
     private readonly RecentContextSelector _recentContextSelector;
     private readonly ProviderEndpointResolver _endpointResolver;
     private readonly IChatCompletionClient _chatCompletionClient;
-    private readonly ICompressionQueue _compressionQueue;
-    private readonly ICompressionOrchestrator _compressionOrchestrator;
     private readonly ICompressionEventRepository _compressionEventRepository;
     private readonly CompressionPromptFactory _compressionPromptFactory;
     private readonly ToolSchemaOrchestrator _toolSchemaOrchestrator;
@@ -57,8 +54,6 @@ public class ProxyChatCompletionService
         RecentContextSelector recentContextSelector,
         ProviderEndpointResolver endpointResolver,
         IChatCompletionClient chatCompletionClient,
-        ICompressionQueue compressionQueue,
-        ICompressionOrchestrator compressionOrchestrator,
         ICompressionEventRepository compressionEventRepository,
         CompressionPromptFactory compressionPromptFactory,
         ToolSchemaOrchestrator toolSchemaOrchestrator,
@@ -83,8 +78,6 @@ public class ProxyChatCompletionService
         _recentContextSelector = recentContextSelector;
         _endpointResolver = endpointResolver;
         _chatCompletionClient = chatCompletionClient;
-        _compressionQueue = compressionQueue;
-        _compressionOrchestrator = compressionOrchestrator;
         _compressionEventRepository = compressionEventRepository;
         _compressionPromptFactory = compressionPromptFactory;
         _toolSchemaOrchestrator = toolSchemaOrchestrator;
@@ -98,10 +91,6 @@ public class ProxyChatCompletionService
         _requestTraceFiles = requestTraceFiles;
         _logger = logger;
     }
-
-    private bool EmergencySyncEnabled =>
-        _policy.EmergencyCompression == EmergencyCompressionMode.Sync
-        && _policy.RetainSelection != RetainSelectionMode.Inline;
 
     public async Task<ProxyChatCompletionResult> HandleAsync(IncomingChatRequest request, CancellationToken cancellationToken)
     {
@@ -462,8 +451,7 @@ public class ProxyChatCompletionService
 
         // Always rebuild from stored (IR-side) messages. WM is optional — pre-first-compression
         // is the same path with workingMemory == null (never forward client wire history).
-        // Retain/window folding still happens only inside CompressionOrchestrator (except send-time
-        // emergency trim below when still over the hard limit after compression).
+        // Folding happens only inside Inline wrap-up on complete.
         var recentRaw = PrepareRecentRawForChatTemplate(
             conversation.Id,
             allMessages
@@ -497,112 +485,6 @@ public class ProxyChatCompletionService
             windowStartSequence: windowStart,
             windowEndSequence: windowEnd,
             recentRawCount: recentRaw.Count);
-
-        if (decision == ContextBudgetDecision.EmergencyCompressionRequired && EmergencySyncEnabled)
-        {
-            await _unitOfWork.SaveChangesAsync(cancellationToken);
-            await _compressionOrchestrator.RunAsync(
-                conversation.Id,
-                CompressionMode.Emergency,
-                cancellationToken,
-                _endpointResolver.ResolveUpstream().ResolveOutboundModel(request.RawRequest));
-
-            workingMemory = await _workingMemoryRepository.GetLatestAsync(conversation.Id, cancellationToken);
-            if (metricsPrepare is not null)
-            {
-                metricsPrepare = metricsPrepare with { WorkingMemoryVersionUsed = workingMemory?.Version };
-            }
-            var refreshed = await _messageRepository.GetByConversationIdAsync(conversation.Id, cancellationToken);
-            allMessages = refreshed.Count > 0 ? refreshed : allMessages;
-            recentRaw = PrepareRecentRawForChatTemplate(
-                conversation.Id,
-                allMessages
-                    .Where(m => !m.IsFolded && m.Sequence < currentMessageEntity.Sequence)
-                    .OrderBy(m => m.Sequence)
-                    .ToList(),
-                currentUserMessage,
-                allMessages,
-                currentMessageEntity.Sequence);
-
-            // Rebuild + re-prepare ToolSchema against post-emergency context. Reusing the
-            // pre-emergency rewrite would estimate the old OutgoingMessages and drive wrong
-            // hard-limit / send-time trim decisions.
-            outgoing = _contextBuilder.Build(
-                conversation.SystemPrompt,
-                workingMemory,
-                recentRaw,
-                currentUserMessage);
-            toolSchema = await TryPrepareToolSchemaAsync(
-                conversation.Id,
-                outgoing,
-                request.RawRequest,
-                cancellationToken);
-            estimateMessages = toolSchema?.OutgoingMessages ?? outgoing;
-            estimatePayload = toolSchema?.RewrittenClientRequest ?? request.RawRequest;
-            estimatedTokens = _tokenEstimator.CountPromptTokens(estimateMessages, estimatePayload);
-            windowStart = recentRaw.Count > 0 ? recentRaw[0].Sequence : null;
-            windowEnd = currentMessageEntity.Sequence;
-            LogContextBudget(
-                conversation.Id,
-                estimatedTokens,
-                decision,
-                postEmergency: true,
-                windowStartSequence: windowStart,
-                windowEndSequence: windowEnd,
-                recentRawCount: recentRaw.Count);
-        }
-        else if (decision == ContextBudgetDecision.EmergencyCompressionRequired && !EmergencySyncEnabled)
-        {
-            _logger.LogInformation(
-                "Hard limit reached for conversation {ConversationId}; emergency compression is {Mode}, skipping sync compact.",
-                conversation.Id,
-                _policy.RetainSelection == RetainSelectionMode.Inline ? "Inline (ignored)" : _policy.EmergencyCompression);
-        }
-
-        if (_policy.HardLimitTokens.HasValue && estimatedTokens >= _policy.HardLimitTokens.Value)
-        {
-            (recentRaw, outgoing, estimatedTokens, windowStart) = ApplySendTimeEmergencyTrim(
-                conversation,
-                workingMemory,
-                recentRaw,
-                currentUserMessage,
-                estimatePayload);
-
-            if (metricsPrepare is not null)
-            {
-                metricsPrepare = metricsPrepare with { TrimTriggered = true };
-            }
-
-            if (toolSchema is not null)
-            {
-                toolSchema = await TryPrepareToolSchemaAsync(
-                    conversation.Id,
-                    outgoing,
-                    request.RawRequest,
-                    cancellationToken);
-                estimateMessages = toolSchema?.OutgoingMessages ?? outgoing;
-                estimatePayload = toolSchema?.RewrittenClientRequest ?? estimatePayload;
-                estimatedTokens = _tokenEstimator.CountPromptTokens(estimateMessages, estimatePayload);
-            }
-
-            windowEnd = currentMessageEntity.Sequence;
-            LogContextBudget(
-                conversation.Id,
-                estimatedTokens,
-                decision,
-                postEmergency: true,
-                windowStartSequence: windowStart,
-                windowEndSequence: windowEnd,
-                recentRawCount: recentRaw.Count);
-
-            if (_policy.HardLimitTokens.HasValue && estimatedTokens >= _policy.HardLimitTokens.Value)
-            {
-                throw new ContextBudgetExceededException(
-                    conversation.Id,
-                    estimatedTokens,
-                    _policy.HardLimitTokens.Value);
-            }
-        }
 
         return await BuildPreparedRequestAsync(
             conversation,
@@ -690,13 +572,10 @@ public class ProxyChatCompletionService
 
         // ToolSchema rewrites tools[] — always replace wire messages when active.
         var effectiveReplaceMessages = toolSchema is not null || replaceMessages;
-        // Pre-follow-up estimate: main outbound tokens before any wrap-up (hard-limit check only;
-        // CompressionMaxInputTokens is intentionally not applied here — matches prior tip headroom).
         var preFollowUpEstimatedTokens = tokens;
         var inlineFollowUpEligible = false;
 
         if (!skipCompression
-            && _policy.RetainSelection == RetainSelectionMode.Inline
             && decision != ContextBudgetDecision.ForwardImmediate
             && await IsInlineCooldownClearAsync(conversation.Id, allMessages, cancellationToken))
         {
@@ -705,27 +584,12 @@ public class ProxyChatCompletionService
             {
                 var wrapUpUser = _compressionPromptFactory.BuildInlineWrapUpUserMessage();
                 var wrapUpTipTokens = _tokenEstimator.CountTokens([wrapUpUser]);
-                var headroomOk = !_policy.HardLimitTokens.HasValue
-                    || tokens + wrapUpTipTokens <= _policy.HardLimitTokens.Value;
-
-                if (headroomOk)
-                {
-                    inlineFollowUpEligible = true;
-                    _logger.LogInformation(
-                        "Inline follow-up wrap-up eligible for conversation {ConversationId}: estimatedTokens={EstimatedTokens} wrapUpTipTokens={WrapUpTipTokens}",
-                        conversation.Id,
-                        preFollowUpEstimatedTokens,
-                        wrapUpTipTokens);
-                }
-                else
-                {
-                    _logger.LogInformation(
-                        "Inline follow-up wrap-up skipped for conversation {ConversationId}: wrap-up tip would exceed hard limit (estimated={EstimatedTokens} wrapUpTip={WrapUpTipTokens} hard={HardLimitTokens}).",
-                        conversation.Id,
-                        tokens,
-                        wrapUpTipTokens,
-                        _policy.HardLimitTokens);
-                }
+                inlineFollowUpEligible = true;
+                _logger.LogInformation(
+                    "Inline follow-up wrap-up eligible for conversation {ConversationId}: estimatedTokens={EstimatedTokens} wrapUpTipTokens={WrapUpTipTokens}",
+                    conversation.Id,
+                    preFollowUpEstimatedTokens,
+                    wrapUpTipTokens);
             }
             else
             {
@@ -899,52 +763,6 @@ public class ProxyChatCompletionService
         }
 
         return sanitized as List<ConversationMessage> ?? sanitized.ToList();
-    }
-
-    /// <summary>
-    /// Temporary wire-only retain trim (does not mark messages folded). Used when emergency
-    /// compression left the full unfolded tip still over the hard limit.
-    /// </summary>
-    private (
-        List<ConversationMessage> RecentRaw,
-        IReadOnlyList<ChatMessage> Outgoing,
-        int EstimatedTokens,
-        int? WindowStart) ApplySendTimeEmergencyTrim(
-        Conversation conversation,
-        WorkingMemory? workingMemory,
-        List<ConversationMessage> recentRaw,
-        ChatMessage currentUserMessage,
-        JsonElement? rawRequest)
-    {
-        var trimmed = _recentContextSelector
-            .Select(recentRaw, emergency: true)
-            .ToList();
-        trimmed = SanitizeRecentRawForChatTemplate(conversation.Id, trimmed);
-
-        if (trimmed.Count < recentRaw.Count)
-        {
-            _logger.LogWarning(
-                "Send-time emergency trim for conversation {ConversationId}: unfoldedPrior={Before} retained={After} (not folded).",
-                conversation.Id,
-                recentRaw.Count,
-                trimmed.Count);
-        }
-        else
-        {
-            _logger.LogWarning(
-                "Send-time emergency trim for conversation {ConversationId} could not drop unfolded messages (count={Count}).",
-                conversation.Id,
-                recentRaw.Count);
-        }
-
-        var outgoing = _contextBuilder.Build(
-            conversation.SystemPrompt,
-            workingMemory,
-            trimmed,
-            currentUserMessage);
-        var estimatedTokens = _tokenEstimator.CountPromptTokens(outgoing, rawRequest);
-        var windowStart = trimmed.Count > 0 ? trimmed[0].Sequence : (int?)null;
-        return (trimmed, outgoing, estimatedTokens, windowStart);
     }
 
     /// <summary>
@@ -1157,23 +975,19 @@ public class ProxyChatCompletionService
         int estimatedTokens,
         ContextBudgetDecision decision,
         bool passThrough = false,
-        bool postEmergency = false,
         int? windowStartSequence = null,
         int? windowEndSequence = null,
         int? recentRawCount = null)
     {
         var label = passThrough
             ? PayloadTraceLabels.ContextBudgetPassThrough
-            : postEmergency
-                ? PayloadTraceLabels.ContextBudgetPostEmergency
-                : PayloadTraceLabels.ContextBudgetReassembled;
+            : PayloadTraceLabels.ContextBudgetReassembled;
 
         _payloadTrace.LogOutput(label, new
         {
             conversationId,
             estimatedTokens,
             softLimitTokens = _policy.SoftLimitTokens,
-            hardLimitTokens = _policy.HardLimitTokens,
             decision = decision.ToString(),
             compressionSkipped = passThrough,
             windowStartSequence,
@@ -1182,11 +996,10 @@ public class ProxyChatCompletionService
         });
 
         _logger.LogInformation(
-            "Context budget ({Label}): estimatedTokens={EstimatedTokens} softLimit={SoftLimitTokens} hardLimit={HardLimitTokens} decision={Decision} window=[{WindowStart}..{WindowEnd}] recentRawCount={RecentRawCount}",
+            "Context budget ({Label}): estimatedTokens={EstimatedTokens} softLimit={SoftLimitTokens} decision={Decision} window=[{WindowStart}..{WindowEnd}] recentRawCount={RecentRawCount}",
             label,
             estimatedTokens,
             _policy.SoftLimitTokens,
-            _policy.HardLimitTokens,
             decision,
             windowStartSequence?.ToString() ?? "-",
             windowEndSequence?.ToString() ?? "-",
@@ -1311,43 +1124,17 @@ public class ProxyChatCompletionService
         if (prepared.SkipCompression)
         {
             _logger.LogDebug(
-                "Post-response compression skipped for conversation {ConversationId} (pass-through mode).",
+                "Post-response Inline wrap-up skipped for conversation {ConversationId} (pass-through mode).",
                 prepared.Conversation.Id);
         }
-        else if (_policy.RetainSelection == RetainSelectionMode.Inline)
+        else if (!prepared.InlineFollowUpEligible)
         {
             _logger.LogDebug(
-                "Post-response compression not enqueued for conversation {ConversationId}: retainSelection=Inline.",
-                prepared.Conversation.Id);
-        }
-        else if (prepared.Decision == ContextBudgetDecision.ForwardImmediate)
-        {
-            _logger.LogDebug(
-                "Post-response compression not enqueued for conversation {ConversationId}: estimatedTokens={EstimatedTokens} <= softLimit={SoftLimitTokens}.",
+                "Post-response Inline wrap-up not eligible for conversation {ConversationId}: estimatedTokens={EstimatedTokens} softLimit={SoftLimitTokens} decision={Decision}.",
                 prepared.Conversation.Id,
                 prepared.EstimatedTokens,
-                _policy.SoftLimitTokens);
-        }
-        else if (ToolCallChainState.HasOpenToolCalls([assistantEntity]))
-        {
-            _logger.LogInformation(
-                "Post-response compression not enqueued for conversation {ConversationId}: assistant response has open tool calls.",
-                prepared.Conversation.Id);
-        }
-        else
-        {
-            var jobMode = prepared.Decision == ContextBudgetDecision.ForwardWithHighPriorityCompression
-                ? CompressionMode.HighPriorityBackground
-                : CompressionMode.Background;
-            var preferredModel = prepared.Endpoint.ResolveOutboundModel(
-                prepared.UpstreamRequest.OriginalClientRequest);
-            _compressionQueue.Enqueue(new CompressionJob(prepared.Conversation.Id, jobMode, preferredModel));
-            _logger.LogInformation(
-                "Post-response compression enqueued for conversation {ConversationId}: mode={Mode} estimatedTokens={EstimatedTokens} softLimit={SoftLimitTokens}.",
-                prepared.Conversation.Id,
-                jobMode,
-                prepared.EstimatedTokens,
-                _policy.SoftLimitTokens);
+                _policy.SoftLimitTokens,
+                prepared.Decision);
         }
 
         var promptTokens = upstreamResult.PromptTokens ?? prepared.EstimatedTokens;

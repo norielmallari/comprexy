@@ -76,7 +76,6 @@ public static class ServiceCollectionExtensions
         services.AddScoped<ToolIrSchemaMapper>();
         services.AddScoped<ToolSchemaOrchestrator>();
         services.AddSingleton<ProviderEndpointResolver>();
-        services.AddScoped<ICompressionOrchestrator, CompressionOrchestrator>();
         services.AddScoped<IConversationMetricsRecorder, ConversationMetricsRecorder>();
         services.AddScoped<ProxyChatCompletionService>();
 

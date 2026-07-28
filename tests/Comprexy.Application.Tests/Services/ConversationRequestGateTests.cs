@@ -77,94 +77,8 @@ public class ConversationRequestGateTests
     }
 
     [Fact]
-    public async Task AcquireAsync_Exclusive_PreemptsPreemptibleLease()
-    {
-        var gate = new ConversationRequestGate();
-        var backgroundStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var backgroundSawCancel = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var exclusiveEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-
-        var background = Task.Run(async () =>
-        {
-            await using var lease = await gate.AcquireAsync(
-                "conv-a",
-                ConversationGateLeaseKind.Preemptible,
-                CancellationToken.None);
-            backgroundStarted.SetResult();
-            try
-            {
-                await Task.Delay(Timeout.InfiniteTimeSpan, lease.Token);
-            }
-            catch (OperationCanceledException)
-            {
-                backgroundSawCancel.SetResult();
-            }
-        });
-
-        await backgroundStarted.Task;
-
-        var exclusive = Task.Run(async () =>
-        {
-            await using var lease = await gate.AcquireAsync(
-                "conv-a",
-                ConversationGateLeaseKind.Exclusive,
-                CancellationToken.None);
-            exclusiveEntered.SetResult();
-            await Task.Delay(20);
-        });
-
-        var canceled = await Task.WhenAny(backgroundSawCancel.Task, Task.Delay(2000));
-        Assert.Same(backgroundSawCancel.Task, canceled);
-
-        var entered = await Task.WhenAny(exclusiveEntered.Task, Task.Delay(2000));
-        Assert.Same(exclusiveEntered.Task, entered);
-
-        await Task.WhenAll(background, exclusive);
-    }
-
-    [Fact]
-    public async Task AcquireAsync_Exclusive_DoesNotWaitOnPreemptibleWorkDuration()
-    {
-        var gate = new ConversationRequestGate();
-        var backgroundHoldStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-
-        var background = Task.Run(async () =>
-        {
-            await using var lease = await gate.AcquireAsync(
-                "conv-preempt",
-                ConversationGateLeaseKind.Preemptible,
-                CancellationToken.None);
-            backgroundHoldStarted.SetResult();
-            try
-            {
-                // Simulate a long compression call that honors preempt.
-                await Task.Delay(TimeSpan.FromSeconds(30), lease.Token);
-            }
-            catch (OperationCanceledException)
-            {
-                // expected
-            }
-        });
-
-        await backgroundHoldStarted.Task;
-
-        var sw = System.Diagnostics.Stopwatch.StartNew();
-        await using (var lease = await gate.AcquireAsync(
-                         "conv-preempt",
-                         ConversationGateLeaseKind.Exclusive,
-                         CancellationToken.None))
-        {
-            sw.Stop();
-        }
-
-        Assert.True(sw.Elapsed < TimeSpan.FromSeconds(2), $"Exclusive acquire took {sw.Elapsed}; should preempt quickly.");
-        await background;
-    }
-
-    [Fact]
     public async Task AcquireAsync_Exclusive_WaitsForInFlightExclusiveLease()
     {
-        // Mirrors CancelBackgroundCompressionOnChat=false: soft compression holds Exclusive.
         var gate = new ConversationRequestGate();
         var backgroundHoldStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var releaseBackground = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -197,5 +111,18 @@ public class ConversationRequestGateTests
         releaseBackground.SetResult();
         await Task.WhenAll(background, chat);
         Assert.True(chatEntered);
+    }
+
+    [Fact]
+    public async Task AcquireAsync_NonExclusiveKind_Throws()
+    {
+        var gate = new ConversationRequestGate();
+        await Assert.ThrowsAsync<ArgumentOutOfRangeException>(async () =>
+        {
+            await using var lease = await gate.AcquireAsync(
+                "conv-a",
+                (ConversationGateLeaseKind)99,
+                CancellationToken.None);
+        });
     }
 }

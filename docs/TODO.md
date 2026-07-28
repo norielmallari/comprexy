@@ -6,7 +6,7 @@ Deferred and planned work for Comprexy. Prefer [GitHub Issues](https://github.co
 | --- | --- |
 | `open` | Ready to implement |
 | `deferred` | Accepted for now; documented workaround or lower priority |
-| `done` | Finished — leave a short note, then archive or remove |
+| `partial` | Some acceptance criteria done; remainder still open |
 
 | Priority | Meaning |
 | --- | --- |
@@ -60,28 +60,6 @@ Deferred and planned work for Comprexy. Prefer [GitHub Issues](https://github.co
 
 ---
 
-## TODO-003 — Bound compression queue and observe drops
-
-| Field | Value |
-| --- | --- |
-| **Status** | `open` |
-| **Priority** | Low |
-| **Area** | `ChannelCompressionQueue`, `CompressionBackgroundService` |
-
-**Summary:** Per-conversation coalesce is already in place. Channels remain unbounded, and failed/`TryWrite` paths do not log. Under many distinct conversations waiting on a slow worker, memory can grow without a clear signal.
-
-**Workaround:** Single-process / modest concurrency is fine today. Coalesce already prevents redundant jobs for the same conversation.
-
-**Acceptance criteria:**
-
-- [ ] Bounded high/normal channels (or a documented capacity) with drop + warn preferred over blocking the chat request path.
-- [ ] Log (and optionally metric) when an enqueue is coalesced-skip vs capacity-drop vs `TryWrite` failure.
-- [ ] Tests or a short ops note for expected behavior when the queue is full.
-
-**Notes:** Do not block `Enqueue` on the request thread. Capacity should reflect distinct conversations waiting, not turns per second.
-
----
-
 ## TODO-004 — Reassembled chat response DTO preserves `tool_calls`
 
 | Field | Value |
@@ -131,35 +109,25 @@ Deferred and planned work for Comprexy. Prefer [GitHub Issues](https://github.co
 
 ---
 
-## TODO-006 — Bound message and working memory loads per conversation
+## TODO-006 — Bound message loads per conversation
 
-|| Field | Value |
-|| --- | --- |
-|| **Status** | `open` |
-|| **Priority** | High |
-|| **Area** | `EfConversationMessageRepository`, `EfWorkingMemoryRepository` |
+| Field | Value |
+| --- | --- |
+| **Status** | `open` |
+| **Priority** | High |
+| **Area** | `EfConversationMessageRepository`, chat prepare |
 
-**Summary:** Both `GetByConversationIdAsync` methods load ALL rows for a conversation with no limit:
+**Summary:** `GetByConversationIdAsync` loads all message rows for a conversation with no limit. Chat prepare still calls it, so long conversations pay a full scan + materialization on every request even though rebuild uses working memory plus unfolded / tip messages.
 
-```csharp
-dbContext.ConversationMessages
-    .Where(m => m.ConversationId == conversationId)
-    .OrderBy(m => m.Sequence)
-    .ToListAsync(cancellationToken);
-```
-
-For a conversation with thousands of messages, the entire history is loaded into memory on every single chat request — even though `ContextBuilder` and `RecentContextSelector` only use a recent window of messages (~50k tokens). The database does a full scan + sort of all messages, and the entire result set sits in memory.
-
-**Workaround:** Current usage is acceptable for short conversations (<500 messages). Performance degrades linearly as conversations grow.
+**Workaround:** Acceptable for short conversations. Cost grows with total stored message count (including folded).
 
 **Acceptance criteria:**
 
-- [ ] `GetByConversationIdAsync` applies a `.Take()` limit based on the max context window token count, or loads only unfolded messages (`GetUnfoldedAsync`) plus a bounded set of recent folded messages.
-- [ ] `EfWorkingMemoryRepository.GetByConversationIdAsync` is similarly bounded (fewer working memories, but still unbounded).
-- [ ] Pagination fallback (`Skip()` / `Take()`) for conversations exceeding the limit.
-- [ ] Integration test verifying query plan does not return full table for large conversations.
+- [ ] Hot-path loads use bounded queries (e.g. unfolded + recent tip, or token/window-bounded `Take`) instead of unbounded `GetByConversationIdAsync`.
+- [ ] Callers that still need a full history (if any) use an explicit, documented API — not the chat hot path.
+- [ ] Tests covering large conversations that the hot path does not materialize every row.
 
-**Notes:** Coordinate with [TODO-007](#todo-007--add-caching-layer) — a caching layer can reduce the frequency of these loads but does not address the per-request unbounded scan.
+**Notes:** Coordinate with [TODO-007](#todo-007--add-caching-layer). Working-memory hot path already uses `GetLatestAsync` / versioned reads; no separate unbounded WM list on chat prepare.
 
 ---
 
@@ -171,15 +139,9 @@ For a conversation with thousands of messages, the entire history is loaded into
 | **Priority** | High |
 | **Area** | `IMemoryCache`, repository layer, `ProxyChatCompletionService` |
 
-**Summary:** Every request reloads the full conversation history from SQLite, rebuilds the context, re-estimates tokens, and re-evaluates the compression budget. There is no caching of:
+**Summary:** Every request reloads conversation messages from SQLite, rebuilds the context, re-estimates tokens, and re-evaluates the soft budget. There is no caching of conversation messages, working memories, or budget decisions between requests.
 
-- Conversation messages
-- Working memories
-- Context budget decisions
-
-For a high-traffic scenario, the same data is loaded and processed repeatedly between user messages.
-
-**Workaround:** Current usage is acceptable for low-to-moderate traffic. Each request pays the full DB read + context build cost.
+**Workaround:** Acceptable for low-to-moderate traffic. Each request pays the full DB read + context build cost.
 
 **Completed:**
 
@@ -188,11 +150,11 @@ For a high-traffic scenario, the same data is loaded and processed repeatedly be
 **Acceptance criteria:**
 
 - [ ] In-memory cache (e.g., `IMemoryCache`) keyed by `conversationId` with a short TTL (e.g., 5–30 seconds).
-- [ ] Cache invalidation on write operations: message add, working memory creation, compression.
+- [ ] Cache invalidation on write operations: message add, working memory creation, Inline wrap-up.
 - [ ] Per-conversation lock or similar mechanism to avoid cache stampedes under concurrent requests.
 - [ ] Cache hit/miss metrics or logging for operational visibility.
 
-**Notes:** A caching layer reduces DB load frequency but does not address the per-request unbounded scan within [TODO-006](#todo-006--bound-message-and-working-memory-loads-per-conversation). Consider combining both optimizations.
+**Notes:** Caching reduces DB load frequency but does not replace [TODO-006](#todo-006--bound-message-loads-per-conversation) bounded loads.
 
 ---
 
@@ -306,26 +268,3 @@ For a high-traffic scenario, the same data is loaded and processed repeatedly be
 - [ ] Tests for subset accept/reject behavior vs full-validator mode.
 
 **Notes:** Only pursue if production catalogs prove noisy.
-
----
-
-## TODO-013 — Change emergency compression to Inline wrap-up
-
-| Field | Value |
-| --- | --- |
-| **Status** | `open` |
-| **Priority** | Medium |
-| **Area** | `ContextPolicy`, Inline retain, hard budget |
-
-**Summary:** Soft retain defaults to Inline wrap-up, but hard-budget `EmergencyCompression: Sync` still uses Fixed-style compact and is ignored under Inline (trim then 413). Change emergency to the same live-model wrap-up algorithm as soft Inline (forced wrap-up before forward / instead of Fixed Sync).
-
-**Workaround:** Accept trim/413 under Inline hard pressure, or temporarily use Fixed/Smart with `EmergencyCompression: Sync`.
-
-**Acceptance criteria:**
-
-- [ ] When `EmergencyCompression: Sync` and hard pressure applies under Inline, run a blocking proxy-internal wrap-up (same live endpoint / WM accept path) instead of ignoring Sync.
-- [ ] Soft failure of emergency wrap-up preserves last known-good WM; hard path still trims/413 if still over budget.
-- [ ] Closed tool-chain gate honored; ToolSchema / streaming contracts preserved.
-- [ ] SETTINGS and ARCHITECTURE updated; Fixed Sync path retired or clearly legacy-only.
-
-**Notes:** Prefer one compression algorithm (Inline wrap-up) for soft and emergency. Do not reintroduce background Fixed/Smart jobs under Inline. Soft mid-chain prefix wrap-up (checkpoint closed stored prefix while the live answer opens a new tool chain) is separate from this emergency Inline work and is described in ARCHITECTURE.

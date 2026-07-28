@@ -166,7 +166,7 @@ public class CompressionEventUsageTests
         var started = DateTimeOffset.UtcNow;
         var evt = CompressionEvent.Start(
             Guid.NewGuid(),
-            CompressionMode.Background,
+            CompressionMode.Inline,
             originalTokens: 50_000,
             workingMemoryVersionBefore: 1,
             foldedMessageCount: 10,
@@ -192,7 +192,7 @@ public class CompressionEventUsageTests
         var started = DateTimeOffset.UtcNow;
         var evt = CompressionEvent.Start(
             Guid.NewGuid(),
-            CompressionMode.Emergency,
+            CompressionMode.Inline,
             originalTokens: 50_000,
             workingMemoryVersionBefore: null,
             foldedMessageCount: 10,
