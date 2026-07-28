@@ -1,10 +1,12 @@
 # Comprexy
 
-**Comprexy™ is an OpenAI-compatible comprehension and context compression proxy for LLMs.** It keeps long-running chats and coding agents coherent by folding older turns into a rolling, versioned working memory without blocking every reply.
+OpenAI-compatible context compression proxy for long-running chats and coding agents.
 
-It sits between your client (Cursor, CLI agents, custom apps) and any OpenAI-compatible upstream. Soft budget pressure triggers an **Inline** follow-up wrap-up on eligible turns (closed stored tool chain + cooldown).
+**Comprexy™** sits between your client (Cursor, CLI agents, custom apps) and any OpenAI-compatible upstream. It persists completed turns, rebuilds a bounded upstream prompt from versioned **working memory** plus still-unfolded messages, and folds older context via **Inline** wrap-up when soft budget pressure applies — without summarizing on every reply.
 
-[Quick start](#quick-start) · [Why Comprexy?](#why-comprexy) · [Source of truth](#source-of-truth) · [MCP setup](#mcp-setup) · [Features](#features) · [How it works](#how-it-works) · [Configuration](#configuration) · [Limitations](#limitations) · [Architecture](#architecture) · [Contributing](#contributing)
+Soft budget pressure triggers a blocking Inline follow-up wrap-up on eligible turns (closed stored tool chain + cooldown). Local-first by default: point `Provider` at Ollama, LM Studio, vLLM, or a cloud OpenAI-compatible endpoint.
+
+[Quick start](#quick-start) · [Why Comprexy?](#why-comprexy) · [Design principles](#design-principles) · [What Comprexy is not](#what-comprexy-is-not) · [Source of truth](#source-of-truth) · [MCP setup](#mcp-setup) · [Features](#features) · [How it works](#how-it-works) · [Configuration](#configuration) · [Limitations](#limitations) · [Architecture](#architecture) · [Contributing](#contributing)
 
 ![.NET](https://img.shields.io/badge/.NET-10-512BD4?logo=dotnet&logoColor=white)
 ![Platform](https://img.shields.io/badge/platform-cross--platform-informational)
@@ -77,18 +79,34 @@ On the normal path, when `Provider:Model` is set Comprexy replaces `model` with 
 
 ## Why Comprexy?
 
-Long sessions accumulate history, tool output, and corrections until the prompt is noisy, expensive, or past the model’s useful window. Restarting and re-explaining kills flow; summarizing on every turn adds latency.
+Long sessions accumulate history, tool output, and corrections until the prompt is noisy, expensive, or past the model’s useful window. Restarting and re-explaining kills flow; summarizing on every turn adds latency. Blind truncation drops corrections and decisions you still need.
 
 Comprexy’s approach:
 
 | Goal | Approach |
 | --- | --- |
-| Stay in flow | Answer first; compact via Inline wrap-up on eligible soft-pressure turns |
+| Stay in flow | Answer first; fold via Inline wrap-up on eligible soft-pressure turns |
 | Preserve what matters | Persist completed turns; use versioned working memory for the active prompt, not blind truncation |
 | Stay compatible | OpenAI-compatible `/v1` base URL: chat completions are compressed; other `/v1/*` routes proxy upstream |
 | Stay focused | Context compression only — not a multi-provider gateway or agent framework |
 
-If you need routing, spend tracking, or broad agent wrappers, tools like LiteLLM or Headroom may fit better. Comprexy is intentionally narrower.
+If you need routing, spend tracking, or broad agent wrappers, tools like LiteLLM or Headroom may fit better. Comprexy is intentionally narrower: chat-completion context management only.
+
+## Design principles
+
+- Answer first; fold on soft pressure when the stored tool chain is closed and cooldown allows.
+- Persist the durable transcript; treat working memory as a derived, versioned prompt aid.
+- Rebuild outgoing context from stored turns — do not forward an unmanaged client history as the model transcript.
+- Prefer inspectable, deterministic behavior over opaque truncation.
+- Stay local-first and OpenAI-compatible; stay narrow (context compression, not a gateway or agent framework).
+
+## What Comprexy is not
+
+- Not a model or LLM runtime — it proxies to your configured upstream.
+- Not a multi-provider gateway, router, or billing layer.
+- Not a vector database or retrieval framework.
+- Not a static prompt minifier or offline context packer.
+- Not a guarantee of better answers; it manages prompt size and structure so long sessions stay usable.
 
 ## Source of truth
 
@@ -155,11 +173,11 @@ Telemetry MCP tools are named `comprexy_*` and require `conversationId` from the
 | Context rebuild | Outgoing context is always rebuilt from stored turns (IR-side under Virtual Tools). Working memory is omitted until the first successful compression; `Proxy:PassThrough` is the only full bypass |
 | Conversation identity | Prefer a unique `X-Comprexy-Conversation-Id` per session; otherwise fingerprint from system + first two **plain** user turns (Cursor `<user_query>` when present; tool-echo user turns skipped) |
 | Local-first, cloud-ready | Point `Provider` at Ollama, LM Studio, vLLM, OpenAI, Azure OpenAI–compatible APIs, and similar |
-| Optional separate compress model | Use a cheaper/faster model for compression via `Compression` settings |
+| Optional separate compression model | Use a cheaper/faster model for compression via `Compression` settings |
 | Pass-through mode | `Proxy:PassThrough` forwards the original body unmodified — no rebuild or compression. Escape hatch only; leave off for normal use |
 | Strip reasoning | `Proxy:StripReasoningContent` (default off) removes `reasoning_content` / `reasoning` from outbound chat and compression messages when enabled |
 | Request audit files | Optional per-request / per-compression logs under `logs/requests/` (opt in via `appsettings.Local.json`) |
-| Local persistence | Persists completed conversation turns, working-memory versions, metrics, and compression history. Raw turns remain available after compression |
+| Local persistence | Persists completed conversation turns, working-memory versions, metrics, and compression history. Persisted message records remain available after folding |
 
 ## How it works
 
