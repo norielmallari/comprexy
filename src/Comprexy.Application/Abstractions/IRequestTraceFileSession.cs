@@ -21,5 +21,11 @@ public interface IRequestTraceFileSession
     /// <summary>Appends a formatted payload section to the active request file, if any.</summary>
     void Append(string text);
 
+    /// <summary>
+    /// Records the resolved conversation id in the active request-file header (after CorrelationId).
+    /// No-op when no file is open, already set, or request-file tracing is disabled.
+    /// </summary>
+    void SetConversationId(Guid conversationId);
+
     bool IsActive { get; }
 }

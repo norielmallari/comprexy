@@ -2,7 +2,9 @@ namespace Comprexy.Domain.Entities;
 
 /// <summary>
 /// Per-turn token accounting for a successful compressed-path chat completion.
-/// Compares the original client prompt baseline against the prepared upstream prompt.
+/// Savings compare tiktoken estimates of the client baseline vs the prepared upstream
+/// prompt (ToolSchema / working memory / injects). <see cref="ActualPromptTokens"/> is
+/// retained for estimate-accuracy reporting and is not used in <see cref="NetTokensSaved"/>.
 /// </summary>
 public class ConversationTurnMetric : EntityBase
 {
@@ -71,9 +73,10 @@ public class ConversationTurnMetric : EntityBase
         string sentPayloadHash,
         DateTimeOffset createdAt)
     {
-        var effectivePrompt = actualPromptTokens ?? compressedInputTokensEstimated;
+        // Like-for-like: both sides are tiktoken estimates. Mixing provider usage.prompt_tokens
+        // into savings invents fake losses when the upstream tokenizer/template disagrees.
         var baselineTotal = rawInputTokensEstimated + actualCompletionTokens;
-        var compressedTotal = effectivePrompt + actualCompletionTokens;
+        var compressedTotal = compressedInputTokensEstimated + actualCompletionTokens;
         var netSaved = baselineTotal - compressedTotal;
         var ratio = baselineTotal > 0
             ? Math.Round((double)netSaved / baselineTotal, 6)

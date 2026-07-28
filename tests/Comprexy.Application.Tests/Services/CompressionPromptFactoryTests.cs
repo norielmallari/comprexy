@@ -93,9 +93,40 @@ public class CompressionPromptFactoryTests
     }
 
     [Fact]
+    public void BuildInlineWrapUpUserMessage_IncludesSharedWorkingMemoryTemplate()
+    {
+        var factory = new CompressionPromptFactory(
+            "fixed instruction",
+            "smart instruction",
+            "inline wrap-up instruction",
+            """
+            # Working Memory
+
+            ## Current Goal
+            ...
+            """);
+
+        var message = factory.BuildInlineWrapUpUserMessage();
+
+        Assert.Equal(MessageRole.User, message.Role);
+        Assert.Contains("inline wrap-up instruction", message.Content);
+        Assert.Contains("# Working Memory", message.Content);
+        Assert.Contains("## Current Goal", message.Content);
+    }
+
+    [Fact]
     public void BuildMessagesFromFullRaw_UsesFixedInstruction()
     {
-        var factory = new CompressionPromptFactory("fixed instruction", "smart instruction");
+        var factory = new CompressionPromptFactory(
+            "fixed instruction",
+            "smart instruction",
+            "inline instruction",
+            workingMemoryTemplate: """
+            # Working Memory
+
+            ## Current Goal
+            ...
+            """);
         var conversationId = Guid.NewGuid();
         var message = ConversationMessage.Create(
             conversationId,
@@ -107,7 +138,8 @@ public class CompressionPromptFactoryTests
 
         var messages = factory.BuildMessagesFromFullRaw([message]);
 
-        Assert.Equal("fixed instruction", messages[0].Content);
+        Assert.Contains("fixed instruction", messages[0].Content);
+        Assert.Contains("# Working Memory", messages[0].Content);
         Assert.Contains("Full Conversation Transcript", messages[1].Content);
         Assert.DoesNotContain("sequence=42", messages[1].Content);
     }

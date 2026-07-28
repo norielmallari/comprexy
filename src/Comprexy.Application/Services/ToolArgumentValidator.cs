@@ -1,20 +1,60 @@
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using Json.Schema;
 
 namespace Comprexy.Application.Services;
 
-public sealed record ToolArgumentValidationResult(bool IsValid, string? ErrorCode, string? Details);
+public sealed record ToolArgumentValidationResult(
+    bool IsValid,
+    string? ErrorCode,
+    string? Details,
+    string? NormalizedArgumentsJson = null);
 
 /// <summary>
 /// Validates tool call arguments against a tool's parameters JSON Schema. Fail closed.
+/// Coerces JSON-stringified object/array property values when the schema expects object/array
+/// (common model mistake for nested fields like CallMcpTool.arguments).
 /// </summary>
 public class ToolArgumentValidator
 {
     public ToolArgumentValidationResult Validate(string? parametersSchemaJson, string argumentsJson)
     {
+        JsonNode? argsNode;
+        try
+        {
+            argsNode = JsonNode.Parse(string.IsNullOrWhiteSpace(argumentsJson) ? "{}" : argumentsJson);
+        }
+        catch (JsonException ex)
+        {
+            return new ToolArgumentValidationResult(
+                false,
+                "invalid_args",
+                $"Arguments are not valid JSON: {ex.Message}");
+        }
+
+        if (argsNode is null)
+        {
+            argsNode = new JsonObject();
+        }
+
+        if (!string.IsNullOrWhiteSpace(parametersSchemaJson) && argsNode is JsonObject argsObject)
+        {
+            try
+            {
+                var schemaNode = JsonNode.Parse(parametersSchemaJson);
+                CoerceStringifiedContainers(argsObject, schemaNode);
+            }
+            catch (JsonException)
+            {
+                // Keep raw args; schema parse failure is handled below.
+            }
+        }
+
+        var normalizedJson = argsNode.ToJsonString();
+
         if (string.IsNullOrWhiteSpace(parametersSchemaJson))
         {
-            return new ToolArgumentValidationResult(true, null, null);
+            return new ToolArgumentValidationResult(true, null, null, normalizedJson);
         }
 
         JsonSchema schema;
@@ -33,7 +73,7 @@ public class ToolArgumentValidator
         JsonElement argumentsElement;
         try
         {
-            using var document = JsonDocument.Parse(string.IsNullOrWhiteSpace(argumentsJson) ? "{}" : argumentsJson);
+            using var document = JsonDocument.Parse(normalizedJson);
             argumentsElement = document.RootElement.Clone();
         }
         catch (JsonException ex)
@@ -51,7 +91,7 @@ public class ToolArgumentValidator
 
         if (evaluation.IsValid)
         {
-            return new ToolArgumentValidationResult(true, null, null);
+            return new ToolArgumentValidationResult(true, null, null, normalizedJson);
         }
 
         var details = CollectErrorMessages(evaluation);
@@ -60,7 +100,8 @@ public class ToolArgumentValidator
             "schema_invalid",
             details.Count > 0
                 ? string.Join("; ", details)
-                : "Arguments failed JSON Schema validation.");
+                : "Arguments failed JSON Schema validation.",
+            normalizedJson);
     }
 
     public string? ExtractParametersSchemaJson(string fullDefinitionJson)
@@ -94,6 +135,97 @@ public class ToolArgumentValidator
         catch (JsonException)
         {
             // ignore
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// When a schema property expects object/array but the model passed a JSON string of that
+    /// shape, replace the string with the parsed value so validation and clients see a real object.
+    /// </summary>
+    internal static void CoerceStringifiedContainers(JsonObject args, JsonNode? schemaNode)
+    {
+        if (schemaNode is not JsonObject schema)
+        {
+            return;
+        }
+
+        if (!schema.TryGetPropertyValue("properties", out var propertiesNode) ||
+            propertiesNode is not JsonObject properties)
+        {
+            return;
+        }
+
+        foreach (var property in properties)
+        {
+            if (!args.TryGetPropertyValue(property.Key, out var value) || value is null)
+            {
+                continue;
+            }
+
+            var expected = ResolvePrimaryContainerType(property.Value);
+            if (expected is null)
+            {
+                continue;
+            }
+
+            if (value is not JsonValue jsonValue ||
+                !jsonValue.TryGetValue<string>(out var raw) ||
+                string.IsNullOrWhiteSpace(raw))
+            {
+                continue;
+            }
+
+            JsonNode? parsed;
+            try
+            {
+                parsed = JsonNode.Parse(raw);
+            }
+            catch (JsonException)
+            {
+                continue;
+            }
+
+            if (expected == "object" && parsed is JsonObject)
+            {
+                args[property.Key] = parsed;
+            }
+            else if (expected == "array" && parsed is JsonArray)
+            {
+                args[property.Key] = parsed;
+            }
+        }
+    }
+
+    private static string? ResolvePrimaryContainerType(JsonNode? propertySchema)
+    {
+        if (propertySchema is not JsonObject schema)
+        {
+            return null;
+        }
+
+        if (!schema.TryGetPropertyValue("type", out var typeNode) || typeNode is null)
+        {
+            return null;
+        }
+
+        if (typeNode is JsonValue typeValue && typeValue.TryGetValue<string>(out var single))
+        {
+            return single is "object" or "array" ? single : null;
+        }
+
+        if (typeNode is JsonArray typeArray)
+        {
+            foreach (var entry in typeArray)
+            {
+                if (entry is JsonValue entryValue &&
+                    entryValue.TryGetValue<string>(out var name) &&
+                    name is "object" or "array")
+                {
+                    return name;
+                }
+            }
         }
 
         return null;

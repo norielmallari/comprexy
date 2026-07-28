@@ -20,6 +20,13 @@ public sealed class ToolSchemaSession
 
     public HashSet<string> HydratedToolNames { get; } = new(StringComparer.Ordinal);
 
+    /// <summary>
+    /// Tools hydrated (or already-hydrated) during this request's meta loop.
+    /// Exposed in outbound <c>tools[]</c> on subsequent loop rounds so the model can
+    /// emit them by name (not only via the compact index text).
+    /// </summary>
+    public HashSet<string> LoopExposedToolNames { get; } = new(StringComparer.Ordinal);
+
     public List<ToolSchemaPersistedTurn> PendingPersistedTurns { get; } = [];
 }
 
@@ -102,9 +109,10 @@ public class ToolSchemaOrchestrator
         if (parsed.HasMetaToolNameCollision)
         {
             _logger.LogWarning(
-                "Tool schema compact index disabled for conversation {ConversationId}: client catalog defines {MetaTool}.",
+                "Tool schema compact index disabled for conversation {ConversationId}: client catalog defines a reserved meta tool ({MetaTool} or {ConversationIdMetaTool}).",
                 conversationId,
-                ToolSchemaConstants.MetaToolName);
+                ToolSchemaConstants.MetaToolName,
+                ToolSchemaConstants.ConversationIdMetaToolName);
             return null;
         }
 
@@ -208,13 +216,36 @@ public class ToolSchemaOrchestrator
         var current = initialResult;
         var loopMessages = upstreamRequest.Messages.ToList();
         var rounds = 0;
+        var alreadyHydratedNudgeIssued = false;
 
         while (rounds < _options.MaxHydrateRoundsPerRequest)
         {
             var outcome = await ApplyAssistantRoundAsync(session, loopMessages, current, cancellationToken);
             if (!outcome.NeedsAnotherRound)
             {
-                return new ToolSchemaLoopResult(current, RequiresInternalHandling: false, outcome.AllowedRealToolCalls);
+                var final = ApplyArgumentNormalization(current, outcome);
+                return new ToolSchemaLoopResult(final, RequiresInternalHandling: false, outcome.AllowedRealToolCalls);
+            }
+
+            if (outcome.AlreadyHydratedOnly)
+            {
+                if (alreadyHydratedNudgeIssued)
+                {
+                    _logger.LogWarning(
+                        "Tool schema hydrate loop stopped after repeated already_hydrated get_tool_definition for conversation {ConversationId}: {ToolNames}.",
+                        session.ConversationId,
+                        string.Join(", ", outcome.AlreadyHydratedToolNames));
+                    return BuildHydrateLoopStoppedResult(
+                        current,
+                        BuildAlreadyHydratedStopMessage(outcome.AlreadyHydratedToolNames));
+                }
+
+                loopMessages.Add(BuildAlreadyHydratedNudge(outcome.AlreadyHydratedToolNames));
+                alreadyHydratedNudgeIssued = true;
+            }
+            else
+            {
+                alreadyHydratedNudgeIssued = false;
             }
 
             rounds++;
@@ -223,7 +254,7 @@ public class ToolSchemaOrchestrator
                 Messages = loopMessages,
                 Stream = false,
                 ReplaceMessages = true,
-                RewrittenClientRequest = upstreamRequest.RewrittenClientRequest ?? upstreamRequest.OriginalClientRequest
+                RewrittenClientRequest = BuildLoopRewrittenClientRequest(upstreamRequest, session, forceStream: false)
             };
 
             current = await _chatCompletionClient.CompleteAsync(endpoint, nextRequest, cancellationToken);
@@ -234,7 +265,9 @@ public class ToolSchemaOrchestrator
             _options.MaxHydrateRoundsPerRequest,
             session.ConversationId);
 
-        return new ToolSchemaLoopResult(current, RequiresInternalHandling: true, []);
+        return BuildHydrateLoopStoppedResult(
+            current,
+            "Tool schema hydrate loop stopped: exceeded MaxHydrateRoundsPerRequest without an allowed real tool call or final answer. Do not call get_tool_definition again; call a real tool from the compact index using a definition already in context, or reply without tools.");
     }
 
     /// <summary>
@@ -258,6 +291,7 @@ public class ToolSchemaOrchestrator
             RewrittenClientRequest = upstreamRequest.RewrittenClientRequest ?? upstreamRequest.OriginalClientRequest
         };
         var rounds = 0;
+        var alreadyHydratedNudgeIssued = false;
         UpstreamChatResult? lastResult = null;
 
         while (rounds < _options.MaxHydrateRoundsPerRequest)
@@ -284,7 +318,7 @@ public class ToolSchemaOrchestrator
                         return;
                     }
 
-                    if (holdingToolTail || ChunkIndicatesToolCalls(chunk))
+                    if (holdingToolTail || ToolCallWireHelper.StreamChunkHasToolCalls(chunk))
                     {
                         holdingToolTail = true;
                         heldChunks.Add(chunk);
@@ -298,17 +332,52 @@ public class ToolSchemaOrchestrator
             var outcome = await ApplyAssistantRoundAsync(session, loopMessages, lastResult, cancellationToken);
             if (!outcome.NeedsAnotherRound)
             {
-                foreach (var held in heldChunks)
+                var final = ApplyArgumentNormalization(lastResult, outcome);
+                if (outcome.RewroteToolArguments)
                 {
-                    await onRawSseData(held, cancellationToken);
+                    // Original held SSE tail has pre-normalization arguments — emit corrected tool_calls.
+                    await EmitRewrittenToolCallsSseAsync(final, onRawSseData, cancellationToken);
+                }
+                else
+                {
+                    foreach (var held in heldChunks)
+                    {
+                        await onRawSseData(held, cancellationToken);
+                    }
                 }
 
-                return new ToolSchemaLoopResult(lastResult, RequiresInternalHandling: false, outcome.AllowedRealToolCalls);
+                return new ToolSchemaLoopResult(final, RequiresInternalHandling: false, outcome.AllowedRealToolCalls);
             }
 
             // Discard held meta/invalid tool_calls, finish_reason, usage, and [DONE].
+            if (outcome.AlreadyHydratedOnly)
+            {
+                if (alreadyHydratedNudgeIssued)
+                {
+                    _logger.LogWarning(
+                        "Tool schema hydrate loop stopped after repeated already_hydrated get_tool_definition for conversation {ConversationId}: {ToolNames}.",
+                        session.ConversationId,
+                        string.Join(", ", outcome.AlreadyHydratedToolNames));
+                    await onRawSseData("[DONE]", cancellationToken);
+                    return BuildHydrateLoopStoppedResult(
+                        lastResult,
+                        BuildAlreadyHydratedStopMessage(outcome.AlreadyHydratedToolNames));
+                }
+
+                loopMessages.Add(BuildAlreadyHydratedNudge(outcome.AlreadyHydratedToolNames));
+                alreadyHydratedNudgeIssued = true;
+            }
+            else
+            {
+                alreadyHydratedNudgeIssued = false;
+            }
+
             rounds++;
-            currentRequest = currentRequest with { Messages = loopMessages };
+            currentRequest = currentRequest with
+            {
+                Messages = loopMessages,
+                RewrittenClientRequest = BuildLoopRewrittenClientRequest(upstreamRequest, session, forceStream: true)
+            };
         }
 
         _logger.LogWarning(
@@ -319,10 +388,9 @@ public class ToolSchemaOrchestrator
         // Client never received [DONE] from discarded meta tails — close the SSE stream.
         await onRawSseData("[DONE]", cancellationToken);
 
-        return new ToolSchemaLoopResult(
-            lastResult ?? new UpstreamChatResult(string.Empty, "stop", null, null),
-            RequiresInternalHandling: true,
-            []);
+        return BuildHydrateLoopStoppedResult(
+            lastResult,
+            "Tool schema hydrate loop stopped: exceeded MaxHydrateRoundsPerRequest without an allowed real tool call or final answer. Do not call get_tool_definition again; call a real tool from the compact index using a definition already in context, or reply without tools.");
     }
 
     private async Task<AssistantRoundOutcome> ApplyAssistantRoundAsync(
@@ -334,11 +402,21 @@ public class ToolSchemaOrchestrator
         var toolCalls = ToolCallWireHelper.ParseAssistantToolCalls(current.AssistantMessageJson);
         if (toolCalls.Count == 0)
         {
-            return new AssistantRoundOutcome(NeedsAnotherRound: false, []);
+            return new AssistantRoundOutcome(
+                NeedsAnotherRound: false,
+                [],
+                AlreadyHydratedOnly: false,
+                [],
+                RewroteToolArguments: false,
+                RewrittenAssistantMessageJson: null);
         }
 
         var allowedReal = new List<ParsedToolCall>();
+        var normalizedByCallId = new Dictionary<string, string>(StringComparer.Ordinal);
         var needsAnotherRound = false;
+        var hydrateMetaCount = 0;
+        var alreadyHydratedCount = 0;
+        var alreadyHydratedNames = new List<string>();
         var assistantJson = current.AssistantMessageJson ?? "{}";
         loopMessages.Add(ToolCallWireHelper.BuildAssistantMessage(assistantJson, current.Content));
 
@@ -346,7 +424,27 @@ public class ToolSchemaOrchestrator
         {
             if (string.Equals(call.Name, ToolSchemaConstants.MetaToolName, StringComparison.Ordinal))
             {
-                var (toolMessage, persist) = await ExecuteMetaToolAsync(session, call, cancellationToken);
+                var (toolMessage, persist, wasAlreadyHydrated, toolName) =
+                    await ExecuteMetaToolAsync(session, call, cancellationToken);
+                loopMessages.Add(toolMessage);
+                session.PendingPersistedTurns.Add(persist);
+                needsAnotherRound = true;
+                hydrateMetaCount++;
+                if (wasAlreadyHydrated)
+                {
+                    alreadyHydratedCount++;
+                    if (!string.IsNullOrWhiteSpace(toolName))
+                    {
+                        alreadyHydratedNames.Add(toolName);
+                    }
+                }
+
+                continue;
+            }
+
+            if (string.Equals(call.Name, ToolSchemaConstants.ConversationIdMetaToolName, StringComparison.Ordinal))
+            {
+                var (toolMessage, persist) = ExecuteConversationIdMetaTool(session, call);
                 loopMessages.Add(toolMessage);
                 session.PendingPersistedTurns.Add(persist);
                 needsAnotherRound = true;
@@ -362,53 +460,251 @@ public class ToolSchemaOrchestrator
                 continue;
             }
 
-            allowedReal.Add(call);
-        }
-
-        return new AssistantRoundOutcome(needsAnotherRound, allowedReal);
-    }
-
-    private static bool ChunkIndicatesToolCalls(string data)
-    {
-        try
-        {
-            using var document = JsonDocument.Parse(data);
-            if (!document.RootElement.TryGetProperty("choices", out var choices) ||
-                choices.ValueKind != JsonValueKind.Array)
+            var normalizedArgs = validation.NormalizedArgumentsJson ?? call.ArgumentsJson;
+            if (!string.Equals(normalizedArgs, call.ArgumentsJson, StringComparison.Ordinal))
             {
-                return false;
+                normalizedByCallId[call.Id] = normalizedArgs;
             }
 
-            foreach (var choice in choices.EnumerateArray())
+            allowedReal.Add(call with { ArgumentsJson = normalizedArgs });
+        }
+
+        var alreadyHydratedOnly = needsAnotherRound
+            && allowedReal.Count == 0
+            && hydrateMetaCount > 0
+            && alreadyHydratedCount == hydrateMetaCount
+            && hydrateMetaCount == toolCalls.Count;
+
+        string? rewrittenAssistantJson = null;
+        var rewrote = false;
+        if (!needsAnotherRound && normalizedByCallId.Count > 0)
+        {
+            rewrittenAssistantJson = ToolCallWireHelper.ReplaceToolCallArguments(
+                assistantJson,
+                normalizedByCallId);
+            rewrote = !string.Equals(rewrittenAssistantJson, assistantJson, StringComparison.Ordinal);
+        }
+
+        return new AssistantRoundOutcome(
+            needsAnotherRound,
+            allowedReal,
+            alreadyHydratedOnly,
+            alreadyHydratedNames,
+            rewrote,
+            rewrittenAssistantJson);
+    }
+
+    private static UpstreamChatResult ApplyArgumentNormalization(
+        UpstreamChatResult current,
+        AssistantRoundOutcome outcome)
+    {
+        if (!outcome.RewroteToolArguments ||
+            string.IsNullOrWhiteSpace(outcome.RewrittenAssistantMessageJson))
+        {
+            return current;
+        }
+
+        return current with { AssistantMessageJson = outcome.RewrittenAssistantMessageJson };
+    }
+
+    private static async Task EmitRewrittenToolCallsSseAsync(
+        UpstreamChatResult result,
+        Func<string, CancellationToken, Task> onRawSseData,
+        CancellationToken cancellationToken)
+    {
+        var assistantJson = result.AssistantMessageJson;
+        if (string.IsNullOrWhiteSpace(assistantJson))
+        {
+            await onRawSseData("[DONE]", cancellationToken);
+            return;
+        }
+
+        try
+        {
+            using var document = JsonDocument.Parse(assistantJson);
+            if (!document.RootElement.TryGetProperty("tool_calls", out var toolCalls) ||
+                toolCalls.ValueKind != JsonValueKind.Array)
             {
-                if (choice.ValueKind != JsonValueKind.Object ||
-                    !choice.TryGetProperty("delta", out var delta) ||
-                    delta.ValueKind != JsonValueKind.Object ||
-                    !delta.TryGetProperty("tool_calls", out var toolCalls) ||
-                    toolCalls.ValueKind != JsonValueKind.Array)
+                await onRawSseData("[DONE]", cancellationToken);
+                return;
+            }
+
+            var deltaToolCalls = new JsonArray();
+            var index = 0;
+            foreach (var call in toolCalls.EnumerateArray())
+            {
+                if (call.ValueKind != JsonValueKind.Object)
                 {
                     continue;
                 }
 
-                if (toolCalls.GetArrayLength() > 0)
+                var deltaCall = new JsonObject
                 {
-                    return true;
+                    ["index"] = index++,
+                    ["id"] = call.TryGetProperty("id", out var id) ? id.GetString() : null,
+                    ["type"] = call.TryGetProperty("type", out var type) ? type.GetString() : "function"
+                };
+
+                if (call.TryGetProperty("function", out var function) &&
+                    function.ValueKind == JsonValueKind.Object)
+                {
+                    var fn = new JsonObject();
+                    if (function.TryGetProperty("name", out var name))
+                    {
+                        fn["name"] = name.GetString();
+                    }
+
+                    if (function.TryGetProperty("arguments", out var arguments))
+                    {
+                        fn["arguments"] = arguments.ValueKind == JsonValueKind.String
+                            ? arguments.GetString()
+                            : arguments.GetRawText();
+                    }
+
+                    deltaCall["function"] = fn;
                 }
+
+                deltaToolCalls.Add(deltaCall);
             }
+
+            var chunk = new JsonObject
+            {
+                ["choices"] = new JsonArray
+                {
+                    new JsonObject
+                    {
+                        ["index"] = 0,
+                        ["delta"] = new JsonObject
+                        {
+                            ["tool_calls"] = deltaToolCalls
+                        },
+                        ["finish_reason"] = "tool_calls"
+                    }
+                }
+            };
+
+            if (result.PromptTokens is not null || result.CompletionTokens is not null)
+            {
+                var usage = new JsonObject();
+                if (result.PromptTokens is not null)
+                {
+                    usage["prompt_tokens"] = result.PromptTokens.Value;
+                }
+
+                if (result.CompletionTokens is not null)
+                {
+                    usage["completion_tokens"] = result.CompletionTokens.Value;
+                }
+
+                if (result.PromptTokens is not null && result.CompletionTokens is not null)
+                {
+                    usage["total_tokens"] = result.PromptTokens.Value + result.CompletionTokens.Value;
+                }
+
+                chunk["usage"] = usage;
+            }
+
+            await onRawSseData(chunk.ToJsonString(), cancellationToken);
         }
         catch (JsonException)
         {
-            // Treat unparseable chunks as non-tool so they can still reach the client.
+            // Fall through to DONE so the client is not left hanging.
         }
 
-        return false;
+        await onRawSseData("[DONE]", cancellationToken);
     }
 
     private sealed record AssistantRoundOutcome(
         bool NeedsAnotherRound,
-        IReadOnlyList<ParsedToolCall> AllowedRealToolCalls);
+        IReadOnlyList<ParsedToolCall> AllowedRealToolCalls,
+        bool AlreadyHydratedOnly,
+        IReadOnlyList<string> AlreadyHydratedToolNames,
+        bool RewroteToolArguments,
+        string? RewrittenAssistantMessageJson);
 
-    public JsonElement BuildRewrittenClientRequest(JsonElement? rawRequest, bool forceStream)
+    private static ToolSchemaLoopResult BuildHydrateLoopStoppedResult(
+        UpstreamChatResult? last,
+        string message)
+    {
+        var assistantJson = JsonSerializer.Serialize(new
+        {
+            role = "assistant",
+            content = message
+        });
+        return new ToolSchemaLoopResult(
+            new UpstreamChatResult(
+                Content: message,
+                FinishReason: "stop",
+                PromptTokens: last?.PromptTokens,
+                CompletionTokens: last?.CompletionTokens,
+                RawResponseJson: null,
+                AssistantMessageJson: assistantJson),
+            RequiresInternalHandling: true,
+            []);
+    }
+
+    private static ChatMessage BuildAlreadyHydratedNudge(IReadOnlyList<string> toolNames)
+    {
+        var distinct = toolNames.Distinct(StringComparer.Ordinal).ToList();
+        var names = distinct.Count == 0
+            ? "the requested tool(s)"
+            : string.Join(", ", distinct);
+        var quoted = distinct.Count == 0
+            ? "the hydrated tool"
+            : string.Join(", ", distinct.Select(n => $"\"{n}\""));
+        return new ChatMessage(
+            MessageRole.System,
+            $"Comprexy: {names} already hydrated (already_hydrated=true with full definition). " +
+            $"Do not call get_tool_definition again. Emit tool_calls with function name(s) exactly {quoted} now. " +
+            "Do not pass these names as CallMcpTool.toolName or as any other tool's argument — call them directly by name.");
+    }
+
+    private static string BuildAlreadyHydratedStopMessage(IReadOnlyList<string> toolNames)
+    {
+        var distinct = toolNames.Distinct(StringComparer.Ordinal).ToList();
+        var names = distinct.Count == 0
+            ? "one or more tools"
+            : string.Join(", ", distinct);
+        var quoted = distinct.Count == 0
+            ? "the hydrated tool"
+            : string.Join(", ", distinct.Select(n => $"\"{n}\""));
+        return $"Tool schema hydrate loop stopped: repeated get_tool_definition for already-hydrated tool(s) ({names}). " +
+               $"Emit tool_calls with function name(s) exactly {quoted}. " +
+               "Do not call get_tool_definition again, and do not pass these names as CallMcpTool.toolName.";
+    }
+
+    private static string BuildHydrateInstruction(string toolName) =>
+        $"Do not call get_tool_definition again for '{toolName}'. " +
+        $"Emit a tool_call whose function name is exactly \"{toolName}\" now. " +
+        $"Do not pass '{toolName}' as CallMcpTool.toolName or as any other tool's argument.";
+
+    private JsonElement BuildLoopRewrittenClientRequest(
+        UpstreamRequest upstreamRequest,
+        ToolSchemaSession session,
+        bool forceStream)
+    {
+        Dictionary<string, string>? exposed = null;
+        if (session.LoopExposedToolNames.Count > 0)
+        {
+            exposed = new Dictionary<string, string>(StringComparer.Ordinal);
+            foreach (var name in session.LoopExposedToolNames.OrderBy(n => n, StringComparer.Ordinal))
+            {
+                if (session.FullDefinitionsByName.TryGetValue(name, out var definitionJson) &&
+                    !string.IsNullOrWhiteSpace(definitionJson))
+                {
+                    exposed[name] = definitionJson;
+                }
+            }
+        }
+
+        var baseRequest = upstreamRequest.OriginalClientRequest;
+        return BuildRewrittenClientRequest(baseRequest, forceStream, exposed);
+    }
+
+    public JsonElement BuildRewrittenClientRequest(
+        JsonElement? rawRequest,
+        bool forceStream,
+        IReadOnlyDictionary<string, string>? includeFullDefinitionsByName = null)
     {
         JsonObject root;
         if (rawRequest is { ValueKind: JsonValueKind.Object } original)
@@ -421,14 +717,49 @@ public class ToolSchemaOrchestrator
             root = new JsonObject();
         }
 
-        root["tools"] = JsonNode.Parse($"[{ToolSchemaConstants.MetaToolWireJson}]");
+        var tools = new JsonArray
+        {
+            JsonNode.Parse(ToolSchemaConstants.MetaToolWireJson)!,
+            JsonNode.Parse(ToolSchemaConstants.ConversationIdMetaToolWireJson)!
+        };
+        if (includeFullDefinitionsByName is not null)
+        {
+            foreach (var definitionJson in includeFullDefinitionsByName
+                         .OrderBy(kv => kv.Key, StringComparer.Ordinal)
+                         .Select(kv => kv.Value))
+            {
+                var node = JsonNode.Parse(definitionJson);
+                if (node is not null)
+                {
+                    tools.Add(node);
+                }
+            }
+        }
+
+        root["tools"] = tools;
         root.Remove("functions");
         root["stream"] = forceStream;
         using var document = JsonDocument.Parse(root.ToJsonString());
         return document.RootElement.Clone();
     }
 
-    private async Task<(ChatMessage ToolMessage, ToolSchemaPersistedTurn Persist)> ExecuteMetaToolAsync(
+    private static (ChatMessage ToolMessage, ToolSchemaPersistedTurn Persist) ExecuteConversationIdMetaTool(
+        ToolSchemaSession session,
+        ParsedToolCall call)
+    {
+        var payload = JsonSerializer.Serialize(new
+        {
+            conversation_id = session.ConversationId.ToString("D"),
+            instruction =
+                "Use this conversation_id as conversationId for tools that require it (for example comprexy telemetry MCP). " +
+                "Do not invent or guess a UUID."
+        });
+        return (
+            ToolCallWireHelper.BuildToolResultMessage(call.Id, payload),
+            BuildPersistedMetaTurn(call, payload));
+    }
+
+    private async Task<(ChatMessage ToolMessage, ToolSchemaPersistedTurn Persist, bool WasAlreadyHydrated, string? ToolName)> ExecuteMetaToolAsync(
         ToolSchemaSession session,
         ParsedToolCall call,
         CancellationToken cancellationToken)
@@ -439,7 +770,9 @@ public class ToolSchemaOrchestrator
             var error = BuildToolErrorJson("invalid_args", "Missing required field 'tool_name'.");
             return (
                 ToolCallWireHelper.BuildToolResultMessage(call.Id, error),
-                BuildPersistedMetaTurn(call, error));
+                BuildPersistedMetaTurn(call, error),
+                WasAlreadyHydrated: false,
+                ToolName: null);
         }
 
         toolName = toolName.Trim();
@@ -448,7 +781,9 @@ public class ToolSchemaOrchestrator
             var error = BuildToolErrorJson("unknown_tool", $"Tool '{toolName}' is not in the compact index.");
             return (
                 ToolCallWireHelper.BuildToolResultMessage(call.Id, error),
-                BuildPersistedMetaTurn(call, error));
+                BuildPersistedMetaTurn(call, error),
+                WasAlreadyHydrated: false,
+                ToolName: toolName);
         }
 
         if (!session.FullDefinitionsByName.TryGetValue(toolName, out var definitionJson))
@@ -462,10 +797,14 @@ public class ToolSchemaOrchestrator
             var error = BuildToolErrorJson("unknown_tool", $"No stored definition for tool '{toolName}'.");
             return (
                 ToolCallWireHelper.BuildToolResultMessage(call.Id, error),
-                BuildPersistedMetaTurn(call, error));
+                BuildPersistedMetaTurn(call, error),
+                WasAlreadyHydrated: false,
+                ToolName: toolName);
         }
 
         var definitionHash = ToolCatalogParser.ComputeSha256Hex(definitionJson);
+        var instructionJson = JsonSerializer.Serialize(BuildHydrateInstruction(toolName));
+        var toolNameJson = JsonSerializer.Serialize(toolName);
         if (_options.SkipRefetchIfHydrated && session.HydratedToolNames.Contains(toolName))
         {
             var tracked = await _definitionRepository.FindAsync(session.ConversationId, toolName, cancellationToken);
@@ -474,18 +813,26 @@ public class ToolSchemaOrchestrator
             {
                 // Still return the full definition — compact index alone is not enough for
                 // the model to recover after schema_invalid, and pins may have left context.
-                var ack = $$"""{"already_hydrated":true,"tool_name":"{{toolName}}","definition":{{definitionJson}}}""";
+                session.LoopExposedToolNames.Add(toolName);
+                var ack =
+                    $$"""{"already_hydrated":true,"tool_name":{{toolNameJson}},"instruction":{{instructionJson}},"definition":{{definitionJson}}}""";
                 return (
                     ToolCallWireHelper.BuildToolResultMessage(call.Id, ack),
-                    BuildPersistedMetaTurn(call, ack));
+                    BuildPersistedMetaTurn(call, ack),
+                    WasAlreadyHydrated: true,
+                    ToolName: toolName);
             }
         }
 
         await MarkHydratedAsync(session, toolName, definitionHash, definitionJson, cancellationToken);
-        var payload = $$"""{"tool_name":"{{toolName}}","definition":{{definitionJson}}}""";
+        session.LoopExposedToolNames.Add(toolName);
+        var payload =
+            $$"""{"tool_name":{{toolNameJson}},"instruction":{{instructionJson}},"definition":{{definitionJson}}}""";
         return (
             ToolCallWireHelper.BuildToolResultMessage(call.Id, payload),
-            BuildPersistedMetaTurn(call, payload));
+            BuildPersistedMetaTurn(call, payload),
+            WasAlreadyHydrated: false,
+            ToolName: toolName);
     }
 
     private async Task MarkHydratedAsync(
@@ -514,33 +861,37 @@ public class ToolSchemaOrchestrator
         existing.MarkHydrated(definitionHash, definitionJson, now);
     }
 
-    private (bool IsAllowed, string? ErrorCode, string? ErrorMessage) ValidateRealToolCall(
+    private (bool IsAllowed, string? ErrorCode, string? ErrorMessage, string? NormalizedArgumentsJson) ValidateRealToolCall(
         ToolSchemaSession session,
         ParsedToolCall call)
     {
         if (!session.CatalogToolNames.Contains(call.Name))
         {
-            return (false, "unknown_tool", $"Tool '{call.Name}' is not in the compact index.");
+            return (false, "unknown_tool", $"Tool '{call.Name}' is not in the compact index.", null);
         }
 
         if (!session.HydratedToolNames.Contains(call.Name))
         {
-            return (false, "not_hydrated", $"Tool '{call.Name}' must be hydrated via get_tool_definition first.");
+            return (false, "not_hydrated", $"Tool '{call.Name}' must be hydrated via get_tool_definition first.", null);
         }
 
         if (!session.FullDefinitionsByName.TryGetValue(call.Name, out var definitionJson))
         {
-            return (false, "not_hydrated", $"No stored definition for tool '{call.Name}'.");
+            return (false, "not_hydrated", $"No stored definition for tool '{call.Name}'.", null);
         }
 
         var schemaJson = _argumentValidator.ExtractParametersSchemaJson(definitionJson);
         var validation = _argumentValidator.Validate(schemaJson, call.ArgumentsJson);
         if (!validation.IsValid)
         {
-            return (false, validation.ErrorCode ?? "schema_invalid", validation.Details ?? "Schema validation failed.");
+            return (
+                false,
+                validation.ErrorCode ?? "schema_invalid",
+                validation.Details ?? "Schema validation failed.",
+                validation.NormalizedArgumentsJson);
         }
 
-        return (true, null, null);
+        return (true, null, null, validation.NormalizedArgumentsJson);
     }
 
     private static string BuildToolErrorJson(string code, string details) =>

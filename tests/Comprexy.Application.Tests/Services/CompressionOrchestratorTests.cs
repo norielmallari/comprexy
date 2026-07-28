@@ -25,7 +25,8 @@ public class CompressionOrchestratorTests
     {
         CompressionRetainMessageCount = 2,
         EmergencyRecentMessageCount = 1,
-        CompressionMaxInputTokens = 52_000
+        CompressionMaxInputTokens = 52_000,
+        RetainSelection = RetainSelectionMode.Fixed
     };
 
     private CompressionOrchestrator CreateOrchestrator(
@@ -88,6 +89,36 @@ public class CompressionOrchestratorTests
         var result = await orchestrator.RunAsync(Guid.NewGuid(), CompressionMode.Background, CancellationToken.None);
 
         Assert.Null(result);
+        _chatCompletionClient.Verify(
+            c => c.CompleteAsync(It.IsAny<ProviderEndpoint>(), It.IsAny<UpstreamRequest>(), It.IsAny<CancellationToken>()),
+            Times.Never);
+    }
+
+    [Theory]
+    [InlineData(CompressionMode.Background)]
+    [InlineData(CompressionMode.HighPriorityBackground)]
+    [InlineData(CompressionMode.Emergency)]
+    public async Task RunAsync_WhenRetainSelectionInline_ReturnsNullWithoutMutatingState(CompressionMode mode)
+    {
+        _policy.RetainSelection = RetainSelectionMode.Inline;
+
+        var conversationId = Guid.NewGuid();
+        var conversation = Conversation.Create("key", DateTimeOffset.UtcNow);
+        _conversationRepository
+            .Setup(r => r.FindByIdAsync(conversationId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(conversation);
+
+        var orchestrator = CreateOrchestrator();
+
+        var result = await orchestrator.RunAsync(conversationId, mode, CancellationToken.None);
+
+        Assert.Null(result);
+        _messageRepository.Verify(
+            r => r.GetByConversationIdAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()),
+            Times.Never);
+        _compressionEventRepository.Verify(r => r.Add(It.IsAny<CompressionEvent>()), Times.Never);
+        _workingMemoryRepository.Verify(r => r.Add(It.IsAny<WorkingMemory>()), Times.Never);
+        _unitOfWork.Verify(u => u.SaveChangesAsync(It.IsAny<CancellationToken>()), Times.Never);
         _chatCompletionClient.Verify(
             c => c.CompleteAsync(It.IsAny<ProviderEndpoint>(), It.IsAny<UpstreamRequest>(), It.IsAny<CancellationToken>()),
             Times.Never);
@@ -255,7 +286,8 @@ public class CompressionOrchestratorTests
         {
             CompressionRetainMessageCount = 2,
             EmergencyRecentMessageCount = 1,
-            CompressionMaxInputTokens = 25
+            CompressionMaxInputTokens = 25,
+            RetainSelection = RetainSelectionMode.Fixed
         };
 
         var conversationId = Guid.NewGuid();
@@ -300,7 +332,8 @@ public class CompressionOrchestratorTests
         {
             CompressionRetainMessageCount = 1,
             EmergencyRecentMessageCount = 1,
-            CompressionMaxInputTokens = 15
+            CompressionMaxInputTokens = 15,
+            RetainSelection = RetainSelectionMode.Fixed
         };
 
         var conversationId = Guid.NewGuid();

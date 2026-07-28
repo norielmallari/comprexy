@@ -139,6 +139,26 @@ public sealed class McpToolAndResourceTests
     }
 
     [Fact]
+    public async Task ExplicitResource_MapsQueryExceptionToErrorPayload()
+    {
+        var id = Guid.NewGuid();
+        var metrics = McpTestData.CreateMetrics(id);
+        metrics.Setup(x => x.GetTelemetrySummaryAsync(
+                id,
+                It.IsAny<int?>(),
+                It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("db unavailable"));
+        var resource = new ConversationResources(
+            metrics.Object,
+            Options.Create(new McpTelemetryOptions()));
+
+        var result = await resource.GetSummaryAsync(id, CancellationToken.None);
+
+        Assert.True(JsonDocument.Parse(result).RootElement.GetProperty("isError").GetBoolean());
+        Assert.Contains("Telemetry query failed: db unavailable", result);
+    }
+
+    [Fact]
     public async Task ExplicitTurns_ClampsRowsAndEmitsStructuredAuditLog()
     {
         var id = Guid.NewGuid();

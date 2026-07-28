@@ -6,6 +6,7 @@ using Comprexy.Application.Models;
 using Comprexy.Application.Tracing;
 using Comprexy.Domain.Entities;
 using Comprexy.Domain.Enums;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 
@@ -31,13 +32,17 @@ public class ProxyChatCompletionService
     private readonly IChatCompletionClient _chatCompletionClient;
     private readonly ICompressionQueue _compressionQueue;
     private readonly ICompressionOrchestrator _compressionOrchestrator;
+    private readonly ICompressionEventRepository _compressionEventRepository;
+    private readonly CompressionPromptFactory _compressionPromptFactory;
     private readonly ToolSchemaOrchestrator _toolSchemaOrchestrator;
     private readonly IConversationMetricsRecorder _metricsRecorder;
     private readonly IUnitOfWork _unitOfWork;
     private readonly IClock _clock;
     private readonly ContextPolicyOptions _policy;
     private readonly ProxyOptions _proxyOptions;
+    private readonly IHostApplicationLifetime _hostApplicationLifetime;
     private readonly IPayloadTraceLogger _payloadTrace;
+    private readonly IRequestTraceFileSession _requestTraceFiles;
     private readonly ILogger<ProxyChatCompletionService> _logger;
 
     public ProxyChatCompletionService(
@@ -54,13 +59,17 @@ public class ProxyChatCompletionService
         IChatCompletionClient chatCompletionClient,
         ICompressionQueue compressionQueue,
         ICompressionOrchestrator compressionOrchestrator,
+        ICompressionEventRepository compressionEventRepository,
+        CompressionPromptFactory compressionPromptFactory,
         ToolSchemaOrchestrator toolSchemaOrchestrator,
         IConversationMetricsRecorder metricsRecorder,
         IUnitOfWork unitOfWork,
         IClock clock,
         IOptions<ContextPolicyOptions> policy,
         IOptions<ProxyOptions> proxyOptions,
+        IHostApplicationLifetime hostApplicationLifetime,
         IPayloadTraceLogger payloadTrace,
+        IRequestTraceFileSession requestTraceFiles,
         ILogger<ProxyChatCompletionService> logger)
     {
         _identityResolver = identityResolver;
@@ -76,15 +85,23 @@ public class ProxyChatCompletionService
         _chatCompletionClient = chatCompletionClient;
         _compressionQueue = compressionQueue;
         _compressionOrchestrator = compressionOrchestrator;
+        _compressionEventRepository = compressionEventRepository;
+        _compressionPromptFactory = compressionPromptFactory;
         _toolSchemaOrchestrator = toolSchemaOrchestrator;
         _metricsRecorder = metricsRecorder;
         _unitOfWork = unitOfWork;
         _clock = clock;
         _policy = policy.Value;
         _proxyOptions = proxyOptions.Value;
+        _hostApplicationLifetime = hostApplicationLifetime;
         _payloadTrace = payloadTrace;
+        _requestTraceFiles = requestTraceFiles;
         _logger = logger;
     }
+
+    private bool EmergencySyncEnabled =>
+        _policy.EmergencyCompression == EmergencyCompressionMode.Sync
+        && _policy.RetainSelection != RetainSelectionMode.Inline;
 
     public async Task<ProxyChatCompletionResult> HandleAsync(IncomingChatRequest request, CancellationToken cancellationToken)
     {
@@ -100,12 +117,22 @@ public class ProxyChatCompletionService
             cancellationToken);
 
         var prepared = await PrepareAsync(request, conversationKey, cancellationToken);
-        var upstreamResult = await ExecuteUpstreamWithToolSchemaAsync(
-            prepared,
-            request.Stream,
-            cancellationToken);
+        UpstreamChatResult upstreamResult;
+        try
+        {
+            upstreamResult = await ExecuteUpstreamWithToolSchemaAsync(
+                prepared,
+                request.Stream,
+                cancellationToken);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
 
-        return await CompleteAsync(prepared, upstreamResult, cancellationToken);
+        using var postMainCts = CancellationTokenSource.CreateLinkedTokenSource(
+            _hostApplicationLifetime.ApplicationStopping);
+        return await CompleteAsync(prepared, upstreamResult, postMainCts.Token);
     }
 
     public async Task<ProxyChatCompletionResult> HandleStreamingAsync(
@@ -128,24 +155,89 @@ public class ProxyChatCompletionService
         var prepared = await PrepareAsync(request, conversationKey, cancellationToken);
         onConversationReady(prepared.Conversation.Id);
 
-        if (prepared.ToolSchema is not null)
+        // Inline eligible turns must not let the client act on the answer before the wrap-up
+        // checkpoint finishes: hold [DONE] always, and hold the whole tool_calls tail (from the
+        // first tool_calls delta through the finish frame) so tools run against post-fold context.
+        var holdForWrapUp = prepared.InlineFollowUpEligible;
+        var heldFrames = new List<string>();
+        var holdingToolTail = false;
+        var pendingDone = false;
+        Func<string, CancellationToken, Task> forward = async (data, ct) =>
         {
-            var loop = await _toolSchemaOrchestrator.RunStreamingLoopAsync(
-                prepared.ToolSchema.Session,
-                prepared.Endpoint,
-                prepared.UpstreamRequest,
-                onRawSseData,
-                cancellationToken);
-            return await CompleteAsync(prepared, loop.FinalUpstreamResult, cancellationToken);
+            if (!holdForWrapUp)
+            {
+                await onRawSseData(data, ct);
+                return;
+            }
+
+            if (data == "[DONE]")
+            {
+                pendingDone = true;
+                return;
+            }
+
+            if (holdingToolTail || ToolCallWireHelper.StreamChunkHasToolCalls(data))
+            {
+                holdingToolTail = true;
+                heldFrames.Add(data);
+                return;
+            }
+
+            await onRawSseData(data, ct);
+        };
+
+        UpstreamChatResult main;
+        try
+        {
+            main = prepared.ToolSchema is not null
+                ? (await _toolSchemaOrchestrator.RunStreamingLoopAsync(
+                    prepared.ToolSchema.Session,
+                    prepared.Endpoint,
+                    prepared.UpstreamRequest,
+                    forward,
+                    cancellationToken)).FinalUpstreamResult
+                : await _chatCompletionClient.StreamAsync(
+                    prepared.Endpoint,
+                    prepared.UpstreamRequest,
+                    forward,
+                    cancellationToken);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
         }
 
-        var streamedResult = await _chatCompletionClient.StreamAsync(
-            prepared.Endpoint,
-            prepared.UpstreamRequest,
-            onRawSseData,
-            cancellationToken);
+        using var postMainCts = CancellationTokenSource.CreateLinkedTokenSource(
+            _hostApplicationLifetime.ApplicationStopping);
+        var result = await CompleteAsync(prepared, main, postMainCts.Token);
 
-        return await CompleteAsync(prepared, streamedResult, cancellationToken);
+        if (heldFrames.Count > 0)
+        {
+            _logger.LogInformation(
+                "Inline wrap-up complete for conversation {ConversationId}; releasing {HeldFrameCount} held tool_calls SSE frame(s) to the client.",
+                prepared.Conversation.Id,
+                heldFrames.Count);
+        }
+
+        // Released on accept and on soft failure alike — the task must continue either way.
+        try
+        {
+            foreach (var held in heldFrames)
+            {
+                await onRawSseData(held, CancellationToken.None);
+            }
+
+            if (pendingDone)
+            {
+                await onRawSseData("[DONE]", CancellationToken.None);
+            }
+        }
+        catch
+        {
+            // Client may already be gone after consuming the visible answer.
+        }
+
+        return result;
     }
 
     private async Task<UpstreamChatResult> ExecuteUpstreamWithToolSchemaAsync(
@@ -194,6 +286,8 @@ public class ProxyChatCompletionService
             storedMessages = await _messageRepository.GetByConversationIdAsync(conversation.Id, cancellationToken);
             EnrichStoredMessagesFromClientHistory(storedMessages, request.Messages);
         }
+
+        _requestTraceFiles.SetConversationId(conversation.Id);
 
         // Client history shorter than our cursor (retry / rewind) — realign before diffing.
         if (conversation.SyncedMessageCount > request.Messages.Count)
@@ -374,12 +468,12 @@ public class ProxyChatCompletionService
                 ?? throw new InvalidOperationException(
                     "EmergencyCompressionRequired requires ContextPolicy:HardLimitTokens.");
 
-            if (_policy.EmergencyCompression != EmergencyCompressionMode.Sync)
+            if (!EmergencySyncEnabled)
             {
                 _logger.LogInformation(
                     "Hard limit exceeded before first compression for conversation {ConversationId}; emergency compression is {Mode}, rejecting.",
                     conversation.Id,
-                    _policy.EmergencyCompression);
+                    _policy.RetainSelection == RetainSelectionMode.Inline ? "Inline (ignored)" : _policy.EmergencyCompression);
                 throw new ContextBudgetExceededException(
                     conversation.Id,
                     preCompressionTokens,
@@ -434,7 +528,11 @@ public class ProxyChatCompletionService
             allMessages,
             currentMessageEntity.Sequence);
 
-        var outgoing = _contextBuilder.Build(conversation.SystemPrompt, workingMemory, recentRaw, currentUserMessage, conversation.Id);
+        var outgoing = _contextBuilder.Build(
+            conversation.SystemPrompt,
+            workingMemory,
+            recentRaw,
+            currentUserMessage);
         var toolSchema = await TryPrepareToolSchemaAsync(
             conversation.Id,
             outgoing,
@@ -460,7 +558,7 @@ public class ProxyChatCompletionService
 
         if (!ranPreCompressionEmergency
             && decision == ContextBudgetDecision.EmergencyCompressionRequired
-            && _policy.EmergencyCompression == EmergencyCompressionMode.Sync)
+            && EmergencySyncEnabled)
         {
             await _unitOfWork.SaveChangesAsync(cancellationToken);
             await _compressionOrchestrator.RunAsync(
@@ -489,7 +587,11 @@ public class ProxyChatCompletionService
             // Rebuild + re-prepare ToolSchema against post-emergency context. Reusing the
             // pre-emergency rewrite would estimate the old OutgoingMessages and drive wrong
             // hard-limit / send-time trim decisions.
-            outgoing = _contextBuilder.Build(conversation.SystemPrompt, workingMemory, recentRaw, currentUserMessage, conversation.Id);
+            outgoing = _contextBuilder.Build(
+                conversation.SystemPrompt,
+                workingMemory,
+                recentRaw,
+                currentUserMessage);
             toolSchema = await TryPrepareToolSchemaAsync(
                 conversation.Id,
                 outgoing,
@@ -512,12 +614,12 @@ public class ProxyChatCompletionService
         }
         else if (!ranPreCompressionEmergency
                  && decision == ContextBudgetDecision.EmergencyCompressionRequired
-                 && _policy.EmergencyCompression != EmergencyCompressionMode.Sync)
+                 && !EmergencySyncEnabled)
         {
             _logger.LogInformation(
                 "Hard limit reached for conversation {ConversationId}; emergency compression is {Mode}, skipping sync compact.",
                 conversation.Id,
-                _policy.EmergencyCompression);
+                _policy.RetainSelection == RetainSelectionMode.Inline ? "Inline (ignored)" : _policy.EmergencyCompression);
         }
 
         if (_policy.HardLimitTokens.HasValue && estimatedTokens >= _policy.HardLimitTokens.Value)
@@ -651,21 +753,52 @@ public class ProxyChatCompletionService
             tokens = _tokenEstimator.CountPromptTokens(messages, toolSchema.RewrittenClientRequest);
         }
 
-        // Pre-compression passthrough skips ContextBuilder; ToolSchema may also rewrite the
-        // message list. Always ensure the conversation id is visible to the model.
-        var messagesBeforeId = messages;
-        messages = _contextBuilder.EnsureConversationId(messages, conversation.Id);
-        var injectedConversationId = !ReferenceEquals(messages, messagesBeforeId);
-        if (injectedConversationId)
-        {
-            tokens = _tokenEstimator.CountPromptTokens(
-                messages,
-                toolSchema?.RewrittenClientRequest ?? rawRequest);
-        }
-
         // ToolSchema injects system rules into Messages — always replace wire messages when active.
-        // Conversation-id injection also requires replacing wire messages on the passthrough path.
-        var effectiveReplaceMessages = toolSchema is not null || replaceMessages || injectedConversationId;
+        var effectiveReplaceMessages = toolSchema is not null || replaceMessages;
+        // Pre-follow-up estimate: main outbound tokens before any wrap-up (hard-limit check only;
+        // CompressionMaxInputTokens is intentionally not applied here — matches prior tip headroom).
+        var preFollowUpEstimatedTokens = tokens;
+        var inlineFollowUpEligible = false;
+
+        if (!skipCompression
+            && _policy.RetainSelection == RetainSelectionMode.Inline
+            && decision != ContextBudgetDecision.ForwardImmediate
+            && await IsInlineCooldownClearAsync(conversation.Id, allMessages, cancellationToken))
+        {
+            var unfolded = allMessages.Where(m => !m.IsFolded).OrderBy(m => m.Sequence).ToList();
+            if (!ToolCallChainState.Assess(unfolded).IsOpen)
+            {
+                var wrapUpUser = _compressionPromptFactory.BuildInlineWrapUpUserMessage();
+                var wrapUpTipTokens = _tokenEstimator.CountTokens([wrapUpUser]);
+                var headroomOk = !_policy.HardLimitTokens.HasValue
+                    || tokens + wrapUpTipTokens <= _policy.HardLimitTokens.Value;
+
+                if (headroomOk)
+                {
+                    inlineFollowUpEligible = true;
+                    _logger.LogInformation(
+                        "Inline follow-up wrap-up eligible for conversation {ConversationId}: estimatedTokens={EstimatedTokens} wrapUpTipTokens={WrapUpTipTokens}",
+                        conversation.Id,
+                        preFollowUpEstimatedTokens,
+                        wrapUpTipTokens);
+                }
+                else
+                {
+                    _logger.LogInformation(
+                        "Inline follow-up wrap-up skipped for conversation {ConversationId}: wrap-up tip would exceed hard limit (estimated={EstimatedTokens} wrapUpTip={WrapUpTipTokens} hard={HardLimitTokens}).",
+                        conversation.Id,
+                        tokens,
+                        wrapUpTipTokens,
+                        _policy.HardLimitTokens);
+                }
+            }
+            else
+            {
+                _logger.LogInformation(
+                    "Inline follow-up wrap-up skipped for conversation {ConversationId}: open tool-call chain.",
+                    conversation.Id);
+            }
+        }
 
         return new PreparedRequest(
             conversation,
@@ -686,7 +819,41 @@ public class ProxyChatCompletionService
             windowEndSequence,
             recentRawCount,
             toolSchema,
-            metricsPrepare);
+            metricsPrepare,
+            inlineFollowUpEligible,
+            preFollowUpEstimatedTokens);
+    }
+
+    private async Task<bool> IsInlineCooldownClearAsync(
+        Guid conversationId,
+        IReadOnlyList<ConversationMessage> allMessages,
+        CancellationToken cancellationToken)
+    {
+        var latestSucceeded = await _compressionEventRepository.GetLatestSucceededAsync(
+            conversationId,
+            CompressionMode.Inline,
+            cancellationToken);
+        if (latestSucceeded?.CompletedAt is null)
+        {
+            return true;
+        }
+
+        var turnsSince = allMessages.Count(m =>
+            m.Role == MessageRole.Assistant
+            && !m.IsPinnedForToolSchema
+            && m.CreatedAt > latestSucceeded.CompletedAt);
+
+        if (turnsSince >= _policy.MinTurnsBetweenGenerations)
+        {
+            return true;
+        }
+
+        _logger.LogDebug(
+            "Inline follow-up wrap-up skipped for conversation {ConversationId}: cooldown ({TurnsSince}/{MinTurns} assistant turns since last success).",
+            conversationId,
+            turnsSince,
+            _policy.MinTurnsBetweenGenerations);
+        return false;
     }
 
     /// <summary>
@@ -840,8 +1007,7 @@ public class ProxyChatCompletionService
             conversation.SystemPrompt,
             workingMemory,
             trimmed,
-            currentUserMessage,
-            conversation.Id);
+            currentUserMessage);
         var estimatedTokens = _tokenEstimator.CountPromptTokens(outgoing, rawRequest);
         var windowStart = trimmed.Count > 0 ? trimmed[0].Sequence : (int?)null;
         return (trimmed, outgoing, estimatedTokens, windowStart);
@@ -1049,10 +1215,12 @@ public class ProxyChatCompletionService
         var assistantContent = string.IsNullOrWhiteSpace(upstreamResult.Content)
             ? SummarizeAssistantContent(upstreamResult.AssistantMessageJson)
             : upstreamResult.Content;
+        var assistantWireJson = upstreamResult.AssistantMessageJson;
+
         var assistantMessage = new ChatMessage(
             MessageRole.Assistant,
             assistantContent,
-            ParseOptionalWire(upstreamResult.AssistantMessageJson));
+            ParseOptionalWire(assistantWireJson));
         var assistantTokenCount = upstreamResult.CompletionTokens
             ?? _tokenEstimator.CountTokens([assistantMessage]);
         var assistantEntity = ConversationMessage.Create(
@@ -1062,9 +1230,9 @@ public class ProxyChatCompletionService
             assistantContent,
             assistantTokenCount,
             _clock.UtcNow,
-            upstreamResult.AssistantMessageJson);
+            assistantWireJson);
+
         _messageRepository.Add(assistantEntity);
-        // Next client request should include this assistant as history[IncomingMessageCount].
         prepared.Conversation.SetSyncedMessageCount(prepared.IncomingMessageCount + 1, _clock.UtcNow);
 
         if (!prepared.SkipCompression && prepared.MetricsPrepare is not null)
@@ -1091,12 +1259,47 @@ public class ProxyChatCompletionService
                 cancellationToken);
         }
 
-        await _unitOfWork.SaveChangesAsync(cancellationToken);
+        if (prepared.InlineFollowUpEligible)
+        {
+            // Phase 1: durable visible transcript + turn metrics before wrap-up.
+            await _unitOfWork.SaveChangesAsync(cancellationToken);
+
+            var midChainPrefix = ToolCallChainState.HasOpenToolCalls([assistantEntity]);
+            var wrapUpMode = midChainPrefix
+                ? InlineWrapUpMode.MidChainPrefix
+                : InlineWrapUpMode.StopTurn;
+            if (wrapUpMode == InlineWrapUpMode.MidChainPrefix)
+            {
+                _logger.LogInformation(
+                    "Inline mid-chain prefix wrap-up for conversation {ConversationId}: final assistant has open tool calls; folding closed prefix only.",
+                    prepared.Conversation.Id);
+            }
+
+            await RunInlineWrapUpAndAcceptAsync(
+                prepared,
+                upstreamResult,
+                assistantContent,
+                assistantEntity,
+                wrapUpMode,
+                cancellationToken);
+            // Phase 2: CompressionEvent ± WM/fold (or Fail).
+            await _unitOfWork.SaveChangesAsync(cancellationToken);
+        }
+        else
+        {
+            await _unitOfWork.SaveChangesAsync(cancellationToken);
+        }
 
         if (prepared.SkipCompression)
         {
             _logger.LogDebug(
                 "Post-response compression skipped for conversation {ConversationId} (pass-through mode).",
+                prepared.Conversation.Id);
+        }
+        else if (_policy.RetainSelection == RetainSelectionMode.Inline)
+        {
+            _logger.LogDebug(
+                "Post-response compression not enqueued for conversation {ConversationId}: retainSelection=Inline.",
                 prepared.Conversation.Id);
         }
         else if (prepared.Decision == ContextBudgetDecision.ForwardImmediate)
@@ -1132,7 +1335,7 @@ public class ProxyChatCompletionService
         var promptTokens = upstreamResult.PromptTokens ?? prepared.EstimatedTokens;
         return new ProxyChatCompletionResult(
             prepared.Conversation.Id,
-            upstreamResult.Content,
+            assistantContent,
             upstreamResult.FinishReason,
             promptTokens,
             assistantTokenCount,
@@ -1141,6 +1344,249 @@ public class ProxyChatCompletionService
             prepared.Decision,
             prepared.SkipCompression,
             upstreamResult.RawResponseJson);
+    }
+
+    private enum InlineWrapUpMode
+    {
+        StopTurn,
+        MidChainPrefix
+    }
+
+    private async Task RunInlineWrapUpAndAcceptAsync(
+        PreparedRequest prepared,
+        UpstreamChatResult upstreamResult,
+        string visibleAssistantContent,
+        ConversationMessage assistantEntity,
+        InlineWrapUpMode wrapUpMode,
+        CancellationToken cancellationToken)
+    {
+        var acceptStartedAt = _clock.UtcNow;
+        var existingWorkingMemory = await _workingMemoryRepository.GetLatestAsync(
+            prepared.Conversation.Id,
+            cancellationToken);
+        var storedMessages = await _messageRepository.GetByConversationIdAsync(
+            prepared.Conversation.Id,
+            cancellationToken);
+        var unfoldedStored = storedMessages.Where(m => !m.IsFolded);
+        List<ConversationMessage> foldUniverse;
+        if (wrapUpMode == InlineWrapUpMode.MidChainPrefix)
+        {
+            foldUniverse = unfoldedStored
+                .Where(m => m.Id != assistantEntity.Id)
+                .OrderBy(m => m.Sequence)
+                .ToList();
+        }
+        else
+        {
+            foldUniverse = unfoldedStored.ToList();
+            if (foldUniverse.TrueForAll(m => m.Id != assistantEntity.Id))
+            {
+                foldUniverse.Add(assistantEntity);
+            }
+
+            foldUniverse = foldUniverse.OrderBy(m => m.Sequence).ToList();
+        }
+
+        var keepRecent = _recentContextSelector
+            .Select(foldUniverse, maxMessagesOverride: _policy.CompressionRetainMessageCount)
+            .ToList();
+        var pinned = foldUniverse.Where(m => m.IsPinnedForToolSchema).ToList();
+        keepRecent = keepRecent
+            .Concat(pinned.Where(p => keepRecent.All(k => k.Id != p.Id)))
+            .OrderBy(m => m.Sequence)
+            .ToList();
+        var keepIds = keepRecent.Select(m => m.Id).ToHashSet();
+        var foldSet = foldUniverse
+            .Where(m => !keepIds.Contains(m.Id))
+            .OrderBy(m => m.Sequence)
+            .ToList();
+
+        var compressionEvent = CompressionEvent.Start(
+            prepared.Conversation.Id,
+            CompressionMode.Inline,
+            prepared.PreFollowUpEstimatedTokens,
+            existingWorkingMemory?.Version,
+            foldSet.Count,
+            acceptStartedAt);
+        _compressionEventRepository.Add(compressionEvent);
+
+        UpstreamChatResult wrapResult;
+        try
+        {
+            var wrapUpUser = _compressionPromptFactory.BuildInlineWrapUpUserMessage();
+            IEnumerable<ChatMessage> wrapPrefix = prepared.UpstreamRequest.Messages;
+            if (wrapUpMode == InlineWrapUpMode.StopTurn)
+            {
+                // Prefer the upstream assistant wire object (incl. reasoning_content) so the follow-up
+                // continues the live turn's exact message shape for KV-cache prefix alignment.
+                var visibleAssistant = new ChatMessage(
+                    MessageRole.Assistant,
+                    visibleAssistantContent,
+                    ParseOptionalWire(upstreamResult.AssistantMessageJson));
+                wrapPrefix = wrapPrefix.Append(visibleAssistant);
+            }
+
+            var wrapMessages = wrapPrefix.Append(wrapUpUser).ToList();
+
+            // Reuse live sampling / chat_template_* for KV alignment, but omit tools so wrap-up
+            // cannot continue the agent tool loop (tip alone is insufficient on local models).
+            // Purpose=Compression selects compression trace labels. Stop-turn grows messages
+            // (assistant + tip); mid-chain prefix tip only; stream forced off.
+            var wrapRequest = prepared.UpstreamRequest with
+            {
+                Messages = wrapMessages,
+                Stream = false,
+                ReplaceMessages = true,
+                Purpose = UpstreamRequestPurpose.Compression,
+                OriginalClientRequest = ClientRequestToolStripper.WithoutTools(
+                    prepared.UpstreamRequest.OriginalClientRequest),
+                RewrittenClientRequest = ClientRequestToolStripper.WithoutTools(
+                    prepared.UpstreamRequest.RewrittenClientRequest)
+            };
+
+            // Stamp the live chat model onto the endpoint when Provider/Compression model are unset
+            // (OriginalClientRequest already carries model for the wire body; this covers HasConfiguredModel).
+            var wrapEndpoint = prepared.Endpoint.WithPreferredModel(
+                prepared.Endpoint.ResolveOutboundModel(prepared.UpstreamRequest.OriginalClientRequest));
+            if (!wrapEndpoint.HasConfiguredModel)
+            {
+                compressionEvent.Fail(
+                    "wrapup_upstream:Compression requires a model. Set Provider:Model or Compression:Model, or send model on the chat request.",
+                    _clock.UtcNow);
+                _logger.LogInformation(
+                    "Inline follow-up wrap-up skipped for conversation {ConversationId}: no outbound model.",
+                    prepared.Conversation.Id);
+                return;
+            }
+
+            wrapResult = await _chatCompletionClient.CompleteAsync(
+                wrapEndpoint,
+                wrapRequest,
+                cancellationToken);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            compressionEvent.Fail("wrapup_cancelled", _clock.UtcNow);
+            _logger.LogInformation(
+                "Inline follow-up wrap-up cancelled for conversation {ConversationId}.",
+                prepared.Conversation.Id);
+            return;
+        }
+        catch (TimeoutException)
+        {
+            compressionEvent.Fail("wrapup_timeout", _clock.UtcNow);
+            _logger.LogInformation(
+                "Inline follow-up wrap-up timed out for conversation {ConversationId}.",
+                prepared.Conversation.Id);
+            return;
+        }
+        catch (Exception ex)
+        {
+            var truncated = TruncateFailureMessage(ex.Message);
+            compressionEvent.Fail("wrapup_upstream:" + truncated, _clock.UtcNow);
+            _logger.LogInformation(
+                ex,
+                "Inline follow-up wrap-up upstream failed for conversation {ConversationId}.",
+                prepared.Conversation.Id);
+            return;
+        }
+
+        // The model ignored the protocol and kept driving the agent loop. Distinct from a malformed
+        // summary: the wrap-up prompt lost authority, so surface it instead of reporting bad markdown.
+        if (ToolCallWireHelper.ParseAssistantToolCalls(wrapResult.AssistantMessageJson).Count > 0
+            || string.Equals(wrapResult.FinishReason, "tool_calls", StringComparison.OrdinalIgnoreCase))
+        {
+            compressionEvent.Fail("wrapup_tool_calls", _clock.UtcNow);
+            _logger.LogWarning(
+                "Inline follow-up wrap-up returned tool calls for conversation {ConversationId}: finishReason={FinishReason}. Wrap-up protocol lost authority over the live system prompt.",
+                prepared.Conversation.Id,
+                wrapResult.FinishReason);
+            return;
+        }
+
+        var wrapBody = wrapResult.Content;
+        if (string.IsNullOrWhiteSpace(wrapBody))
+        {
+            compressionEvent.Fail("wrapup_empty", _clock.UtcNow);
+            _logger.LogInformation(
+                "Inline follow-up wrap-up empty for conversation {ConversationId}.",
+                prepared.Conversation.Id);
+            return;
+        }
+
+        if (!WorkingMemorySanityChecker.TryAccept(wrapBody, out var acceptedWorkingMemory, out var rejectionReason))
+        {
+            compressionEvent.Fail($"sanity:{rejectionReason}", _clock.UtcNow);
+            _logger.LogInformation(
+                "Inline follow-up wrap-up failed for conversation {ConversationId}: sanity={Reason}",
+                prepared.Conversation.Id,
+                rejectionReason);
+            return;
+        }
+
+        if (foldSet.Count == 0)
+        {
+            compressionEvent.Fail("empty_fold", _clock.UtcNow);
+            _logger.LogInformation(
+                "Inline follow-up wrap-up failed for conversation {ConversationId}: empty fold set.",
+                prepared.Conversation.Id);
+            return;
+        }
+
+        var compressedTokens = _tokenEstimator.CountTokens(acceptedWorkingMemory);
+        var newVersion = (existingWorkingMemory?.Version ?? 0) + 1;
+        var newWorkingMemory = WorkingMemory.Create(
+            prepared.Conversation.Id,
+            newVersion,
+            acceptedWorkingMemory,
+            compressedTokens,
+            _clock.UtcNow);
+        _workingMemoryRepository.Add(newWorkingMemory);
+
+        foreach (var message in foldSet)
+        {
+            message.MarkFoldedInto(newVersion);
+        }
+
+        var tokensAreEstimated = !wrapResult.PromptTokens.HasValue || !wrapResult.CompletionTokens.HasValue;
+        var promptTokens = wrapResult.PromptTokens ?? prepared.PreFollowUpEstimatedTokens;
+        var completionTokens = wrapResult.CompletionTokens
+            ?? _tokenEstimator.CountTokens(acceptedWorkingMemory);
+
+        compressionEvent.Succeed(
+            compressedTokens,
+            newVersion,
+            _clock.UtcNow,
+            promptTokens,
+            completionTokens,
+            tokensAreEstimated);
+
+        if (compressionEvent.TotalTokens is int overheadTokens and > 0)
+        {
+            await _metricsRecorder.RecordCompressionOverheadAsync(
+                prepared.Conversation.Id,
+                overheadTokens,
+                cancellationToken);
+        }
+
+        _logger.LogInformation(
+            "Inline follow-up wrap-up accepted for conversation {ConversationId}: version={Version} foldCount={FoldCount} compressedTokens={CompressedTokens}",
+            prepared.Conversation.Id,
+            newVersion,
+            foldSet.Count,
+            compressedTokens);
+    }
+
+    private static string TruncateFailureMessage(string message)
+    {
+        const int maxLength = 200;
+        if (string.IsNullOrWhiteSpace(message))
+        {
+            return "unknown";
+        }
+
+        var trimmed = message.Trim();
+        return trimmed.Length <= maxLength ? trimmed : trimmed[..maxLength];
     }
 
     private sealed record PreparedRequest(
@@ -1156,5 +1602,7 @@ public class ProxyChatCompletionService
         int? WindowEndSequence,
         int RecentRawCount,
         ToolSchemaPrepareResult? ToolSchema = null,
-        TurnMetricsPrepareData? MetricsPrepare = null);
+        TurnMetricsPrepareData? MetricsPrepare = null,
+        bool InlineFollowUpEligible = false,
+        int PreFollowUpEstimatedTokens = 0);
 }

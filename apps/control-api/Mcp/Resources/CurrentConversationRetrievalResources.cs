@@ -76,5 +76,9 @@ public sealed class CurrentConversationRetrievalResources(
         {
             return McpTelemetryHelper.ErrorJson("Telemetry query timed out.");
         }
+        catch (Exception ex)
+        {
+            return McpTelemetryHelper.ErrorJson($"Telemetry query failed: {ex.Message}");
+        }
     }
 }

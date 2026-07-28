@@ -58,17 +58,19 @@ public sealed class TelemetryRepositoryTests
         var conversation = Conversation.Create("aggregate-test", DateTimeOffset.UnixEpoch);
         var otherConversation = Conversation.Create("aggregate-other", DateTimeOffset.UnixEpoch);
         fixture.Context.Conversations.AddRange(conversation, otherConversation);
+        // Savings ratio comes from compressed vs raw estimates, so vary that (not ActualPromptTokens,
+        // which is accuracy-only). Later turns compress harder, putting the peak outside the take.
         var turns = new[]
         {
-            CreateTurn(conversation.Id, 1, "r1", "s1", actualPromptTokens: 170),
-            CreateTurn(conversation.Id, 2, "r2", "s2", actualPromptTokens: 150),
-            CreateTurn(conversation.Id, 3, "r3", "s3", actualPromptTokens: 110),
-            CreateTurn(conversation.Id, 4, "r4", "s4", actualPromptTokens: 70),
-            CreateTurn(conversation.Id, 5, "r5", "s5", actualPromptTokens: 30)
+            CreateTurn(conversation.Id, 1, "r1", "s1", compressedInputTokensEstimated: 150),
+            CreateTurn(conversation.Id, 2, "r2", "s2", compressedInputTokensEstimated: 140),
+            CreateTurn(conversation.Id, 3, "r3", "s3", compressedInputTokensEstimated: 110),
+            CreateTurn(conversation.Id, 4, "r4", "s4", compressedInputTokensEstimated: 70),
+            CreateTurn(conversation.Id, 5, "r5", "s5", compressedInputTokensEstimated: 30)
         };
         fixture.Context.ConversationTurnMetrics.AddRange(turns);
         fixture.Context.ConversationTurnMetrics.Add(
-            CreateTurn(otherConversation.Id, 1, "other-r", "other-s", actualPromptTokens: 0));
+            CreateTurn(otherConversation.Id, 1, "other-r", "other-s", compressedInputTokensEstimated: 10));
         await fixture.Context.SaveChangesAsync();
         fixture.Context.ChangeTracker.Clear();
         var repository = new EfConversationTurnMetricRepository(fixture.Context);
@@ -141,19 +143,48 @@ public sealed class TelemetryRepositoryTests
         Assert.Equal(1, updated?.CompressionEventCount);
     }
 
+    [Fact]
+    public async Task FindByConversationId_ReturnsPendingAddedSummary_BeforeSaveChanges()
+    {
+        await using var fixture = await SqliteFixture.CreateAsync();
+        var id = Guid.NewGuid();
+        var now = DateTimeOffset.UnixEpoch;
+        var repository = new EfConversationMetricsSummaryRepository(fixture.Context);
+
+        // Simulate Inline CompleteAsync phase-2: overhead creates a summary, then turn metrics
+        // Find again in the same UoW before SaveChanges.
+        var pending = ConversationMetricsSummary.Create(id, now);
+        pending.ApplyCompressionOverhead(100, now);
+        repository.Add(pending);
+
+        var found = await repository.FindByConversationIdAsync(id, CancellationToken.None);
+        Assert.Same(pending, found);
+
+        found!.ApplyTurn(CreateTurn(id, 1, "request", "sent"), now.AddSeconds(1));
+        await fixture.Context.SaveChangesAsync();
+        fixture.Context.ChangeTracker.Clear();
+
+        var saved = await repository.FindByConversationIdAsync(id, CancellationToken.None);
+        Assert.NotNull(saved);
+        Assert.Equal(1, saved.TotalTurns);
+        Assert.Equal(100, saved.TotalCompressionOverheadTokens);
+        Assert.Equal(1, await fixture.Context.ConversationMetricsSummaries.CountAsync(s => s.ConversationId == id));
+    }
+
     private static ConversationTurnMetric CreateTurn(
         Guid conversationId,
         int turnIndex,
         string requestHash,
         string sentHash,
-        int actualPromptTokens = 90) =>
+        int actualPromptTokens = 90,
+        int compressedInputTokensEstimated = 100) =>
         ConversationTurnMetric.Create(
             conversationId,
             turnIndex,
             DateTimeOffset.UnixEpoch.AddMinutes(turnIndex),
             "model",
             rawInputTokensEstimated: 200,
-            compressedInputTokensEstimated: 100,
+            compressedInputTokensEstimated,
             actualPromptTokens,
             actualCompletionTokens: 10,
             softBudgetExceeded: false,

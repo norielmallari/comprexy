@@ -9,5 +9,12 @@ public enum RetainSelectionMode
     Fixed = 0,
 
     /// <summary>Ask the compression model which sequences to keep unfolded (JSON retain list).</summary>
-    Smart = 1
+    Smart = 1,
+
+    /// <summary>
+    /// Live chat model produces working memory via a blocking proxy-internal follow-up wrap-up
+    /// on eligible soft-pressure turns; background Fixed/Smart compression and emergency sync
+    /// are disabled.
+    /// </summary>
+    Inline = 2
 }

@@ -135,6 +135,38 @@ public class ToolCatalogParserTests
     }
 
     [Fact]
+    public void TryParse_DetectsConversationIdMetaToolNameCollision()
+    {
+        using var document = JsonDocument.Parse("""
+            {
+              "tools": [
+                {
+                  "type": "function",
+                  "function": {
+                    "name": "get_current_conversation_id",
+                    "description": "Client-defined meta tool.",
+                    "parameters": { "type": "object" }
+                  }
+                },
+                {
+                  "type": "function",
+                  "function": {
+                    "name": "lookup",
+                    "description": "Look up a value.",
+                    "parameters": { "type": "object" }
+                  }
+                }
+              ]
+            }
+            """);
+
+        var parsed = _parser.TryParse(document.RootElement);
+
+        Assert.NotNull(parsed);
+        Assert.True(parsed!.HasMetaToolNameCollision);
+    }
+
+    [Fact]
     public void BuildCompactIndexJson_OrdersByNameAndIncludesRequired()
     {
         var entries = new[]

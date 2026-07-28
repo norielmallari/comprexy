@@ -66,8 +66,8 @@ flowchart TB
 1. **Identity** — `ConversationIdentityResolver`: prefer `X-Comprexy-Conversation-Id`; else fingerprint system + first two user message texts.
 2. **Gate** — exclusive lease on the conversation key via `ConversationRequestGate` (serializes chat vs soft compression for that key).
 3. **Prepare** — load/create conversation; stage new client messages; load latest working memory + unfolded messages; build outgoing context; optionally rewrite tools via ToolSchema; evaluate soft/hard budget; optionally run sync emergency compression; apply send-time retain trim when still over hard.
-4. **Upstream** — non-stream `CompleteAsync` or stream with SSE; when ToolSchema is active, hydrate/meta rounds stay proxy-internal (streaming clients get live content/reasoning with meta `tool_calls` and early `[DONE]` suppressed until the final turn); model comes from `Provider:Model` when set, otherwise the client's request `model`.
-5. **Complete** — persist assistant (and staged user) turns; if above soft limit and tool chains allow, enqueue soft compression (job carries the resolved chat model so compression still works when `Provider:Model` / `Compression:Model` are unset).
+4. **Upstream** — non-stream `CompleteAsync` or stream with SSE; when ToolSchema is active, hydrate/meta rounds stay proxy-internal (streaming clients get live content/reasoning with meta `tool_calls` and early `[DONE]` suppressed until the final turn); model comes from `Provider:Model` when set, otherwise the client's request `model`. On eligible Inline turns, streaming also defers the client tail until the follow-up wrap-up attempt finishes: final `[DONE]` on every eligible turn, plus the whole real `tool_calls` tail on mid-chain turns.
+5. **Complete** — persist assistant (and staged user) turns; if above soft limit and tool chains allow, enqueue soft compression (job carries the resolved chat model so compression still works when `Provider:Model` / `Compression:Model` are unset). Inline eligible turns instead run a blocking wrap-up and two-phase save (visible transcript, then event ± WM).
 
 Persistence timing: new non-assistant messages are staged in prepare and saved in complete after a successful upstream call. Treat the DB as a record of completed turns unless that contract changes (see TODO-002).
 
@@ -75,29 +75,32 @@ Persistence timing: new non-assistant messages are staged in prepare and saved i
 
 After working memory exists, `ContextBuilder` assembles roughly:
 
-`system (first-turn capture) + working-memory system message + conversation-id system message + still-unfolded raw messages (+ current tip)`
+`system (first-turn capture) + working-memory system message + still-unfolded raw messages (+ current tip)`
 
-Before the first successful compression, client messages pass through without a working-memory section, but the conversation-id system message is still injected before upstream. Prefer `RawWireJson` on stored messages when rebuilding wire-faithful turns (tool_calls, multimodal parts).
+Before the first successful compression, client messages pass through without a working-memory section. Prefer `RawWireJson` on stored messages when rebuilding wire-faithful turns (tool_calls, multimodal parts). Conversation identity for agents that need a UUID is available via the ToolSchema meta-tool `get_current_conversation_id` (not injected into the prompt).
 
 ## Budgets and compression
 
 | Trigger | Behavior |
 | --- | --- |
 | Under soft | Forward; no compression enqueue |
-| Above soft (after reply) | Enqueue soft job (`Background` / `HighPriorityBackground`) |
+| Above soft (after reply), Fixed/Smart | Enqueue soft job (`Background` / `HighPriorityBackground`) |
+| Above soft (eligible turn), Inline | After visible answer, blocking follow-up wrap-up produces WM; accept on complete (no queue) |
 | At/above hard, `EmergencyCompression: Off` (default) | Send-time retain trim → forward if under budget, else HTTP 413 |
-| At/above hard, `EmergencyCompression: Sync` | Sync emergency compact when tool chains are closed → trim if needed → forward or 413 |
+| At/above hard, `EmergencyCompression: Sync` (Fixed/Smart only) | Sync emergency compact when tool chains are closed → trim if needed → forward or 413 |
+| At/above hard, Inline | Emergency Sync ignored; trim → forward or 413 |
 | `HardLimitTokens` / `CompressionMaxInputTokens` null | Hard-budget and compression-input-cap checks disabled |
 
-Soft vs emergency:
+Soft vs emergency vs Inline:
 
-- **Soft** (`CompressionOrchestrator`): prefer **full-raw** rebuild when total stored message tokens ≤ `CompressionMaxInputTokens` (or always when that cap is `null`); otherwise intentionally merge a bounded fold segment into existing working memory so compression requests stay within the configured input budget (important for local LLMs). Retain selection is `Fixed` (default) or `Smart` (soft-only; live chat prefix + retain-index instruction). Both Fixed and Smart retain keep assistant tool-call turns atomic with their tool results so rebuilt chat never starts a tool turn after working memory / user.
-- **Emergency**: always bounded Fixed merge path; never Smart.
+- **Soft** (`CompressionOrchestrator`): prefer **full-raw** rebuild when total stored message tokens ≤ `CompressionMaxInputTokens` (or always when that cap is `null`); otherwise intentionally merge a bounded fold segment into existing working memory so compression requests stay within the configured input budget (important for local LLMs). Retain selection is `Inline` (default; blocking follow-up wrap-up on eligible soft-pressure turns — no background soft jobs), `Fixed`, or `Smart` (soft-only; live chat prefix + retain-index instruction). Fixed and Smart retain keep assistant tool-call turns atomic with their tool results so rebuilt chat never starts a tool turn after working memory / user.
+- **Inline** (`ProxyChatCompletionService`): when `RetainSelection=Inline`, the main/live chat call is unmodified (no Inline system protocol or tip). On soft pressure for a closed-chain turn (cooldown + hard headroom for wrap-up tip tokens permitting), prepare sets `InlineFollowUpEligible`. After the visible answer completes successfully, Comprexy issues a non-stream, proxy-internal wrap-up `CompleteAsync` on the same live endpoint, reusing the live turn's sampling / `chat_template_*` wire shape (`Purpose=Compression` for compression trace labels) but **omitting** tool-calling request fields (`tools`, `tool_choice`, `functions`, and related `function_call` / `parallel_tool_calls` when present) so wrap-up cannot continue the agent tool loop. Comprexy still accepts client `functions` catalogs on the live path (ToolSchema converts them to `tools`); wrap-up strips that shape the same way it strips `tools`. Wrap-up shape depends on the visible answer: **stop-turn** appends the upstream assistant wire message plus a WM tip (`compression-inline.md` + shared template) and folds including that assistant (Id-deduped with the post–phase-1 store); **mid-chain** when the visible assistant has open `tool_calls` appends tip only on `UpstreamRequest.Messages`, folds/retains the closed stored prefix excluding that assistant, and leaves the open assistant unfolded for the next hop. A wrap-up reply that still carries `tool_calls` (or `finish_reason=tool_calls`) soft-fails as `wrapup_tool_calls`. Streaming holds the client tail until wrap-up finishes (success or soft-fail): stop-turn keeps content live and holds only `[DONE]`; mid-chain buffers every client-visible frame from the first real `tool_calls` delta through the finish frame, then flushes those frames in order followed by `[DONE]`, so the client executes tools only after the checkpoint attempt resolves. Meta hydrate frames stay proxy-internal at the ToolSchema boundary and are never part of the held tail. Persistence is two-phase under the exclusive gate: phase 1 saves the visible transcript; phase 2 records `CompressionEvent` mode `Inline` and, on accept, appends WM + Fixed-style fold. Soft failure never overwrites last known-good WM. Wrap-up user/assistant turns are not persisted. `MinTurnsBetweenGenerations` cooldown applies after successful Inline events only. Client abort after the main answer is assembled does not cancel wrap-up (post-main work uses `ApplicationStopping` only).
+- **Emergency**: always bounded Fixed merge path; never Smart; skipped when Inline is selected.
 - **Working memory**: append-only versions. Failed compressions must not overwrite the last known-good version. Folding sets `ConversationMessage.FoldedIntoWorkingMemoryVersion`.
 
 ### Closed tool chains
 
-Compression (soft and emergency) requires every assistant `tool_call` id in **unfolded** history to have a matching tool result. Open chains → orchestrator no-ops (skip fold / upstream compress). Send-time trim under hard pressure does not fold and is not gated the same way. Enforcement lives in `CompressionOrchestrator.RunAsync`.
+Compression (soft and emergency) requires every assistant `tool_call` id in **unfolded** history to have a matching tool result. Open chains → orchestrator no-ops (skip fold / upstream compress). Send-time trim under hard pressure does not fold and is not gated the same way. Enforcement lives in `CompressionOrchestrator.RunAsync`. Soft Inline prepare eligibility also requires closed **stored** unfolded history; when that gate passes and the live answer opens a new tool chain, wrap-up may still checkpoint the **closed prefix** (excluding the new open assistant) while leaving that assistant unfolded. Open stored chains still skip Inline eligibility.
 
 ### Soft / chat concurrency
 
@@ -126,8 +129,8 @@ Message conversational order is `ConversationMessage.Sequence` (unique per conve
 | `ConversationMessage` | Ordered raw turns; optional wire JSON; fold marker; optional `IsPinnedForToolSchema` for meta hydrate turns |
 | `WorkingMemory` | Immutable versioned markdown snapshot + token count |
 | `CompressionEvent` | Attempt diagnostics (mode, status, WM tokens, compression LLM usage, duration, error) |
-| `ConversationTurnMetric` | Per successful compressed-path turn: raw vs compressed token proof |
-| `ConversationMetricsSummary` | Conversation rollup including compression LLM overhead |
+| `ConversationTurnMetric` | Per successful compressed-path turn: tiktoken raw vs prepared (compressed) prompt proof; `ActualPromptTokens` is accuracy-only (`PromptEstimateError`), not part of `NetTokensSaved` |
+| `ConversationMetricsSummary` | Conversation rollup of estimate-based savings plus compression LLM overhead |
 | `ConversationToolCatalog` | Per-conversation compact tool index snapshot (hash + JSON) |
 | `ConversationToolDefinition` | Full tool definition JSON; `HydratedAt` set after meta-tool retrieval |
 
@@ -138,8 +141,8 @@ Natural indexes (in addition to the GUID PK and unique `ClusterId`): `Conversati
 When `ToolSchema:Mode` is `CompactIndex` (default; and `Proxy:PassThrough` is false):
 
 1. **Parse & snapshot** — derive compact rows (`name`, `description`, `required`) from the client `tools[]`; persist catalog + full defs on first activation; on hash mismatch keep snapshot and log.
-2. **Outbound rewrite** — inject stable system rules + compact index; outbound `tools` = `[get_tool_definition]`; token estimates use the rewritten payload.
-3. **Meta loop** — upstream assistant meta calls execute locally; hydrate defs; synthetic JSON tool errors for invalid calls; bounded by `MaxHydrateRoundsPerRequest`. Streaming uses real upstream SSE (not a post-hoc dump): content forwards live; meta/invalid tool tails are held and dropped between rounds.
+2. **Outbound rewrite** — inject stable system rules + compact index; outbound `tools` = `[get_tool_definition, get_current_conversation_id]`; token estimates use the rewritten payload.
+3. **Meta loop** — upstream assistant meta calls execute locally; hydrate defs; `get_current_conversation_id` returns the session UUID for tools that need `conversationId`; synthetic JSON tool errors for invalid calls; bounded by `MaxHydrateRoundsPerRequest`. After a successful hydrate (or `already_hydrated` ack), subsequent loop rounds expose that tool's full definition in outbound `tools[]` alongside the meta tools so the model can emit it by name. A round that is only `already_hydrated` repeats gets one system nudge naming the exact function(s); a second consecutive already-hydrated-only round stops the loop with `finish_reason=stop` (no meta tool leak to the client). Hitting the round cap likewise returns stop text instead of forwarding `get_tool_definition`. Real tool args are validated against the hydrated `parameters` schema; JSON-stringified object/array property values (e.g. nested `CallMcpTool.arguments`) are coerced to objects/arrays before validation and rewritten onto the assistant `tool_calls` wire before the client sees them. Streaming uses real upstream SSE (not a post-hoc dump): content forwards live; meta/invalid tool tails are held and dropped between rounds.
 4. **Pin / re-insert** — meta assistant+tool turns persist with `IsPinnedForToolSchema`; Fixed and Smart fold sets and send-time trim never drop pinned messages (Smart retain nominations that omit pins are overridden); re-insert from DB hydrated defs when an unfolded pin with a full `definition` is missing from outgoing context.
 5. **Client boundary** — only allowed real tool_calls reach the client; downstream tool results must match open allowed `tool_call_id`s.
 
@@ -155,7 +158,7 @@ Prompt rules: `apps/proxy/Prompts/tool-schema.md`. Configuration: [`SETTINGS.md`
 | Reasoning strip | `ReasoningContentStripper` before chat/compression upstream calls |
 | Auth | `ApiKeyAuthMiddleware` (Infrastructure.Hosting) — optional single `Auth:RequiredApiKey` on `/v1/*` and control-api `/mcp`; `/health` exempt |
 | Tracing | `IPayloadTraceLogger`, optional `IRequestTraceFileSession` under `logs/requests/` |
-| Compression prompts | `apps/proxy/Prompts/compression-fixed.md`, `compression-smart.md` |
+| Compression prompts | `apps/proxy/Prompts/compression-fixed.md`, `compression-smart.md`, `compression-inline.md` (Inline wrap-up), shared `working-memory-template.md` |
 | Tool schema prompts | `apps/proxy/Prompts/tool-schema.md` |
 | Telemetry MCP | control-api `Mcp/` tools + resources over `IConversationMetricsQueryService` and `IConversationRetrievalQueryService`; options under `McpTelemetry` |
 

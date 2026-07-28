@@ -42,8 +42,9 @@ public sealed class RequestTraceFileSession : IRequestTraceFileSession
             headerTitle: "Comprexy request trace",
             extraHeaders: null);
 
-    public IDisposable BeginCompression(Guid conversationId, string mode) =>
-        BeginInternal(
+    public IDisposable BeginCompression(Guid conversationId, string mode)
+    {
+        var session = BeginInternal(
             kind: "compression",
             correlationId: $"{conversationId:N}"[..12],
             headerTitle: "Comprexy compression trace",
@@ -52,6 +53,14 @@ public sealed class RequestTraceFileSession : IRequestTraceFileSession
                 $"# ConversationId: {conversationId:D}",
                 $"# Mode: {mode}"
             ]);
+
+        if (Current.Value is { } state)
+        {
+            state.ConversationId = conversationId;
+        }
+
+        return session;
+    }
 
     public void Append(string text)
     {
@@ -73,6 +82,75 @@ public sealed class RequestTraceFileSession : IRequestTraceFileSession
             state.Writer.WriteLine();
         }
     }
+
+    public void SetConversationId(Guid conversationId)
+    {
+        var state = Current.Value;
+        if (state is null)
+        {
+            return;
+        }
+
+        lock (state.Gate)
+        {
+            if (state.Disposed || state.ConversationId is not null)
+            {
+                return;
+            }
+
+            state.ConversationId = conversationId;
+            try
+            {
+                InsertConversationIdHeader(state, conversationId);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(
+                    ex,
+                    "Failed to write ConversationId {ConversationId} into request trace header at {Path}.",
+                    conversationId,
+                    state.Path);
+            }
+        }
+    }
+
+    private static void InsertConversationIdHeader(SessionState state, Guid conversationId)
+    {
+        state.Writer.Flush();
+        state.Writer.Dispose();
+
+        var existing = File.ReadAllText(state.Path);
+        var headerLine = $"# ConversationId: {conversationId:D}";
+        if (existing.Contains("# ConversationId:", StringComparison.Ordinal))
+        {
+            state.ReplaceWriter(OpenAppendWriter(state.Path));
+            return;
+        }
+
+        const string correlationPrefix = "# CorrelationId:";
+        var correlationIndex = existing.IndexOf(correlationPrefix, StringComparison.Ordinal);
+        string updated;
+        if (correlationIndex >= 0)
+        {
+            var lineEnd = existing.IndexOf('\n', correlationIndex);
+            updated = lineEnd < 0
+                ? existing + Environment.NewLine + headerLine + Environment.NewLine
+                : existing.Insert(lineEnd + 1, headerLine + "\n");
+        }
+        else
+        {
+            updated = headerLine + "\n" + existing;
+        }
+
+        File.WriteAllText(state.Path, updated);
+        state.ReplaceWriter(OpenAppendWriter(state.Path));
+    }
+
+    private static StreamWriter OpenAppendWriter(string path) =>
+        new(new FileStream(path, FileMode.Append, FileAccess.Write, FileShare.Read), Encoding.UTF8)
+        {
+            AutoFlush = true
+        };
 
     private IDisposable BeginInternal(
         string kind,
@@ -165,10 +243,13 @@ public sealed class RequestTraceFileSession : IRequestTraceFileSession
             Path = path;
         }
 
-        public StreamWriter Writer { get; }
+        public StreamWriter Writer { get; private set; }
         public string Path { get; }
+        public Guid? ConversationId { get; set; }
         public object Gate { get; } = new();
         public bool Disposed { get; private set; }
+
+        public void ReplaceWriter(StreamWriter writer) => Writer = writer;
 
         public void Dispose()
         {

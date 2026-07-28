@@ -5,6 +5,7 @@ using Comprexy.Application.Models;
 using Comprexy.Application.Services;
 using Comprexy.Domain.Entities;
 using Comprexy.Domain.Enums;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Moq;
@@ -16,6 +17,7 @@ public class ProxyChatCompletionServiceTests
     private readonly Mock<IConversationRepository> _conversationRepository = new();
     private readonly Mock<IConversationMessageRepository> _messageRepository = new();
     private readonly Mock<IWorkingMemoryRepository> _workingMemoryRepository = new();
+    private readonly Mock<ICompressionEventRepository> _compressionEventRepository = new();
     private readonly Mock<ITokenEstimator> _tokenEstimator = new();
     private readonly Mock<IChatCompletionClient> _chatCompletionClient = new();
     private readonly Mock<ICompressionQueue> _compressionQueue = new();
@@ -28,16 +30,45 @@ public class ProxyChatCompletionServiceTests
     private readonly ContextPolicyOptions _policy = new()
     {
         SoftLimitTokens = 100,
-        HardLimitTokens = 200
+        HardLimitTokens = 200,
+        RetainSelection = RetainSelectionMode.Fixed
     };
 
     private ProxyOptions _proxyOptions = new();
+
+    private readonly CompressionOptions _compressionOptions = new();
+
+    private readonly Mock<IHostApplicationLifetime> _hostLifetime = new();
 
     private ToolSchemaOptions _toolSchemaOptions = new() { Mode = ToolSchemaMode.Off };
 
     private int _estimatedTokensToReturn = 10;
 
-    private ProxyChatCompletionService CreateService()
+    private int _wrapUpTipTokens = 5;
+
+    private string? _providerModel = "target-model";
+
+    private static readonly CompressionPromptFactory PromptFactory = new(
+        "fixed instruction",
+        "smart instruction",
+        "inline instruction",
+        """
+        # Working Memory
+
+        ## Current Goal
+        ...
+        """);
+
+    private static string ValidWorkingMemory => "# Working Memory\n## Current Goal\nInline summary";
+
+    private static bool IsWrapUpRequest(UpstreamRequest request) =>
+        request.Messages.Count > 0
+        && request.Messages[^1].Role == MessageRole.User
+        && request.Messages[^1].Content == PromptFactory.BuildInlineWrapUpUserMessage().Content;
+
+    private ProxyChatCompletionService CreateService(
+        IConversationRequestGate? requestGate = null,
+        IConversationMetricsRecorder? metricsRecorder = null)
     {
         _clock.Setup(c => c.UtcNow).Returns(DateTimeOffset.UtcNow);
         _tokenEstimator.Setup(t => t.CountTokens(It.IsAny<string>())).Returns(5);
@@ -51,10 +82,15 @@ public class ProxyChatCompletionServiceTests
         _toolDefinitionRepository
             .Setup(r => r.GetByConversationIdAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync([]);
+        _compressionEventRepository
+            .Setup(r => r.GetLatestSucceededAsync(It.IsAny<Guid>(), CompressionMode.Inline, It.IsAny<CancellationToken>()))
+            .ReturnsAsync((CompressionEvent?)null);
+        _hostLifetime.Setup(h => h.ApplicationStopping).Returns(CancellationToken.None);
+        SetupWrapUpTipTokenEstimate(_wrapUpTipTokens);
 
         return new ProxyChatCompletionService(
             new ConversationIdentityResolver(),
-            new ConversationRequestGate(),
+            requestGate ?? new ConversationRequestGate(),
             _conversationRepository.Object,
             _messageRepository.Object,
             _workingMemoryRepository.Object,
@@ -63,11 +99,13 @@ public class ProxyChatCompletionServiceTests
             new ContextBudgetEvaluator(Options.Create(_policy)),
             new RecentContextSelector(Options.Create(_policy)),
             new ProviderEndpointResolver(
-                Options.Create(new ProviderOptions { BaseUrl = "http://upstream", ApiKey = "k", Model = "target-model" }),
-                Options.Create(new CompressionOptions())),
+                Options.Create(new ProviderOptions { BaseUrl = "http://upstream", ApiKey = "k", Model = _providerModel }),
+                Options.Create(_compressionOptions)),
             _chatCompletionClient.Object,
             _compressionQueue.Object,
             _compressionOrchestrator.Object,
+            _compressionEventRepository.Object,
+            PromptFactory,
             new ToolSchemaOrchestrator(
                 Options.Create(_toolSchemaOptions),
                 new ToolCatalogParser(),
@@ -79,16 +117,27 @@ public class ProxyChatCompletionServiceTests
                 _tokenEstimator.Object,
                 _clock.Object,
                 NullLogger<ToolSchemaOrchestrator>.Instance),
-            Mock.Of<IConversationMetricsRecorder>(m => m.IsEnabled == false),
+            metricsRecorder ?? Mock.Of<IConversationMetricsRecorder>(m => m.IsEnabled == false),
             _unitOfWork.Object,
             _clock.Object,
             Options.Create(_policy),
             Options.Create(_proxyOptions),
+            _hostLifetime.Object,
             Mock.Of<IPayloadTraceLogger>(),
+            Mock.Of<IRequestTraceFileSession>(),
             NullLogger<ProxyChatCompletionService>.Instance);
     }
 
-    private static IncomingChatRequest BuildRequest(
+    private void SetupWrapUpTipTokenEstimate(int tokens = 5)
+    {
+        _tokenEstimator.Setup(t => t.CountTokens(It.Is<IEnumerable<ChatMessage>>(messages =>
+                messages.Count() == 1 &&
+                messages.First().Role == MessageRole.User &&
+                messages.First().Content == PromptFactory.BuildInlineWrapUpUserMessage().Content)))
+            .Returns(tokens);
+    }
+
+    private IncomingChatRequest BuildRequest(
         string conversationHeader = "conv-1",
         string userContent = "Hello",
         bool stream = false)
@@ -112,6 +161,107 @@ public class ProxyChatCompletionServiceTests
         using var document = JsonDocument.Parse(JsonSerializer.Serialize(payload));
         return Comprexy.Api.Mapping.ChatCompletionRequestParser.Parse(document.RootElement.Clone(), conversationHeader);
     }
+
+    private const string MidChainContentFrame =
+        """{"choices":[{"index":0,"delta":{"content":"Working on it"}}]}""";
+
+    private const string MidChainToolCallFrame =
+        """{"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_new","type":"function","function":{"name":"lookup","arguments":""}}]}}]}""";
+
+    private const string MidChainToolArgumentsFrame =
+        """{"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"{\"q\":\"x\"}"}}]}}]}""";
+
+    private const string MidChainFinishFrame =
+        """{"choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}],"usage":{"prompt_tokens":40,"completion_tokens":12}}""";
+
+    private const string MidChainOpenAssistantWire =
+        """{"role":"assistant","content":null,"tool_calls":[{"id":"call_new","type":"function","function":{"name":"lookup","arguments":"{\"q\":\"x\"}"}}]}""";
+
+    private sealed record MidChainInlineFixture(
+        Conversation Conversation,
+        ConversationMessage OlderUser,
+        ConversationMessage PriorAssistant,
+        ConversationMessage PriorTool);
+
+    /// <summary>
+    /// Inline-eligible conversation whose stored history is a closed tool chain: soft pressure,
+    /// existing working memory v1, no cooldown. Retain window keeps the prior tool group, so the
+    /// fold set is the older user message alone.
+    /// </summary>
+    private MidChainInlineFixture SetupMidChainInlineConversation(string conversationHeader)
+    {
+        _policy.RetainSelection = RetainSelectionMode.Inline;
+        _policy.CompressionRetainMessageCount = 1;
+        _estimatedTokensToReturn = 150;
+
+        var now = DateTimeOffset.UtcNow;
+        var conversationKey = "header:" + conversationHeader;
+        var conversation = Conversation.Create(conversationKey, now);
+        conversation.CaptureSystemPromptIfAbsent("You are helpful.");
+        conversation.SetSyncedMessageCount(1, now);
+
+        const string priorAssistantWire =
+            """{"role":"assistant","tool_calls":[{"id":"call_prior","type":"function","function":{"name":"lookup","arguments":"{}"}}]}""";
+        const string priorToolWire =
+            """{"role":"tool","tool_call_id":"call_prior","content":"prior result"}""";
+        var olderUser = ConversationMessage.Create(conversation.Id, 0, MessageRole.User, "older", 5, now);
+        var priorAssistant = ConversationMessage.Create(
+            conversation.Id, 1, MessageRole.Assistant, string.Empty, 8, now, priorAssistantWire);
+        var priorTool = ConversationMessage.Create(
+            conversation.Id, 2, MessageRole.Tool, "prior result", 4, now, priorToolWire);
+        var stored = new List<ConversationMessage> { olderUser, priorAssistant, priorTool };
+        var existingWorkingMemory = WorkingMemory.Create(
+            conversation.Id,
+            1,
+            "# Working Memory\n## Current Goal\nExisting",
+            8,
+            now);
+
+        _conversationRepository.Setup(r => r.FindByKeyAsync(conversationKey, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(conversation);
+        _messageRepository.Setup(r => r.GetByConversationIdAsync(conversation.Id, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(stored);
+        _workingMemoryRepository.Setup(r => r.GetLatestAsync(conversation.Id, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(existingWorkingMemory);
+
+        return new MidChainInlineFixture(conversation, olderUser, priorAssistant, priorTool);
+    }
+
+    private void SetupMidChainStream(Action? onStreamStarted = null)
+    {
+        _chatCompletionClient
+            .Setup(c => c.StreamAsync(
+                It.IsAny<ProviderEndpoint>(),
+                It.IsAny<UpstreamRequest>(),
+                It.IsAny<Func<string, CancellationToken, Task>>(),
+                It.IsAny<CancellationToken>()))
+            .Returns(
+                async (
+                    ProviderEndpoint _,
+                    UpstreamRequest _,
+                    Func<string, CancellationToken, Task> onRawSseData,
+                    CancellationToken token) =>
+                {
+                    onStreamStarted?.Invoke();
+                    await onRawSseData(MidChainContentFrame, token);
+                    await onRawSseData(MidChainToolCallFrame, token);
+                    await onRawSseData(MidChainToolArgumentsFrame, token);
+                    await onRawSseData(MidChainFinishFrame, token);
+                    await onRawSseData("[DONE]", token);
+                    return new UpstreamChatResult(
+                        Content: string.Empty,
+                        FinishReason: "tool_calls",
+                        PromptTokens: 40,
+                        CompletionTokens: 12,
+                        AssistantMessageJson: MidChainOpenAssistantWire);
+                });
+    }
+
+    private static List<string> WrittenSse(IEnumerable<string> ledger) =>
+        ledger
+            .Where(entry => entry.StartsWith("sse:", StringComparison.Ordinal))
+            .Select(entry => entry["sse:".Length..])
+            .ToList();
 
     [Fact]
     public async Task HandleAsync_NewConversation_PersistsMessagesAndForwardsToUpstream()
@@ -138,6 +288,36 @@ public class ProxyChatCompletionServiceTests
         _compressionQueue.Verify(q => q.Enqueue(It.IsAny<CompressionJob>()), Times.Never);
         _compressionOrchestrator.Verify(
             o => o.RunAsync(It.IsAny<Guid>(), It.IsAny<CompressionMode>(), It.IsAny<CancellationToken>(), It.IsAny<string?>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task HandleAsync_InlineMode_UnderSoft_DoesNotInjectProtocolOrWrapUp()
+    {
+        _policy.RetainSelection = RetainSelectionMode.Inline;
+        _estimatedTokensToReturn = 10;
+        var captured = new List<UpstreamRequest>();
+
+        _conversationRepository.Setup(r => r.FindByKeyAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((Conversation?)null);
+        _workingMemoryRepository.Setup(r => r.GetLatestAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((WorkingMemory?)null);
+        _chatCompletionClient
+            .Setup(c => c.CompleteAsync(It.IsAny<ProviderEndpoint>(), It.IsAny<UpstreamRequest>(), It.IsAny<CancellationToken>()))
+            .Callback<ProviderEndpoint, UpstreamRequest, CancellationToken>((_, request, _) => captured.Add(request))
+            .ReturnsAsync(new UpstreamChatResult("Hi there!", "stop", 42, 7));
+
+        var service = CreateService();
+        await service.HandleAsync(BuildRequest(conversationHeader: "inline-soft"), CancellationToken.None);
+
+        Assert.Single(captured);
+        Assert.DoesNotContain(
+            captured[0].Messages,
+            m => m.Role == MessageRole.User &&
+                 m.Content == PromptFactory.BuildInlineWrapUpUserMessage().Content);
+        Assert.DoesNotContain(
+            captured[0].Messages,
+            m => m.Content != null && m.Content.Contains("Comprexy Inline", StringComparison.Ordinal));
+        _compressionQueue.Verify(q => q.Enqueue(It.IsAny<CompressionJob>()), Times.Never);
     }
 
     [Fact]
@@ -431,16 +611,16 @@ public class ProxyChatCompletionServiceTests
         await service.HandleAsync(request, CancellationToken.None);
 
         Assert.NotNull(forwarded);
-        Assert.True(forwarded!.ReplaceMessages);
+        Assert.False(forwarded!.ReplaceMessages);
         Assert.Equal(UpstreamRequestPurpose.Chat, forwarded.Purpose);
         Assert.True(forwarded.OriginalClientRequest.HasValue);
         Assert.True(forwarded.OriginalClientRequest!.Value.TryGetProperty("tools", out _));
 
-        // Client history is preserved, with conversation id injected after leading system messages.
-        Assert.Equal(request.Messages.Count + 1, forwarded.Messages.Count);
+        // Client history is preserved without ConversationId injection.
+        Assert.Equal(request.Messages.Count, forwarded.Messages.Count);
         Assert.Equal(request.Messages[0].Content, forwarded.Messages[0].Content);
-        Assert.StartsWith(ContextBuilder.ConversationIdPrefix, forwarded.Messages[1].Content);
-        Assert.Equal(request.Messages[1].Content, forwarded.Messages[2].Content);
+        Assert.Equal(request.Messages[1].Content, forwarded.Messages[1].Content);
+        Assert.DoesNotContain(forwarded.Messages, m => m.Content.Contains("ConversationId:", StringComparison.Ordinal));
     }
 
     [Fact]
@@ -949,8 +1129,10 @@ public class ProxyChatCompletionServiceTests
             {
                 if (rewritten is JsonElement element &&
                     element.TryGetProperty("tools", out var tools) &&
-                    tools.GetArrayLength() == 1 &&
-                    tools[0].GetProperty("function").GetProperty("name").GetString() == ToolSchemaConstants.MetaToolName)
+                    tools.GetArrayLength() == 2 &&
+                    tools[0].GetProperty("function").GetProperty("name").GetString() == ToolSchemaConstants.MetaToolName &&
+                    tools[1].GetProperty("function").GetProperty("name").GetString() ==
+                    ToolSchemaConstants.ConversationIdMetaToolName)
                 {
                     rewrittenForEstimate = element;
                 }
@@ -965,10 +1147,13 @@ public class ProxyChatCompletionServiceTests
             forwarded.Messages,
             m => m.Role == MessageRole.System && m.Content.Contains("tool schema rules", StringComparison.Ordinal));
         Assert.True(forwarded.RewrittenClientRequest!.Value.TryGetProperty("tools", out var rewrittenTools));
-        Assert.Equal(1, rewrittenTools.GetArrayLength());
+        Assert.Equal(2, rewrittenTools.GetArrayLength());
         Assert.Equal(
             ToolSchemaConstants.MetaToolName,
             rewrittenTools[0].GetProperty("function").GetProperty("name").GetString());
+        Assert.Equal(
+            ToolSchemaConstants.ConversationIdMetaToolName,
+            rewrittenTools[1].GetProperty("function").GetProperty("name").GetString());
         Assert.True(forwarded.OriginalClientRequest!.Value.TryGetProperty("tools", out var originalTools));
         Assert.Equal(1, originalTools.GetArrayLength());
         Assert.Equal("lookup", originalTools[0].GetProperty("function").GetProperty("name").GetString());
@@ -976,6 +1161,9 @@ public class ProxyChatCompletionServiceTests
         Assert.Equal(
             ToolSchemaConstants.MetaToolName,
             rewrittenForEstimate!.Value.GetProperty("tools")[0].GetProperty("function").GetProperty("name").GetString());
+        Assert.Equal(
+            ToolSchemaConstants.ConversationIdMetaToolName,
+            rewrittenForEstimate.Value.GetProperty("tools")[1].GetProperty("function").GetProperty("name").GetString());
         _toolCatalogRepository.Verify(r => r.Add(It.IsAny<ConversationToolCatalog>()), Times.Once);
         _unitOfWork.Verify(u => u.SaveChangesAsync(It.IsAny<CancellationToken>()), Times.AtLeastOnce);
     }
@@ -1507,4 +1695,1382 @@ public class ProxyChatCompletionServiceTests
         Assert.Equal(1, chunks.Count(c => c == "[DONE]"));
         Assert.Equal(2, streamCall);
     }
+
+    [Fact]
+    public async Task HandleAsync_InlineMode_RunsWrapUp_PersistsVisibleAssistant_AndSkipsQueue()
+    {
+        _policy.RetainSelection = RetainSelectionMode.Inline;
+        _policy.CompressionRetainMessageCount = 1;
+        _estimatedTokensToReturn = 150;
+
+        var conversation = Conversation.Create("header:inline-success", DateTimeOffset.UtcNow);
+        conversation.CaptureSystemPromptIfAbsent("You are helpful.");
+        conversation.SetSyncedMessageCount(2, DateTimeOffset.UtcNow);
+        var stored = new List<ConversationMessage>
+        {
+            ConversationMessage.Create(conversation.Id, 0, MessageRole.User, "older", 5, DateTimeOffset.UtcNow)
+        };
+        var workingMemory = WorkingMemory.Create(
+            conversation.Id,
+            1,
+            "# Working Memory\n## Current Goal\nEarlier",
+            8,
+            DateTimeOffset.UtcNow);
+
+        _conversationRepository.Setup(r => r.FindByKeyAsync("header:inline-success", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(conversation);
+        _messageRepository.Setup(r => r.GetByConversationIdAsync(conversation.Id, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(stored);
+        _workingMemoryRepository.Setup(r => r.GetLatestAsync(conversation.Id, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(workingMemory);
+
+        var addedMessages = new List<ConversationMessage>();
+        WorkingMemory? addedWorkingMemory = null;
+        CompressionEvent? addedEvent = null;
+        _messageRepository.Setup(r => r.Add(It.IsAny<ConversationMessage>()))
+            .Callback<ConversationMessage>(message => addedMessages.Add(message));
+        _workingMemoryRepository.Setup(r => r.Add(It.IsAny<WorkingMemory>()))
+            .Callback<WorkingMemory>(wm => addedWorkingMemory = wm);
+        _compressionEventRepository.Setup(r => r.Add(It.IsAny<CompressionEvent>()))
+            .Callback<CompressionEvent>(evt => addedEvent = evt);
+
+        var captured = new List<(ProviderEndpoint Endpoint, UpstreamRequest Request)>();
+        _chatCompletionClient
+            .Setup(c => c.CompleteAsync(It.IsAny<ProviderEndpoint>(), It.IsAny<UpstreamRequest>(), It.IsAny<CancellationToken>()))
+            .Returns<ProviderEndpoint, UpstreamRequest, CancellationToken>((endpoint, request, _) =>
+            {
+                captured.Add((endpoint, request));
+                if (IsWrapUpRequest(request))
+                {
+                    return Task.FromResult(new UpstreamChatResult(ValidWorkingMemory, "stop", 30, 8));
+                }
+
+                return Task.FromResult(new UpstreamChatResult(
+                    "Visible answer",
+                    "stop",
+                    40,
+                    12,
+                    AssistantMessageJson: JsonSerializer.Serialize(new
+                    {
+                        role = "assistant",
+                        content = "Visible answer",
+                        reasoning_content = "hidden thoughts"
+                    })));
+            });
+        var metrics = new Mock<IConversationMetricsRecorder>();
+        metrics.SetupGet(m => m.IsEnabled).Returns(true);
+        metrics.Setup(m => m.RecordSuccessfulTurnAsync(It.IsAny<SuccessfulTurnMetricInput>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+        metrics.Setup(m => m.RecordCompressionOverheadAsync(It.IsAny<Guid>(), It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+        var service = CreateService(metricsRecorder: metrics.Object);
+        var result = await service.HandleAsync(
+            BuildRequest(conversationHeader: "inline-success", userContent: "new tip"),
+            CancellationToken.None);
+
+        Assert.Equal("Visible answer", result.AssistantContent);
+        Assert.Equal(2, captured.Count);
+        Assert.Equal(UpstreamRequestPurpose.Chat, captured[0].Request.Purpose);
+        Assert.DoesNotContain(
+            captured[0].Request.Messages,
+            m => m.Content == PromptFactory.BuildInlineWrapUpUserMessage().Content);
+        Assert.True(IsWrapUpRequest(captured[1].Request));
+        Assert.False(captured[1].Request.Stream);
+        Assert.Equal(UpstreamRequestPurpose.Compression, captured[1].Request.Purpose);
+        Assert.True(captured[1].Request.OriginalClientRequest.HasValue);
+        Assert.True(captured[0].Request.OriginalClientRequest!.Value.TryGetProperty("tools", out _));
+        Assert.False(captured[1].Request.OriginalClientRequest!.Value.TryGetProperty("tools", out _));
+        Assert.False(captured[1].Request.OriginalClientRequest!.Value.TryGetProperty("tool_choice", out _));
+        if (captured[1].Request.RewrittenClientRequest is { } wrapRewritten)
+        {
+            Assert.False(wrapRewritten.TryGetProperty("tools", out _));
+            Assert.False(wrapRewritten.TryGetProperty("tool_choice", out _));
+        }
+
+        Assert.Equal(captured[0].Request.CallOptions, captured[1].Request.CallOptions);
+        Assert.Equal("target-model", captured[1].Endpoint.Model);
+        Assert.NotNull(captured[1].Request.Messages[^2].RawWireMessage);
+        Assert.True(
+            captured[1].Request.Messages[^2].RawWireMessage!.Value.TryGetProperty("reasoning_content", out _));
+        Assert.Equal(PromptFactory.BuildInlineWrapUpUserMessage().Content, captured[1].Request.Messages[^1].Content);
+        Assert.Contains("# Working Memory", captured[1].Request.Messages[^1].Content);
+        // Stop-turn wrap shape: visible assistant then tip.
+        Assert.Equal("Visible answer", captured[1].Request.Messages[^2].Content);
+        Assert.Equal(MessageRole.Assistant, captured[1].Request.Messages[^2].Role);
+        Assert.Equal(captured[0].Request.Messages.Count + 2, captured[1].Request.Messages.Count);
+
+        Assert.NotNull(addedWorkingMemory);
+        Assert.Equal(2, addedWorkingMemory!.Version);
+        Assert.Contains("Inline summary", addedWorkingMemory.Content);
+        Assert.NotNull(addedEvent);
+        Assert.Equal(CompressionMode.Inline, addedEvent!.Mode);
+        Assert.Equal(CompressionStatus.Succeeded, addedEvent.Status);
+        Assert.Equal(2, addedEvent.WorkingMemoryVersionAfter);
+        Assert.Equal(30, addedEvent.PromptTokens);
+        Assert.Equal(8, addedEvent.CompletionTokens);
+        var assistantEntity = Assert.Single(addedMessages, m => m.Role == MessageRole.Assistant);
+        Assert.Equal("Visible answer", assistantEntity.Content);
+        Assert.DoesNotContain(
+            addedMessages,
+            m => m.Content == PromptFactory.BuildInlineWrapUpUserMessage().Content);
+        Assert.DoesNotContain(addedMessages, m => m.Content == ValidWorkingMemory);
+        Assert.True(stored[0].IsFolded);
+        Assert.Equal(2, stored[0].FoldedIntoWorkingMemoryVersion);
+        _compressionQueue.Verify(q => q.Enqueue(It.IsAny<CompressionJob>()), Times.Never);
+        _unitOfWork.Verify(u => u.SaveChangesAsync(It.IsAny<CancellationToken>()), Times.Exactly(2));
+        metrics.Verify(
+            m => m.RecordCompressionOverheadAsync(conversation.Id, 38, It.IsAny<CancellationToken>()),
+            Times.Once);
+    }
+
+    [Fact]
+    public async Task HandleAsync_InlineMode_WhenProviderModelUnset_StampsClientModelOnWrapUpEndpoint()
+    {
+        _policy.RetainSelection = RetainSelectionMode.Inline;
+        _policy.CompressionRetainMessageCount = 1;
+        _estimatedTokensToReturn = 150;
+        _providerModel = null;
+
+        var conversation = Conversation.Create("header:inline-client-model", DateTimeOffset.UtcNow);
+        conversation.CaptureSystemPromptIfAbsent("You are helpful.");
+        conversation.SetSyncedMessageCount(2, DateTimeOffset.UtcNow);
+        var stored = new List<ConversationMessage>
+        {
+            ConversationMessage.Create(conversation.Id, 0, MessageRole.User, "older", 5, DateTimeOffset.UtcNow)
+        };
+        var workingMemory = WorkingMemory.Create(
+            conversation.Id,
+            1,
+            "# Working Memory\n## Current Goal\nEarlier",
+            8,
+            DateTimeOffset.UtcNow);
+
+        _conversationRepository.Setup(r => r.FindByKeyAsync("header:inline-client-model", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(conversation);
+        _messageRepository.Setup(r => r.GetByConversationIdAsync(conversation.Id, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(stored);
+        _workingMemoryRepository.Setup(r => r.GetLatestAsync(conversation.Id, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(workingMemory);
+
+        ProviderEndpoint? wrapEndpoint = null;
+        _chatCompletionClient
+            .Setup(c => c.CompleteAsync(It.IsAny<ProviderEndpoint>(), It.IsAny<UpstreamRequest>(), It.IsAny<CancellationToken>()))
+            .Returns<ProviderEndpoint, UpstreamRequest, CancellationToken>((endpoint, request, _) =>
+            {
+                if (IsWrapUpRequest(request))
+                {
+                    wrapEndpoint = endpoint;
+                    return Task.FromResult(new UpstreamChatResult(ValidWorkingMemory, "stop", 30, 8));
+                }
+
+                return Task.FromResult(new UpstreamChatResult("Visible answer", "stop", 40, 12));
+            });
+
+        var service = CreateService();
+        await service.HandleAsync(
+            BuildRequest(conversationHeader: "inline-client-model", userContent: "new tip"),
+            CancellationToken.None);
+
+        Assert.NotNull(wrapEndpoint);
+        Assert.Equal("client-model", wrapEndpoint!.Model);
+    }
+
+    [Fact]
+    public async Task HandleAsync_InlineMode_WhenWrapUpWouldExceedHardLimit_SkipsWrapUpAndDoesNotCreateInlineEvent()
+    {
+        _policy.RetainSelection = RetainSelectionMode.Inline;
+        _policy.SoftLimitTokens = 100;
+        _policy.HardLimitTokens = 154;
+        _estimatedTokensToReturn = 150;
+        _wrapUpTipTokens = 5;
+
+        var conversation = Conversation.Create("header:inline-headroom", DateTimeOffset.UtcNow);
+        conversation.CaptureSystemPromptIfAbsent("You are helpful.");
+        conversation.SetSyncedMessageCount(1, DateTimeOffset.UtcNow);
+        var existingWorkingMemory = WorkingMemory.Create(
+            conversation.Id,
+            1,
+            "# Working Memory\n## Current Goal\nExisting",
+            8,
+            DateTimeOffset.UtcNow);
+
+        _conversationRepository.Setup(r => r.FindByKeyAsync("header:inline-headroom", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(conversation);
+        _messageRepository.Setup(r => r.GetByConversationIdAsync(conversation.Id, It.IsAny<CancellationToken>()))
+            .ReturnsAsync([]);
+        _workingMemoryRepository.Setup(r => r.GetLatestAsync(conversation.Id, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(existingWorkingMemory);
+        _chatCompletionClient
+            .Setup(c => c.CompleteAsync(It.IsAny<ProviderEndpoint>(), It.IsAny<UpstreamRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new UpstreamChatResult("no wrap-up", "stop", 10, 2));
+
+        var service = CreateService();
+        var result = await service.HandleAsync(
+            BuildRequest(conversationHeader: "inline-headroom", userContent: "new tip"),
+            CancellationToken.None);
+
+        Assert.Equal("no wrap-up", result.AssistantContent);
+        _chatCompletionClient.Verify(
+            c => c.CompleteAsync(
+                It.IsAny<ProviderEndpoint>(),
+                It.Is<UpstreamRequest>(r => IsWrapUpRequest(r)),
+                It.IsAny<CancellationToken>()),
+            Times.Never);
+        _compressionEventRepository.Verify(r => r.Add(It.IsAny<CompressionEvent>()), Times.Never);
+        _compressionQueue.Verify(q => q.Enqueue(It.IsAny<CompressionJob>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task HandleAsync_InlineMode_DuringCooldown_SkipsWrapUpAndDoesNotCreateInlineEvent()
+    {
+        _policy.RetainSelection = RetainSelectionMode.Inline;
+        _policy.MinTurnsBetweenGenerations = 2;
+        _estimatedTokensToReturn = 150;
+
+        var now = DateTimeOffset.UtcNow;
+        var conversation = Conversation.Create("header:inline-cooldown", now);
+        conversation.CaptureSystemPromptIfAbsent("You are helpful.");
+        conversation.SetSyncedMessageCount(2, now);
+        var latestSuccess = CompressionEvent.Start(
+            conversation.Id,
+            CompressionMode.Inline,
+            100,
+            1,
+            1,
+            now.AddMinutes(-10));
+        latestSuccess.Succeed(10, 2, now.AddMinutes(-5), 20, 5);
+        var stored = new List<ConversationMessage>
+        {
+            ConversationMessage.Create(conversation.Id, 0, MessageRole.Assistant, "recent assistant", 5, now.AddMinutes(-1))
+        };
+        var workingMemory = WorkingMemory.Create(
+            conversation.Id,
+            2,
+            "# Working Memory\n## Current Goal\nExisting",
+            8,
+            now.AddMinutes(-5));
+
+        _conversationRepository.Setup(r => r.FindByKeyAsync("header:inline-cooldown", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(conversation);
+        _messageRepository.Setup(r => r.GetByConversationIdAsync(conversation.Id, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(stored);
+        _workingMemoryRepository.Setup(r => r.GetLatestAsync(conversation.Id, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(workingMemory);
+        _chatCompletionClient
+            .Setup(c => c.CompleteAsync(It.IsAny<ProviderEndpoint>(), It.IsAny<UpstreamRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new UpstreamChatResult("normal answer", "stop", 10, 2));
+
+        var service = CreateService();
+        _compressionEventRepository
+            .Setup(r => r.GetLatestSucceededAsync(conversation.Id, CompressionMode.Inline, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(latestSuccess);
+        var result = await service.HandleAsync(
+            BuildRequest(conversationHeader: "inline-cooldown", userContent: "next tip"),
+            CancellationToken.None);
+
+        Assert.Equal("normal answer", result.AssistantContent);
+        _chatCompletionClient.Verify(
+            c => c.CompleteAsync(
+                It.IsAny<ProviderEndpoint>(),
+                It.Is<UpstreamRequest>(r => IsWrapUpRequest(r)),
+                It.IsAny<CancellationToken>()),
+            Times.Never);
+        _compressionEventRepository.Verify(r => r.Add(It.IsAny<CompressionEvent>()), Times.Never);
+        _compressionQueue.Verify(q => q.Enqueue(It.IsAny<CompressionJob>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task HandleAsync_InlineMode_WithOpenStoredToolChain_SkipsWrapUp()
+    {
+        _policy.RetainSelection = RetainSelectionMode.Inline;
+        _estimatedTokensToReturn = 150;
+
+        var conversation = Conversation.Create("header:inline-open-tool", DateTimeOffset.UtcNow);
+        conversation.CaptureSystemPromptIfAbsent("You are helpful.");
+        conversation.SetSyncedMessageCount(2, DateTimeOffset.UtcNow);
+        var stored = new List<ConversationMessage>
+        {
+            ConversationMessage.Create(
+                conversation.Id,
+                0,
+                MessageRole.Assistant,
+                string.Empty,
+                10,
+                DateTimeOffset.UtcNow,
+                """{"role":"assistant","tool_calls":[{"id":"call_1","type":"function","function":{"name":"lookup","arguments":"{}"}}]}""")
+        };
+        var workingMemory = WorkingMemory.Create(
+            conversation.Id,
+            1,
+            "# Working Memory\n## Current Goal\nExisting",
+            8,
+            DateTimeOffset.UtcNow);
+
+        _conversationRepository.Setup(r => r.FindByKeyAsync("header:inline-open-tool", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(conversation);
+        _messageRepository.Setup(r => r.GetByConversationIdAsync(conversation.Id, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(stored);
+        _workingMemoryRepository.Setup(r => r.GetLatestAsync(conversation.Id, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(workingMemory);
+        _chatCompletionClient
+            .Setup(c => c.CompleteAsync(It.IsAny<ProviderEndpoint>(), It.IsAny<UpstreamRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new UpstreamChatResult("normal answer", "stop", 10, 2));
+
+        var service = CreateService();
+        await service.HandleAsync(
+            BuildRequest(conversationHeader: "inline-open-tool", userContent: "next tip"),
+            CancellationToken.None);
+
+        _chatCompletionClient.Verify(
+            c => c.CompleteAsync(
+                It.IsAny<ProviderEndpoint>(),
+                It.Is<UpstreamRequest>(r => IsWrapUpRequest(r)),
+                It.IsAny<CancellationToken>()),
+            Times.Never);
+        _compressionEventRepository.Verify(r => r.Add(It.IsAny<CompressionEvent>()), Times.Never);
+        _compressionQueue.Verify(q => q.Enqueue(It.IsAny<CompressionJob>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task HandleAsync_InlineMode_MidChainPrefix_RunsWrapUp_TipOnly_LeavesOpenAssistantUnfolded()
+    {
+        _policy.RetainSelection = RetainSelectionMode.Inline;
+        _policy.CompressionRetainMessageCount = 1;
+        _estimatedTokensToReturn = 150;
+
+        var now = DateTimeOffset.UtcNow;
+        var conversation = Conversation.Create("header:inline-mid-chain", now);
+        conversation.CaptureSystemPromptIfAbsent("You are helpful.");
+        conversation.SetSyncedMessageCount(2, now);
+        const string priorAssistantWire =
+            """{"role":"assistant","tool_calls":[{"id":"call_prior","type":"function","function":{"name":"lookup","arguments":"{}"}}]}""";
+        const string priorToolWire =
+            """{"role":"tool","tool_call_id":"call_prior","content":"prior result"}""";
+        var olderUser = ConversationMessage.Create(conversation.Id, 0, MessageRole.User, "older context", 5, now);
+        var priorAssistant = ConversationMessage.Create(
+            conversation.Id, 1, MessageRole.Assistant, string.Empty, 8, now, priorAssistantWire);
+        var priorTool = ConversationMessage.Create(
+            conversation.Id, 2, MessageRole.Tool, "prior result", 4, now, priorToolWire);
+        var stored = new List<ConversationMessage> { olderUser, priorAssistant, priorTool };
+        var workingMemory = WorkingMemory.Create(
+            conversation.Id,
+            1,
+            "# Working Memory\n## Current Goal\nEarlier",
+            8,
+            now);
+
+        _conversationRepository.Setup(r => r.FindByKeyAsync("header:inline-mid-chain", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(conversation);
+        _messageRepository.Setup(r => r.GetByConversationIdAsync(conversation.Id, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(stored);
+        _workingMemoryRepository.Setup(r => r.GetLatestAsync(conversation.Id, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(workingMemory);
+
+        var addedMessages = new List<ConversationMessage>();
+        WorkingMemory? addedWorkingMemory = null;
+        CompressionEvent? addedEvent = null;
+        _messageRepository.Setup(r => r.Add(It.IsAny<ConversationMessage>()))
+            .Callback<ConversationMessage>(message => addedMessages.Add(message));
+        _workingMemoryRepository.Setup(r => r.Add(It.IsAny<WorkingMemory>()))
+            .Callback<WorkingMemory>(wm => addedWorkingMemory = wm);
+        _compressionEventRepository.Setup(r => r.Add(It.IsAny<CompressionEvent>()))
+            .Callback<CompressionEvent>(evt => addedEvent = evt);
+
+        const string openAssistantWire =
+            """{"role":"assistant","content":null,"tool_calls":[{"id":"call_new","type":"function","function":{"name":"lookup","arguments":"{\"q\":\"x\"}"}}]}""";
+        var captured = new List<UpstreamRequest>();
+        _chatCompletionClient
+            .Setup(c => c.CompleteAsync(It.IsAny<ProviderEndpoint>(), It.IsAny<UpstreamRequest>(), It.IsAny<CancellationToken>()))
+            .Returns<ProviderEndpoint, UpstreamRequest, CancellationToken>((_, request, _) =>
+            {
+                captured.Add(request);
+                if (IsWrapUpRequest(request))
+                {
+                    return Task.FromResult(new UpstreamChatResult(ValidWorkingMemory, "stop", 30, 8));
+                }
+
+                return Task.FromResult(new UpstreamChatResult(
+                    Content: string.Empty,
+                    FinishReason: "tool_calls",
+                    PromptTokens: 40,
+                    CompletionTokens: 12,
+                    AssistantMessageJson: openAssistantWire));
+            });
+
+        var service = CreateService();
+        var result = await service.HandleAsync(
+            BuildRequest(conversationHeader: "inline-mid-chain", userContent: "next hop"),
+            CancellationToken.None);
+
+        Assert.Equal("tool_calls", result.FinishReason);
+        Assert.Equal(2, captured.Count);
+        Assert.True(IsWrapUpRequest(captured[1]));
+        Assert.True(captured[0].OriginalClientRequest!.Value.TryGetProperty("tools", out _));
+        Assert.False(captured[1].OriginalClientRequest!.Value.TryGetProperty("tools", out _));
+        Assert.Equal(captured[0].Messages.Count + 1, captured[1].Messages.Count);
+        Assert.Equal(PromptFactory.BuildInlineWrapUpUserMessage().Content, captured[1].Messages[^1].Content);
+        var penultimate = captured[1].Messages[^2];
+        Assert.False(
+            penultimate.Role == MessageRole.Assistant
+            && penultimate.RawWireMessage is { } wire
+            && wire.TryGetProperty("tool_calls", out var toolCalls)
+            && toolCalls.ValueKind == JsonValueKind.Array
+            && toolCalls.GetArrayLength() > 0);
+
+        var openAssistant = Assert.Single(addedMessages, m => m.Role == MessageRole.Assistant && m.RawWireJson == openAssistantWire);
+        Assert.False(openAssistant.IsFolded);
+        Assert.True(olderUser.IsFolded);
+        Assert.False(priorAssistant.IsFolded);
+        Assert.False(priorTool.IsFolded);
+
+        Assert.NotNull(addedWorkingMemory);
+        Assert.Equal(2, addedWorkingMemory!.Version);
+        Assert.Contains("Inline summary", addedWorkingMemory.Content);
+        Assert.NotNull(addedEvent);
+        Assert.Equal(CompressionMode.Inline, addedEvent!.Mode);
+        Assert.Equal(CompressionStatus.Succeeded, addedEvent.Status);
+        _compressionQueue.Verify(q => q.Enqueue(It.IsAny<CompressionJob>()), Times.Never);
+        _unitOfWork.Verify(u => u.SaveChangesAsync(It.IsAny<CancellationToken>()), Times.Exactly(2));
+    }
+
+    [Fact]
+    public async Task HandleAsync_InlineMode_MidChainPrefix_WhenWrapUpFails_KeepsClientToolCallsAndPriorWm()
+    {
+        _policy.RetainSelection = RetainSelectionMode.Inline;
+        _policy.CompressionRetainMessageCount = 1;
+        _estimatedTokensToReturn = 150;
+
+        var now = DateTimeOffset.UtcNow;
+        var conversation = Conversation.Create("header:inline-mid-fail", now);
+        conversation.CaptureSystemPromptIfAbsent("You are helpful.");
+        conversation.SetSyncedMessageCount(2, now);
+        // Single closed-prefix message so retain window covers the entire fold universe → empty_fold.
+        var olderUser = ConversationMessage.Create(conversation.Id, 0, MessageRole.User, "only tip", 5, now);
+        var stored = new List<ConversationMessage> { olderUser };
+        var workingMemory = WorkingMemory.Create(
+            conversation.Id,
+            1,
+            "# Working Memory\n## Current Goal\nEarlier",
+            8,
+            now);
+
+        _conversationRepository.Setup(r => r.FindByKeyAsync("header:inline-mid-fail", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(conversation);
+        _messageRepository.Setup(r => r.GetByConversationIdAsync(conversation.Id, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(stored);
+        _workingMemoryRepository.Setup(r => r.GetLatestAsync(conversation.Id, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(workingMemory);
+
+        var addedMessages = new List<ConversationMessage>();
+        CompressionEvent? addedEvent = null;
+        _messageRepository.Setup(r => r.Add(It.IsAny<ConversationMessage>()))
+            .Callback<ConversationMessage>(message => addedMessages.Add(message));
+        _compressionEventRepository.Setup(r => r.Add(It.IsAny<CompressionEvent>()))
+            .Callback<CompressionEvent>(evt => addedEvent = evt);
+
+        const string openAssistantWire =
+            """{"role":"assistant","content":null,"tool_calls":[{"id":"call_new","type":"function","function":{"name":"lookup","arguments":"{}"}}]}""";
+        _chatCompletionClient
+            .Setup(c => c.CompleteAsync(It.IsAny<ProviderEndpoint>(), It.IsAny<UpstreamRequest>(), It.IsAny<CancellationToken>()))
+            .Returns<ProviderEndpoint, UpstreamRequest, CancellationToken>((_, request, _) =>
+            {
+                if (IsWrapUpRequest(request))
+                {
+                    return Task.FromResult(new UpstreamChatResult(ValidWorkingMemory, "stop", 30, 8));
+                }
+
+                return Task.FromResult(new UpstreamChatResult(
+                    Content: string.Empty,
+                    FinishReason: "tool_calls",
+                    PromptTokens: 40,
+                    CompletionTokens: 12,
+                    AssistantMessageJson: openAssistantWire));
+            });
+
+        var service = CreateService();
+        var result = await service.HandleAsync(
+            BuildRequest(conversationHeader: "inline-mid-fail", userContent: "next hop"),
+            CancellationToken.None);
+
+        Assert.Equal("tool_calls", result.FinishReason);
+        var openAssistant = Assert.Single(addedMessages, m => m.Role == MessageRole.Assistant && m.RawWireJson == openAssistantWire);
+        Assert.False(openAssistant.IsFolded);
+        Assert.False(olderUser.IsFolded);
+        Assert.NotNull(addedEvent);
+        Assert.Equal(CompressionStatus.Failed, addedEvent!.Status);
+        Assert.Equal("empty_fold", addedEvent.ErrorMessage);
+        _workingMemoryRepository.Verify(r => r.Add(It.IsAny<WorkingMemory>()), Times.Never);
+        _unitOfWork.Verify(u => u.SaveChangesAsync(It.IsAny<CancellationToken>()), Times.Exactly(2));
+        _compressionQueue.Verify(q => q.Enqueue(It.IsAny<CompressionJob>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task HandleAsync_InlineMode_MidChainPrefix_DuringCooldown_SkipsWrapUp()
+    {
+        _policy.RetainSelection = RetainSelectionMode.Inline;
+        _policy.MinTurnsBetweenGenerations = 2;
+        _estimatedTokensToReturn = 150;
+
+        var now = DateTimeOffset.UtcNow;
+        var conversation = Conversation.Create("header:inline-mid-cooldown", now);
+        conversation.CaptureSystemPromptIfAbsent("You are helpful.");
+        conversation.SetSyncedMessageCount(2, now);
+        var latestSuccess = CompressionEvent.Start(
+            conversation.Id,
+            CompressionMode.Inline,
+            100,
+            1,
+            1,
+            now.AddMinutes(-10));
+        latestSuccess.Succeed(10, 2, now.AddMinutes(-5), 20, 5);
+        const string priorAssistantWire =
+            """{"role":"assistant","tool_calls":[{"id":"call_prior","type":"function","function":{"name":"lookup","arguments":"{}"}}]}""";
+        const string priorToolWire =
+            """{"role":"tool","tool_call_id":"call_prior","content":"prior result"}""";
+        var stored = new List<ConversationMessage>
+        {
+            ConversationMessage.Create(
+                conversation.Id, 0, MessageRole.Assistant, string.Empty, 8, now.AddMinutes(-1), priorAssistantWire),
+            ConversationMessage.Create(
+                conversation.Id, 1, MessageRole.Tool, "prior result", 4, now.AddSeconds(-30), priorToolWire)
+        };
+        var workingMemory = WorkingMemory.Create(
+            conversation.Id,
+            2,
+            "# Working Memory\n## Current Goal\nExisting",
+            8,
+            now.AddMinutes(-5));
+
+        _conversationRepository.Setup(r => r.FindByKeyAsync("header:inline-mid-cooldown", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(conversation);
+        _messageRepository.Setup(r => r.GetByConversationIdAsync(conversation.Id, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(stored);
+        _workingMemoryRepository.Setup(r => r.GetLatestAsync(conversation.Id, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(workingMemory);
+        _chatCompletionClient
+            .Setup(c => c.CompleteAsync(It.IsAny<ProviderEndpoint>(), It.IsAny<UpstreamRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new UpstreamChatResult(
+                Content: string.Empty,
+                FinishReason: "tool_calls",
+                PromptTokens: 10,
+                CompletionTokens: 5,
+                AssistantMessageJson:
+                """{"role":"assistant","content":null,"tool_calls":[{"id":"call_new","type":"function","function":{"name":"lookup","arguments":"{}"}}]}"""));
+
+        var service = CreateService();
+        _compressionEventRepository
+            .Setup(r => r.GetLatestSucceededAsync(conversation.Id, CompressionMode.Inline, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(latestSuccess);
+        var result = await service.HandleAsync(
+            BuildRequest(conversationHeader: "inline-mid-cooldown", userContent: "next hop"),
+            CancellationToken.None);
+
+        Assert.Equal("tool_calls", result.FinishReason);
+        _chatCompletionClient.Verify(
+            c => c.CompleteAsync(
+                It.IsAny<ProviderEndpoint>(),
+                It.Is<UpstreamRequest>(r => IsWrapUpRequest(r)),
+                It.IsAny<CancellationToken>()),
+            Times.Never);
+        _compressionEventRepository.Verify(r => r.Add(It.IsAny<CompressionEvent>()), Times.Never);
+        _compressionQueue.Verify(q => q.Enqueue(It.IsAny<CompressionJob>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task HandleAsync_InlineMode_WhenWrapUpFailsSanity_PersistsAssistant_KeepsPriorWm()
+    {
+        _policy.RetainSelection = RetainSelectionMode.Inline;
+        _policy.CompressionRetainMessageCount = 1;
+        _estimatedTokensToReturn = 150;
+
+        var conversation = Conversation.Create("header:inline-sanity", DateTimeOffset.UtcNow);
+        conversation.CaptureSystemPromptIfAbsent("You are helpful.");
+        conversation.SetSyncedMessageCount(2, DateTimeOffset.UtcNow);
+        var stored = new List<ConversationMessage>
+        {
+            ConversationMessage.Create(conversation.Id, 0, MessageRole.User, "older", 5, DateTimeOffset.UtcNow)
+        };
+        var workingMemory = WorkingMemory.Create(
+            conversation.Id,
+            1,
+            "# Working Memory\n## Current Goal\nEarlier",
+            8,
+            DateTimeOffset.UtcNow);
+
+        _conversationRepository.Setup(r => r.FindByKeyAsync("header:inline-sanity", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(conversation);
+        _messageRepository.Setup(r => r.GetByConversationIdAsync(conversation.Id, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(stored);
+        _workingMemoryRepository.Setup(r => r.GetLatestAsync(conversation.Id, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(workingMemory);
+
+        var addedMessages = new List<ConversationMessage>();
+        CompressionEvent? addedEvent = null;
+        _messageRepository.Setup(r => r.Add(It.IsAny<ConversationMessage>()))
+            .Callback<ConversationMessage>(message => addedMessages.Add(message));
+        _compressionEventRepository.Setup(r => r.Add(It.IsAny<CompressionEvent>()))
+            .Callback<CompressionEvent>(evt => addedEvent = evt);
+        _chatCompletionClient
+            .Setup(c => c.CompleteAsync(It.IsAny<ProviderEndpoint>(), It.IsAny<UpstreamRequest>(), It.IsAny<CancellationToken>()))
+            .Returns<ProviderEndpoint, UpstreamRequest, CancellationToken>((_, request, _) =>
+            {
+                if (IsWrapUpRequest(request))
+                {
+                    return Task.FromResult(new UpstreamChatResult("not working memory", "stop", 5, 2));
+                }
+
+                return Task.FromResult(new UpstreamChatResult("Visible answer", "stop", 40, 12));
+            });
+
+        var service = CreateService();
+        var result = await service.HandleAsync(
+            BuildRequest(conversationHeader: "inline-sanity", userContent: "new tip"),
+            CancellationToken.None);
+
+        Assert.Equal("Visible answer", result.AssistantContent);
+        Assert.Equal("Visible answer", Assert.Single(addedMessages, m => m.Role == MessageRole.Assistant).Content);
+        Assert.NotNull(addedEvent);
+        Assert.Equal(CompressionStatus.Failed, addedEvent!.Status);
+        Assert.StartsWith("sanity:", addedEvent.ErrorMessage);
+        Assert.False(stored[0].IsFolded);
+        _workingMemoryRepository.Verify(r => r.Add(It.IsAny<WorkingMemory>()), Times.Never);
+        _unitOfWork.Verify(u => u.SaveChangesAsync(It.IsAny<CancellationToken>()), Times.Exactly(2));
+    }
+
+    [Fact]
+    public async Task HandleAsync_InlineMode_WhenWrapUpReturnsToolCalls_FailsAsToolCalls_KeepsPriorWm()
+    {
+        _policy.RetainSelection = RetainSelectionMode.Inline;
+        _policy.CompressionRetainMessageCount = 1;
+        _estimatedTokensToReturn = 150;
+
+        var conversation = Conversation.Create("header:inline-wrap-tools", DateTimeOffset.UtcNow);
+        conversation.CaptureSystemPromptIfAbsent("You are helpful.");
+        conversation.SetSyncedMessageCount(2, DateTimeOffset.UtcNow);
+        var stored = new List<ConversationMessage>
+        {
+            ConversationMessage.Create(conversation.Id, 0, MessageRole.User, "older", 5, DateTimeOffset.UtcNow)
+        };
+        var workingMemory = WorkingMemory.Create(
+            conversation.Id,
+            1,
+            "# Working Memory\n## Current Goal\nEarlier",
+            8,
+            DateTimeOffset.UtcNow);
+
+        _conversationRepository.Setup(r => r.FindByKeyAsync("header:inline-wrap-tools", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(conversation);
+        _messageRepository.Setup(r => r.GetByConversationIdAsync(conversation.Id, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(stored);
+        _workingMemoryRepository.Setup(r => r.GetLatestAsync(conversation.Id, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(workingMemory);
+
+        CompressionEvent? addedEvent = null;
+        _compressionEventRepository.Setup(r => r.Add(It.IsAny<CompressionEvent>()))
+            .Callback<CompressionEvent>(evt => addedEvent = evt);
+        _chatCompletionClient
+            .Setup(c => c.CompleteAsync(It.IsAny<ProviderEndpoint>(), It.IsAny<UpstreamRequest>(), It.IsAny<CancellationToken>()))
+            .Returns<ProviderEndpoint, UpstreamRequest, CancellationToken>((_, request, _) =>
+            {
+                if (IsWrapUpRequest(request))
+                {
+                    // Model ignored the protocol and kept driving the agent loop.
+                    return Task.FromResult(new UpstreamChatResult(
+                        "Now let me check the test files.",
+                        "tool_calls",
+                        5,
+                        2,
+                        AssistantMessageJson: """
+                        {"role":"assistant","content":"Now let me check the test files.","tool_calls":[{"id":"call_1","type":"function","function":{"name":"Read","arguments":"{}"}}]}
+                        """));
+                }
+
+                return Task.FromResult(new UpstreamChatResult("Visible answer", "stop", 40, 12));
+            });
+
+        var service = CreateService();
+        var result = await service.HandleAsync(
+            BuildRequest(conversationHeader: "inline-wrap-tools", userContent: "new tip"),
+            CancellationToken.None);
+
+        Assert.Equal("Visible answer", result.AssistantContent);
+        Assert.NotNull(addedEvent);
+        Assert.Equal(CompressionStatus.Failed, addedEvent!.Status);
+        Assert.Equal("wrapup_tool_calls", addedEvent.ErrorMessage);
+        Assert.False(stored[0].IsFolded);
+        _workingMemoryRepository.Verify(r => r.Add(It.IsAny<WorkingMemory>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task HandleAsync_InlineMode_WhenOverHardWithoutWorkingMemory_DoesNotRunEmergencySync()
+    {
+        _policy.RetainSelection = RetainSelectionMode.Inline;
+        _policy.EmergencyCompression = EmergencyCompressionMode.Sync;
+        _estimatedTokensToReturn = 250;
+
+        _conversationRepository.Setup(r => r.FindByKeyAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((Conversation?)null);
+        _workingMemoryRepository.Setup(r => r.GetLatestAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((WorkingMemory?)null);
+        _messageRepository.Setup(r => r.GetByConversationIdAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync([]);
+
+        var service = CreateService();
+
+        await Assert.ThrowsAsync<Comprexy.Application.Exceptions.ContextBudgetExceededException>(
+            () => service.HandleAsync(BuildRequest(conversationHeader: "inline-hard"), CancellationToken.None));
+
+        _compressionOrchestrator.Verify(
+            o => o.RunAsync(It.IsAny<Guid>(), CompressionMode.Emergency, It.IsAny<CancellationToken>(), It.IsAny<string?>()),
+            Times.Never);
+        _chatCompletionClient.Verify(
+            c => c.CompleteAsync(It.IsAny<ProviderEndpoint>(), It.IsAny<UpstreamRequest>(), It.IsAny<CancellationToken>()),
+            Times.Never);
+    }
+
+    [Fact]
+    public async Task HandleStreamingAsync_InlineMode_HoldsDoneUntilWrapUpCompletes()
+    {
+        _policy.RetainSelection = RetainSelectionMode.Inline;
+        _estimatedTokensToReturn = 150;
+
+        var conversation = Conversation.Create("header:inline-stream", DateTimeOffset.UtcNow);
+        conversation.CaptureSystemPromptIfAbsent("You are helpful.");
+        conversation.SetSyncedMessageCount(1, DateTimeOffset.UtcNow);
+        var existingWorkingMemory = WorkingMemory.Create(
+            conversation.Id,
+            1,
+            "# Working Memory\n## Current Goal\nExisting",
+            8,
+            DateTimeOffset.UtcNow);
+        var stored = new List<ConversationMessage>
+        {
+            ConversationMessage.Create(conversation.Id, 0, MessageRole.User, "older", 5, DateTimeOffset.UtcNow)
+        };
+
+        _conversationRepository.Setup(r => r.FindByKeyAsync("header:inline-stream", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(conversation);
+        _messageRepository.Setup(r => r.GetByConversationIdAsync(conversation.Id, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(stored);
+        _workingMemoryRepository.Setup(r => r.GetLatestAsync(conversation.Id, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(existingWorkingMemory);
+
+        var wrapUpStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var allowWrapUp = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        _chatCompletionClient
+            .Setup(c => c.StreamAsync(
+                It.IsAny<ProviderEndpoint>(),
+                It.IsAny<UpstreamRequest>(),
+                It.IsAny<Func<string, CancellationToken, Task>>(),
+                It.IsAny<CancellationToken>()))
+            .Returns(
+                async (
+                    ProviderEndpoint _,
+                    UpstreamRequest _,
+                    Func<string, CancellationToken, Task> onRawSseData,
+                    CancellationToken token) =>
+                {
+                    await onRawSseData("""{"choices":[{"delta":{"content":"Visible answer"}}]}""", token);
+                    await onRawSseData("""{"choices":[{"delta":{},"finish_reason":"stop"}]}""", token);
+                    await onRawSseData("[DONE]", token);
+                    return new UpstreamChatResult(
+                        "Visible answer",
+                        "stop",
+                        40,
+                        12,
+                        AssistantMessageJson: """{"role":"assistant","content":"Visible answer"}""");
+                });
+
+        _chatCompletionClient
+            .Setup(c => c.CompleteAsync(It.IsAny<ProviderEndpoint>(), It.IsAny<UpstreamRequest>(), It.IsAny<CancellationToken>()))
+            .Returns(async (ProviderEndpoint _, UpstreamRequest request, CancellationToken _) =>
+            {
+                Assert.True(IsWrapUpRequest(request));
+                wrapUpStarted.TrySetResult();
+                await allowWrapUp.Task;
+                return new UpstreamChatResult(ValidWorkingMemory, "stop", 30, 8);
+            });
+        var chunks = new List<string>();
+        var service = CreateService();
+        var handleTask = service.HandleStreamingAsync(
+            BuildRequest(conversationHeader: "inline-stream", userContent: "next tip", stream: true),
+            _ => { },
+            (chunk, _) =>
+            {
+                chunks.Add(chunk);
+                return Task.CompletedTask;
+            },
+            CancellationToken.None);
+
+        await wrapUpStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.DoesNotContain("[DONE]", chunks);
+        Assert.Contains(chunks, c => c.Contains("Visible answer", StringComparison.Ordinal));
+        Assert.DoesNotContain(chunks, c => c.Contains("Inline summary", StringComparison.Ordinal));
+
+        allowWrapUp.TrySetResult();
+        var result = await handleTask.WaitAsync(TimeSpan.FromSeconds(5));
+
+        Assert.Equal("Visible answer", result.AssistantContent);
+        Assert.Equal("[DONE]", chunks[^1]);
+        _compressionQueue.Verify(q => q.Enqueue(It.IsAny<CompressionJob>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task HandleStreamingAsync_InlineMode_MidChainPrefix_HoldsDoneUntilWrapUpCompletes()
+    {
+        _policy.RetainSelection = RetainSelectionMode.Inline;
+        _policy.CompressionRetainMessageCount = 1;
+        _estimatedTokensToReturn = 150;
+
+        var now = DateTimeOffset.UtcNow;
+        var conversation = Conversation.Create("header:inline-stream-mid", now);
+        conversation.CaptureSystemPromptIfAbsent("You are helpful.");
+        conversation.SetSyncedMessageCount(1, now);
+        const string priorAssistantWire =
+            """{"role":"assistant","tool_calls":[{"id":"call_prior","type":"function","function":{"name":"lookup","arguments":"{}"}}]}""";
+        const string priorToolWire =
+            """{"role":"tool","tool_call_id":"call_prior","content":"prior result"}""";
+        var olderUser = ConversationMessage.Create(conversation.Id, 0, MessageRole.User, "older", 5, now);
+        var priorAssistant = ConversationMessage.Create(
+            conversation.Id, 1, MessageRole.Assistant, string.Empty, 8, now, priorAssistantWire);
+        var priorTool = ConversationMessage.Create(
+            conversation.Id, 2, MessageRole.Tool, "prior result", 4, now, priorToolWire);
+        var stored = new List<ConversationMessage> { olderUser, priorAssistant, priorTool };
+        var existingWorkingMemory = WorkingMemory.Create(
+            conversation.Id,
+            1,
+            "# Working Memory\n## Current Goal\nExisting",
+            8,
+            now);
+
+        _conversationRepository.Setup(r => r.FindByKeyAsync("header:inline-stream-mid", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(conversation);
+        _messageRepository.Setup(r => r.GetByConversationIdAsync(conversation.Id, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(stored);
+        _workingMemoryRepository.Setup(r => r.GetLatestAsync(conversation.Id, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(existingWorkingMemory);
+
+        var wrapUpStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var allowWrapUp = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        const string openAssistantWire =
+            """{"role":"assistant","content":null,"tool_calls":[{"id":"call_new","type":"function","function":{"name":"lookup","arguments":"{}"}}]}""";
+
+        UpstreamRequest? mainRequest = null;
+        _chatCompletionClient
+            .Setup(c => c.StreamAsync(
+                It.IsAny<ProviderEndpoint>(),
+                It.IsAny<UpstreamRequest>(),
+                It.IsAny<Func<string, CancellationToken, Task>>(),
+                It.IsAny<CancellationToken>()))
+            .Returns(
+                async (
+                    ProviderEndpoint _,
+                    UpstreamRequest request,
+                    Func<string, CancellationToken, Task> onRawSseData,
+                    CancellationToken token) =>
+                {
+                    mainRequest = request;
+                    await onRawSseData(
+                        """{"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_new","type":"function","function":{"name":"lookup","arguments":"{}"}}]},"finish_reason":"tool_calls"}]}""",
+                        token);
+                    await onRawSseData("[DONE]", token);
+                    return new UpstreamChatResult(
+                        Content: string.Empty,
+                        FinishReason: "tool_calls",
+                        PromptTokens: 40,
+                        CompletionTokens: 12,
+                        AssistantMessageJson: openAssistantWire);
+                });
+
+        UpstreamRequest? wrapRequest = null;
+        _chatCompletionClient
+            .Setup(c => c.CompleteAsync(It.IsAny<ProviderEndpoint>(), It.IsAny<UpstreamRequest>(), It.IsAny<CancellationToken>()))
+            .Returns(async (ProviderEndpoint _, UpstreamRequest request, CancellationToken _) =>
+            {
+                Assert.True(IsWrapUpRequest(request));
+                wrapRequest = request;
+                wrapUpStarted.TrySetResult();
+                await allowWrapUp.Task;
+                return new UpstreamChatResult(ValidWorkingMemory, "stop", 30, 8);
+            });
+        var chunks = new List<string>();
+        var service = CreateService();
+        var handleTask = service.HandleStreamingAsync(
+            BuildRequest(conversationHeader: "inline-stream-mid", userContent: "next hop", stream: true),
+            _ => { },
+            (chunk, _) =>
+            {
+                chunks.Add(chunk);
+                return Task.CompletedTask;
+            },
+            CancellationToken.None);
+
+        await wrapUpStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.Empty(chunks);
+        Assert.NotNull(mainRequest);
+        Assert.NotNull(wrapRequest);
+        Assert.Equal(mainRequest!.Messages.Count + 1, wrapRequest!.Messages.Count);
+        Assert.Equal(PromptFactory.BuildInlineWrapUpUserMessage().Content, wrapRequest.Messages[^1].Content);
+        var penultimate = wrapRequest.Messages[^2];
+        Assert.False(
+            penultimate.Role == MessageRole.Assistant
+            && penultimate.RawWireMessage is { } wire
+            && wire.TryGetProperty("tool_calls", out var toolCalls)
+            && toolCalls.ValueKind == JsonValueKind.Array
+            && toolCalls.GetArrayLength() > 0);
+
+        allowWrapUp.TrySetResult();
+        var result = await handleTask.WaitAsync(TimeSpan.FromSeconds(5));
+
+        Assert.Equal("tool_calls", result.FinishReason);
+        Assert.Equal(2, chunks.Count);
+        Assert.Contains("tool_calls", chunks[0], StringComparison.Ordinal);
+        Assert.Equal("[DONE]", chunks[^1]);
+        Assert.True(olderUser.IsFolded);
+        Assert.False(priorAssistant.IsFolded);
+        _compressionQueue.Verify(q => q.Enqueue(It.IsAny<CompressionJob>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task HandleAsync_InlineMode_GateHeldThroughWrapUp()
+    {
+        _policy.RetainSelection = RetainSelectionMode.Inline;
+        _estimatedTokensToReturn = 150;
+
+        var conversation = Conversation.Create("header:inline-gate", DateTimeOffset.UtcNow);
+        conversation.CaptureSystemPromptIfAbsent("You are helpful.");
+        conversation.SetSyncedMessageCount(1, DateTimeOffset.UtcNow);
+        var stored = new List<ConversationMessage>
+        {
+            ConversationMessage.Create(conversation.Id, 0, MessageRole.User, "older", 5, DateTimeOffset.UtcNow)
+        };
+        var workingMemory = WorkingMemory.Create(
+            conversation.Id,
+            1,
+            "# Working Memory\n## Current Goal\nExisting",
+            8,
+            DateTimeOffset.UtcNow);
+
+        var prepareCount = 0;
+        var secondPrepareStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        _conversationRepository.Setup(r => r.FindByKeyAsync("header:inline-gate", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(() =>
+            {
+                var n = Interlocked.Increment(ref prepareCount);
+                if (n >= 2)
+                {
+                    secondPrepareStarted.TrySetResult();
+                }
+
+                return conversation;
+            });
+        _messageRepository.Setup(r => r.GetByConversationIdAsync(conversation.Id, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(stored);
+        _workingMemoryRepository.Setup(r => r.GetLatestAsync(conversation.Id, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(workingMemory);
+
+        var wrapUpStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var allowWrapUp = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        _chatCompletionClient
+            .Setup(c => c.CompleteAsync(It.IsAny<ProviderEndpoint>(), It.IsAny<UpstreamRequest>(), It.IsAny<CancellationToken>()))
+            .Returns(async (ProviderEndpoint _, UpstreamRequest request, CancellationToken _) =>
+            {
+                if (IsWrapUpRequest(request))
+                {
+                    wrapUpStarted.TrySetResult();
+                    await allowWrapUp.Task;
+                    return new UpstreamChatResult(ValidWorkingMemory, "stop", 30, 8);
+                }
+
+                return new UpstreamChatResult("Visible answer", "stop", 40, 12);
+            });
+        var gate = new ConversationRequestGate();
+        var service = CreateService(requestGate: gate);
+
+        var first = service.HandleAsync(
+            BuildRequest(conversationHeader: "inline-gate", userContent: "first"),
+            CancellationToken.None);
+
+        await wrapUpStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+        var second = service.HandleAsync(
+            BuildRequest(conversationHeader: "inline-gate", userContent: "second"),
+            CancellationToken.None);
+
+        await Task.Delay(100);
+        Assert.False(secondPrepareStarted.Task.IsCompleted);
+
+        allowWrapUp.TrySetResult();
+        await first.WaitAsync(TimeSpan.FromSeconds(5));
+        await secondPrepareStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await second.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.True(prepareCount >= 2);
+    }
+
+    [Fact]
+    public async Task HandleStreamingAsync_InlineMode_ClientAbortAfterMain_StillRunsWrapUp()
+    {
+        _policy.RetainSelection = RetainSelectionMode.Inline;
+        _estimatedTokensToReturn = 150;
+
+        var conversation = Conversation.Create("header:inline-abort", DateTimeOffset.UtcNow);
+        conversation.CaptureSystemPromptIfAbsent("You are helpful.");
+        conversation.SetSyncedMessageCount(1, DateTimeOffset.UtcNow);
+        var stored = new List<ConversationMessage>
+        {
+            ConversationMessage.Create(conversation.Id, 0, MessageRole.User, "older", 5, DateTimeOffset.UtcNow)
+        };
+        var workingMemory = WorkingMemory.Create(
+            conversation.Id,
+            1,
+            "# Working Memory\n## Current Goal\nExisting",
+            8,
+            DateTimeOffset.UtcNow);
+
+        _conversationRepository.Setup(r => r.FindByKeyAsync("header:inline-abort", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(conversation);
+        _messageRepository.Setup(r => r.GetByConversationIdAsync(conversation.Id, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(stored);
+        _workingMemoryRepository.Setup(r => r.GetLatestAsync(conversation.Id, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(workingMemory);
+
+        WorkingMemory? addedWorkingMemory = null;
+        _workingMemoryRepository.Setup(r => r.Add(It.IsAny<WorkingMemory>()))
+            .Callback<WorkingMemory>(wm => addedWorkingMemory = wm);
+
+        using var requestCts = new CancellationTokenSource();
+        _chatCompletionClient
+            .Setup(c => c.StreamAsync(
+                It.IsAny<ProviderEndpoint>(),
+                It.IsAny<UpstreamRequest>(),
+                It.IsAny<Func<string, CancellationToken, Task>>(),
+                It.IsAny<CancellationToken>()))
+            .Returns(
+                async (
+                    ProviderEndpoint _,
+                    UpstreamRequest _,
+                    Func<string, CancellationToken, Task> onRawSseData,
+                    CancellationToken token) =>
+                {
+                    await onRawSseData("""{"choices":[{"delta":{"content":"Visible answer"}}]}""", token);
+                    await onRawSseData("[DONE]", token);
+                    requestCts.Cancel();
+                    return new UpstreamChatResult("Visible answer", "stop", 40, 12);
+                });
+
+        _chatCompletionClient
+            .Setup(c => c.CompleteAsync(It.IsAny<ProviderEndpoint>(), It.IsAny<UpstreamRequest>(), It.IsAny<CancellationToken>()))
+            .Returns<ProviderEndpoint, UpstreamRequest, CancellationToken>((_, request, ct) =>
+            {
+                Assert.True(IsWrapUpRequest(request));
+                Assert.False(ct.IsCancellationRequested);
+                return Task.FromResult(new UpstreamChatResult(ValidWorkingMemory, "stop", 30, 8));
+            });
+        var service = CreateService();
+        var result = await service.HandleStreamingAsync(
+            BuildRequest(conversationHeader: "inline-abort", userContent: "next tip", stream: true),
+            _ => { },
+            (_, _) => Task.CompletedTask,
+            requestCts.Token);
+
+        Assert.Equal("Visible answer", result.AssistantContent);
+        Assert.NotNull(addedWorkingMemory);
+    }
+
+    [Fact]
+    public async Task HandleStreamingAsync_InlineMode_MidChainPrefix_HoldsToolCallsUntilWrapUpThenFlushesInOrder()
+    {
+        var fixture = SetupMidChainInlineConversation("inline-v3-hold");
+        var ledger = new List<string>();
+        WorkingMemory? addedWorkingMemory = null;
+        var addedMessages = new List<ConversationMessage>();
+        _workingMemoryRepository.Setup(r => r.Add(It.IsAny<WorkingMemory>()))
+            .Callback<WorkingMemory>(wm => addedWorkingMemory = wm);
+        _messageRepository.Setup(r => r.Add(It.IsAny<ConversationMessage>()))
+            .Callback<ConversationMessage>(message => addedMessages.Add(message));
+
+        SetupMidChainStream();
+        _chatCompletionClient
+            .Setup(c => c.CompleteAsync(It.IsAny<ProviderEndpoint>(), It.IsAny<UpstreamRequest>(), It.IsAny<CancellationToken>()))
+            .Returns<ProviderEndpoint, UpstreamRequest, CancellationToken>((_, request, _) =>
+            {
+                Assert.True(IsWrapUpRequest(request));
+                Assert.Empty(WrittenSse(ledger).Where(ToolCallWireHelper.StreamChunkHasToolCalls));
+                Assert.DoesNotContain("[DONE]", WrittenSse(ledger));
+                ledger.Add("wrapup:returned");
+                return Task.FromResult(new UpstreamChatResult(ValidWorkingMemory, "stop", 30, 8));
+            });
+
+        var service = CreateService();
+        var result = await service.HandleStreamingAsync(
+            BuildRequest(conversationHeader: "inline-v3-hold", userContent: "next hop", stream: true),
+            _ => { },
+            (chunk, _) =>
+            {
+                ledger.Add("sse:" + chunk);
+                return Task.CompletedTask;
+            },
+            CancellationToken.None);
+
+        Assert.Equal("tool_calls", result.FinishReason);
+        var wrapUpIndex = ledger.IndexOf("wrapup:returned");
+        Assert.True(wrapUpIndex >= 0);
+        Assert.DoesNotContain(
+            ledger.Take(wrapUpIndex),
+            entry => entry.StartsWith("sse:", StringComparison.Ordinal)
+                && (entry.Contains("tool_calls", StringComparison.Ordinal) || entry == "sse:[DONE]"));
+
+        var written = WrittenSse(ledger);
+        Assert.Equal(MidChainContentFrame, written[0]);
+        Assert.Equal(
+            new[]
+            {
+                MidChainContentFrame,
+                MidChainToolCallFrame,
+                MidChainToolArgumentsFrame,
+                MidChainFinishFrame,
+                "[DONE]"
+            },
+            written);
+
+        Assert.True(wrapUpIndex < ledger.IndexOf("sse:" + MidChainToolCallFrame));
+        Assert.Equal("[DONE]", written[^1]);
+
+        Assert.NotNull(addedWorkingMemory);
+        Assert.Equal(2, addedWorkingMemory!.Version);
+        var openAssistant = Assert.Single(
+            addedMessages,
+            m => m.Role == MessageRole.Assistant && m.RawWireJson == MidChainOpenAssistantWire);
+        Assert.False(openAssistant.IsFolded);
+        Assert.True(fixture.OlderUser.IsFolded);
+        Assert.False(fixture.PriorAssistant.IsFolded);
+        Assert.False(fixture.PriorTool.IsFolded);
+    }
+
+    [Fact]
+    public async Task HandleStreamingAsync_InlineMode_MidChainPrefix_SoftFail_StillFlushesHeldToolCalls()
+    {
+        var fixture = SetupMidChainInlineConversation("inline-v3-softfail");
+        var ledger = new List<string>();
+        CompressionEvent? addedEvent = null;
+        _compressionEventRepository.Setup(r => r.Add(It.IsAny<CompressionEvent>()))
+            .Callback<CompressionEvent>(evt => addedEvent = evt);
+
+        SetupMidChainStream();
+        _chatCompletionClient
+            .Setup(c => c.CompleteAsync(It.IsAny<ProviderEndpoint>(), It.IsAny<UpstreamRequest>(), It.IsAny<CancellationToken>()))
+            .Returns<ProviderEndpoint, UpstreamRequest, CancellationToken>((_, request, _) =>
+            {
+                Assert.True(IsWrapUpRequest(request));
+                Assert.Empty(WrittenSse(ledger).Where(ToolCallWireHelper.StreamChunkHasToolCalls));
+                ledger.Add("wrapup:returned");
+                return Task.FromResult(new UpstreamChatResult(
+                    Content: string.Empty,
+                    FinishReason: "tool_calls",
+                    PromptTokens: 30,
+                    CompletionTokens: 8,
+                    AssistantMessageJson: MidChainOpenAssistantWire));
+            });
+
+        var service = CreateService();
+        var result = await service.HandleStreamingAsync(
+            BuildRequest(conversationHeader: "inline-v3-softfail", userContent: "next hop", stream: true),
+            _ => { },
+            (chunk, _) =>
+            {
+                ledger.Add("sse:" + chunk);
+                return Task.CompletedTask;
+            },
+            CancellationToken.None);
+
+        Assert.Equal("tool_calls", result.FinishReason);
+        var wrapUpIndex = ledger.IndexOf("wrapup:returned");
+        Assert.True(wrapUpIndex >= 0);
+        Assert.True(wrapUpIndex < ledger.IndexOf("sse:" + MidChainToolCallFrame));
+        Assert.Equal(
+            new[]
+            {
+                MidChainContentFrame,
+                MidChainToolCallFrame,
+                MidChainToolArgumentsFrame,
+                MidChainFinishFrame,
+                "[DONE]"
+            },
+            WrittenSse(ledger));
+
+        Assert.NotNull(addedEvent);
+        Assert.Equal(CompressionStatus.Failed, addedEvent!.Status);
+        Assert.Equal("wrapup_tool_calls", addedEvent.ErrorMessage);
+        _workingMemoryRepository.Verify(r => r.Add(It.IsAny<WorkingMemory>()), Times.Never);
+        Assert.False(fixture.OlderUser.IsFolded);
+    }
+
+    [Fact]
+    public async Task HandleStreamingAsync_InlineMode_StopTurn_StreamsContentLive_HoldsOnlyDone()
+    {
+        _policy.RetainSelection = RetainSelectionMode.Inline;
+        _estimatedTokensToReturn = 150;
+
+        var conversation = Conversation.Create("header:inline-v3-stop", DateTimeOffset.UtcNow);
+        conversation.CaptureSystemPromptIfAbsent("You are helpful.");
+        conversation.SetSyncedMessageCount(1, DateTimeOffset.UtcNow);
+        var existingWorkingMemory = WorkingMemory.Create(
+            conversation.Id,
+            1,
+            "# Working Memory\n## Current Goal\nExisting",
+            8,
+            DateTimeOffset.UtcNow);
+        var stored = new List<ConversationMessage>
+        {
+            ConversationMessage.Create(conversation.Id, 0, MessageRole.User, "older", 5, DateTimeOffset.UtcNow)
+        };
+
+        _conversationRepository.Setup(r => r.FindByKeyAsync("header:inline-v3-stop", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(conversation);
+        _messageRepository.Setup(r => r.GetByConversationIdAsync(conversation.Id, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(stored);
+        _workingMemoryRepository.Setup(r => r.GetLatestAsync(conversation.Id, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(existingWorkingMemory);
+
+        const string contentFrame = """{"choices":[{"delta":{"content":"Visible answer"}}]}""";
+        const string finishFrame = """{"choices":[{"delta":{},"finish_reason":"stop"}]}""";
+        var ledger = new List<string>();
+
+        _chatCompletionClient
+            .Setup(c => c.StreamAsync(
+                It.IsAny<ProviderEndpoint>(),
+                It.IsAny<UpstreamRequest>(),
+                It.IsAny<Func<string, CancellationToken, Task>>(),
+                It.IsAny<CancellationToken>()))
+            .Returns(
+                async (
+                    ProviderEndpoint _,
+                    UpstreamRequest _,
+                    Func<string, CancellationToken, Task> onRawSseData,
+                    CancellationToken token) =>
+                {
+                    await onRawSseData(contentFrame, token);
+                    await onRawSseData(finishFrame, token);
+                    await onRawSseData("[DONE]", token);
+                    return new UpstreamChatResult(
+                        "Visible answer",
+                        "stop",
+                        40,
+                        12,
+                        AssistantMessageJson: """{"role":"assistant","content":"Visible answer"}""");
+                });
+
+        _chatCompletionClient
+            .Setup(c => c.CompleteAsync(It.IsAny<ProviderEndpoint>(), It.IsAny<UpstreamRequest>(), It.IsAny<CancellationToken>()))
+            .Returns<ProviderEndpoint, UpstreamRequest, CancellationToken>((_, request, _) =>
+            {
+                Assert.True(IsWrapUpRequest(request));
+                Assert.Contains("sse:" + contentFrame, ledger);
+                Assert.DoesNotContain("sse:[DONE]", ledger);
+                ledger.Add("wrapup:returned");
+                return Task.FromResult(new UpstreamChatResult(ValidWorkingMemory, "stop", 30, 8));
+            });
+
+        var service = CreateService();
+        var result = await service.HandleStreamingAsync(
+            BuildRequest(conversationHeader: "inline-v3-stop", userContent: "next tip", stream: true),
+            _ => { },
+            (chunk, _) =>
+            {
+                ledger.Add("sse:" + chunk);
+                return Task.CompletedTask;
+            },
+            CancellationToken.None);
+
+        Assert.Equal("Visible answer", result.AssistantContent);
+        var wrapUpIndex = ledger.IndexOf("wrapup:returned");
+        Assert.True(wrapUpIndex > ledger.IndexOf("sse:" + contentFrame));
+        Assert.True(wrapUpIndex < ledger.IndexOf("sse:[DONE]"));
+        Assert.Equal(new[] { contentFrame, finishFrame, "[DONE]" }, WrittenSse(ledger));
+    }
+
+    [Fact]
+    public async Task HandleAsync_InlineMode_MidChainPrefix_WaitsForWrapUp_PreservesOriginalToolCallsBody()
+    {
+        var fixture = SetupMidChainInlineConversation("inline-v3-nonstream");
+        const string rawResponse =
+            """{"id":"chatcmpl-mid","choices":[{"message":{"role":"assistant","content":null,"tool_calls":[{"id":"call_new","type":"function","function":{"name":"lookup","arguments":"{\"q\":\"x\"}"}}]},"finish_reason":"tool_calls"}]}""";
+        var ledger = new List<string>();
+        WorkingMemory? addedWorkingMemory = null;
+        _workingMemoryRepository.Setup(r => r.Add(It.IsAny<WorkingMemory>()))
+            .Callback<WorkingMemory>(wm => addedWorkingMemory = wm);
+
+        _chatCompletionClient
+            .Setup(c => c.CompleteAsync(It.IsAny<ProviderEndpoint>(), It.IsAny<UpstreamRequest>(), It.IsAny<CancellationToken>()))
+            .Returns<ProviderEndpoint, UpstreamRequest, CancellationToken>((_, request, _) =>
+            {
+                if (IsWrapUpRequest(request))
+                {
+                    ledger.Add("wrapup:returned");
+                    return Task.FromResult(new UpstreamChatResult(ValidWorkingMemory, "stop", 30, 8));
+                }
+
+                ledger.Add("main:returned");
+                return Task.FromResult(new UpstreamChatResult(
+                    Content: string.Empty,
+                    FinishReason: "tool_calls",
+                    PromptTokens: 40,
+                    CompletionTokens: 12,
+                    RawResponseJson: rawResponse,
+                    AssistantMessageJson: MidChainOpenAssistantWire));
+            });
+
+        var service = CreateService();
+        var result = await service.HandleAsync(
+            BuildRequest(conversationHeader: "inline-v3-nonstream", userContent: "next hop"),
+            CancellationToken.None);
+        ledger.Add("handle:returned");
+
+        Assert.Equal(new[] { "main:returned", "wrapup:returned", "handle:returned" }, ledger);
+        Assert.Equal("tool_calls", result.FinishReason);
+        Assert.Equal(rawResponse, result.RawResponseJson);
+        Assert.Contains("call_new", result.RawResponseJson, StringComparison.Ordinal);
+        Assert.NotNull(addedWorkingMemory);
+        Assert.Equal(2, addedWorkingMemory!.Version);
+        Assert.True(fixture.OlderUser.IsFolded);
+        Assert.False(fixture.PriorAssistant.IsFolded);
+    }
+
+    [Fact]
+    public async Task HandleStreamingAsync_InlineMode_MidChainPrefix_ClientGoneDuringFlush_StillReturns()
+    {
+        SetupMidChainInlineConversation("inline-v3-client-gone");
+        WorkingMemory? addedWorkingMemory = null;
+        _workingMemoryRepository.Setup(r => r.Add(It.IsAny<WorkingMemory>()))
+            .Callback<WorkingMemory>(wm => addedWorkingMemory = wm);
+
+        SetupMidChainStream();
+        _chatCompletionClient
+            .Setup(c => c.CompleteAsync(It.IsAny<ProviderEndpoint>(), It.IsAny<UpstreamRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new UpstreamChatResult(ValidWorkingMemory, "stop", 30, 8));
+
+        var service = CreateService();
+        var result = await service.HandleStreamingAsync(
+            BuildRequest(conversationHeader: "inline-v3-client-gone", userContent: "next hop", stream: true),
+            _ => { },
+            (chunk, _) =>
+            {
+                if (ToolCallWireHelper.StreamChunkHasToolCalls(chunk) || chunk == MidChainFinishFrame || chunk == "[DONE]")
+                {
+                    throw new IOException("client gone");
+                }
+
+                return Task.CompletedTask;
+            },
+            CancellationToken.None);
+
+        Assert.Equal("tool_calls", result.FinishReason);
+        Assert.NotNull(addedWorkingMemory);
+        Assert.Equal(2, addedWorkingMemory!.Version);
+    }
+
+    private static string CreateContentSseChunk(string content) =>
+        "{\"choices\":[{\"delta\":{\"content\":" + JsonSerializer.Serialize(content) + "}}]}";
 }

@@ -44,4 +44,15 @@ public class CompressionOptions
     /// Used when <see cref="ContextPolicyOptions.RetainSelection"/> is Smart.
     /// </summary>
     public string SmartInstructionFile { get; set; } = "Prompts/compression-smart.md";
+
+    /// <summary>
+    /// Path to the Inline follow-up wrap-up user prompt (return-only working memory).
+    /// Relative to API content root. Used when <see cref="ContextPolicyOptions.RetainSelection"/> is Inline.
+    /// </summary>
+    public string InlineInstructionFile { get; set; } = "Prompts/compression-inline.md";
+
+    /// <summary>
+    /// Shared working-memory markdown skeleton appended to Fixed, Smart, and Inline wrap-up prompts.
+    /// </summary>
+    public string WorkingMemoryTemplateFile { get; set; } = "Prompts/working-memory-template.md";
 }

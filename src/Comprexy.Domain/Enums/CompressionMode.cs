@@ -12,5 +12,8 @@ public enum CompressionMode
     HighPriorityBackground,
 
     /// <summary>Runs synchronously before forwarding the request because the hard limit was exceeded.</summary>
-    Emergency
+    Emergency,
+
+    /// <summary>Working memory produced by a proxy-internal follow-up wrap-up on an eligible Inline turn.</summary>
+    Inline
 }

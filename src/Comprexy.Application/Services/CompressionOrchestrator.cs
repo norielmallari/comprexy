@@ -84,6 +84,15 @@ public class CompressionOrchestrator : ICompressionOrchestrator
             return null;
         }
 
+        if (_policy.RetainSelection == RetainSelectionMode.Inline)
+        {
+            _logger.LogInformation(
+                "compression skipped: conversation {ConversationId} mode={Mode} retainSelection=Inline.",
+                conversationId,
+                mode);
+            return null;
+        }
+
         var allMessages = await _messageRepository.GetByConversationIdAsync(conversationId, cancellationToken);
         var unfolded = allMessages.Where(m => !m.IsFolded).OrderBy(m => m.Sequence).ToList();
 

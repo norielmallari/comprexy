@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using Comprexy.Application.Models;
 
 namespace Comprexy.Application.Services;
@@ -89,6 +90,46 @@ public static class ToolCallWireHelper
     public static bool HasToolCalls(string? assistantMessageJson) =>
         ParseAssistantToolCalls(assistantMessageJson).Count > 0;
 
+    /// <summary>
+    /// True when a streaming SSE chunk carries a non-empty <c>choices[].delta.tool_calls</c>
+    /// array. Unparseable chunks count as non-tool so they can still reach the client.
+    /// </summary>
+    public static bool StreamChunkHasToolCalls(string data)
+    {
+        try
+        {
+            using var document = JsonDocument.Parse(data);
+            if (!document.RootElement.TryGetProperty("choices", out var choices) ||
+                choices.ValueKind != JsonValueKind.Array)
+            {
+                return false;
+            }
+
+            foreach (var choice in choices.EnumerateArray())
+            {
+                if (choice.ValueKind != JsonValueKind.Object ||
+                    !choice.TryGetProperty("delta", out var delta) ||
+                    delta.ValueKind != JsonValueKind.Object ||
+                    !delta.TryGetProperty("tool_calls", out var toolCalls) ||
+                    toolCalls.ValueKind != JsonValueKind.Array)
+                {
+                    continue;
+                }
+
+                if (toolCalls.GetArrayLength() > 0)
+                {
+                    return true;
+                }
+            }
+        }
+        catch (JsonException)
+        {
+            // Treat unparseable chunks as non-tool so they can still reach the client.
+        }
+
+        return false;
+    }
+
     public static ChatMessage BuildAssistantMessage(string assistantMessageJson, string contentFallback = "")
     {
         JsonElement? raw = null;
@@ -116,5 +157,60 @@ public static class ToolCallWireHelper
             Domain.Enums.MessageRole.Tool,
             contentJson,
             document.RootElement.Clone());
+    }
+
+    /// <summary>
+    /// Returns a copy of <paramref name="assistantMessageJson"/> with matching tool_call
+    /// <c>function.arguments</c> replaced by the provided JSON object text (stored as a JSON string
+    /// on the wire, OpenAI-style).
+    /// </summary>
+    public static string? ReplaceToolCallArguments(
+        string? assistantMessageJson,
+        IReadOnlyDictionary<string, string> argumentsByCallId)
+    {
+        if (string.IsNullOrWhiteSpace(assistantMessageJson) || argumentsByCallId.Count == 0)
+        {
+            return assistantMessageJson;
+        }
+
+        try
+        {
+            var root = JsonNode.Parse(assistantMessageJson) as JsonObject;
+            if (root is null ||
+                root["tool_calls"] is not JsonArray toolCalls)
+            {
+                return assistantMessageJson;
+            }
+
+            var changed = false;
+            foreach (var item in toolCalls)
+            {
+                if (item is not JsonObject call)
+                {
+                    continue;
+                }
+
+                var id = call["id"]?.GetValue<string>();
+                if (string.IsNullOrWhiteSpace(id) ||
+                    !argumentsByCallId.TryGetValue(id, out var argumentsJson))
+                {
+                    continue;
+                }
+
+                if (call["function"] is not JsonObject function)
+                {
+                    continue;
+                }
+
+                function["arguments"] = argumentsJson;
+                changed = true;
+            }
+
+            return changed ? root.ToJsonString() : assistantMessageJson;
+        }
+        catch (JsonException)
+        {
+            return assistantMessageJson;
+        }
     }
 }

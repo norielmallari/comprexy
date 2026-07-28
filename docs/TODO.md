@@ -308,3 +308,26 @@ For a high-traffic scenario, the same data is loaded and processed repeatedly be
 - [ ] Tests for subset accept/reject behavior vs full-validator mode.
 
 **Notes:** Only pursue if production catalogs prove noisy. Plan: [`internal/plans/tools-schema-index.md`](../internal/plans/tools-schema-index.md).
+
+---
+
+## TODO-013 — Change emergency compression to Inline wrap-up
+
+| Field | Value |
+| --- | --- |
+| **Status** | `open` |
+| **Priority** | Medium |
+| **Area** | `ContextPolicy`, Inline retain, hard budget |
+
+**Summary:** Soft retain defaults to Inline wrap-up, but hard-budget `EmergencyCompression: Sync` still uses Fixed-style compact and is ignored under Inline (trim then 413). Change emergency to the same live-model wrap-up algorithm as soft Inline (forced wrap-up before forward / instead of Fixed Sync).
+
+**Workaround:** Accept trim/413 under Inline hard pressure, or temporarily use Fixed/Smart with `EmergencyCompression: Sync`.
+
+**Acceptance criteria:**
+
+- [ ] When `EmergencyCompression: Sync` and hard pressure applies under Inline, run a blocking proxy-internal wrap-up (same live endpoint / WM accept path) instead of ignoring Sync.
+- [ ] Soft failure of emergency wrap-up preserves last known-good WM; hard path still trims/413 if still over budget.
+- [ ] Closed tool-chain gate honored; ToolSchema / streaming contracts preserved.
+- [ ] SETTINGS and ARCHITECTURE updated; Fixed Sync path retired or clearly legacy-only.
+
+**Notes:** Prefer one compression algorithm (Inline wrap-up) for soft and emergency. Do not reintroduce background Fixed/Smart jobs under Inline. Soft mid-chain prefix wrap-up (checkpoint closed stored prefix while the live answer opens a new tool chain) is separate from this emergency Inline work and is described in ARCHITECTURE.

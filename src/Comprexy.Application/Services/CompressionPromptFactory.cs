@@ -11,18 +11,23 @@ using Microsoft.Extensions.Options;
 namespace Comprexy.Application.Services;
 
 /// <summary>
-/// Builds prompts for Fixed compression (system + labeled transcript) and the Smart trailing
-/// user instruction (live prefix is assembled separately via <see cref="ContextBuilder"/>).
+/// Builds prompts for Fixed compression (system + labeled transcript), Smart trailing
+/// user instruction (live chat prefix is assembled separately via <see cref="ContextBuilder"/>),
+/// and Inline follow-up wrap-up on the live chat path.
 /// </summary>
 public class CompressionPromptFactory
 {
     private readonly string _fixedInstruction;
     private readonly string _smartInstruction;
+    private readonly string _inlineInstruction;
+    private readonly string _workingMemoryTemplate;
     private readonly bool _stripReasoningContent;
 
     public CompressionPromptFactory(
         string fixedInstruction,
         string? smartInstruction = null,
+        string? inlineInstruction = null,
+        string? workingMemoryTemplate = null,
         bool stripReasoningContent = false)
     {
         if (string.IsNullOrWhiteSpace(fixedInstruction))
@@ -30,10 +35,16 @@ public class CompressionPromptFactory
             throw new ArgumentException("Compression instruction text is required.", nameof(fixedInstruction));
         }
 
+        _workingMemoryTemplate = string.IsNullOrWhiteSpace(workingMemoryTemplate)
+            ? "# Working Memory\n\n## Current Goal\n..."
+            : workingMemoryTemplate.Trim();
         _fixedInstruction = fixedInstruction.Trim();
         _smartInstruction = string.IsNullOrWhiteSpace(smartInstruction)
             ? _fixedInstruction
             : smartInstruction.Trim();
+        _inlineInstruction = string.IsNullOrWhiteSpace(inlineInstruction)
+            ? _fixedInstruction
+            : inlineInstruction.Trim();
         _stripReasoningContent = stripReasoningContent;
     }
 
@@ -44,8 +55,20 @@ public class CompressionPromptFactory
         : this(
             LoadInstruction(options.Value.InstructionFile, environment, "Prompts/compression-fixed.md"),
             LoadInstruction(options.Value.SmartInstructionFile, environment, "Prompts/compression-smart.md"),
+            LoadInstruction(options.Value.InlineInstructionFile, environment, "Prompts/compression-inline.md"),
+            LoadInstruction(options.Value.WorkingMemoryTemplateFile, environment, "Prompts/working-memory-template.md"),
             proxyOptions.Value.StripReasoningContent)
     {
+    }
+
+    /// <summary>
+    /// Non-persisted virtual user wrap-up for eligible Inline soft-pressure turns.
+    /// Asks the live model to return only working memory (includes shared WM template).
+    /// </summary>
+    public ChatMessage BuildInlineWrapUpUserMessage()
+    {
+        var content = ComposeWithTemplate(_inlineInstruction);
+        return new ChatMessage(MessageRole.User, content);
     }
 
     /// <summary>
@@ -104,14 +127,17 @@ public class CompressionPromptFactory
             throw new ArgumentException("Retain index is required.", nameof(retainIndex));
         }
 
-        var content = _smartInstruction.TrimEnd() + "\n\n" + retainIndex.Trim();
+        var content = ComposeWithTemplate(_smartInstruction).TrimEnd() + "\n\n" + retainIndex.Trim();
         return new ChatMessage(MessageRole.User, content);
     }
+
+    private string ComposeWithTemplate(string instructionBody) =>
+        instructionBody.TrimEnd() + "\n\n" + _workingMemoryTemplate;
 
     private IReadOnlyList<ChatMessage> CreateFixedPrompt(string userContent) =>
         new List<ChatMessage>
         {
-            new(MessageRole.System, _fixedInstruction),
+            new(MessageRole.System, ComposeWithTemplate(_fixedInstruction)),
             new(MessageRole.User, userContent)
         };
 

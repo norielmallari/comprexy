@@ -48,7 +48,7 @@ public class ToolCatalogParser
                 continue;
             }
 
-            if (string.Equals(name, ToolSchemaConstants.MetaToolName, StringComparison.Ordinal))
+            if (ToolSchemaConstants.IsReservedMetaToolName(name))
             {
                 hasCollision = true;
             }

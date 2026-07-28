@@ -128,7 +128,7 @@ Reload the MCP client after starting control-api. If `Auth:RequiredApiKey` is co
 }
 ```
 
-Argument-free `get_current_*` tools require the MCP client to send `X-Comprexy-Conversation-Id`. Clients that cannot update that header per conversation should use the explicit tools; the proxy injects the conversation ID into model context so the agent can pass it without user copy/paste.
+Argument-free `get_current_*` tools require the MCP client to send `X-Comprexy-Conversation-Id`. Clients that cannot update that header per conversation should use the explicit tools with `conversationId` from the proxy meta-tool `get_current_conversation_id` (or from operator tooling / response header `X-Comprexy-Conversation-Id`).
 
 ## Why Comprexy?
 
@@ -153,7 +153,7 @@ If you need routing, spend tracking, or broad agent wrappers, tools like LiteLLM
 | Token metrics API | Control API `GET /v1/comprexy/conversations` (+ `/metrics`, `/metrics/turns`) on `:8130` reports raw vs compressed token savings per conversation |
 | Telemetry MCP | Control API `/mcp` exposes read-only summaries, turns, compression phases, budget events, prompt growth, comparisons, evidence markdown, and conversation retrieval (search / message window / working memory / open tool chains) to MCP clients |
 | Rolling working memory | Versioned compressed representation of older context for prompt reconstruction. Derived from persisted messages; may incorporate earlier working memory when the transcript exceeds `CompressionMaxInputTokens` |
-| Soft / hard budgets | Soft (`> soft`) → queue compression after the response. By default chat waits for in-flight soft compression (`CancelBackgroundCompressionOnChat: false`); set it `true` to cancel soft compression when the next chat request arrives. Soft prefers a **full-raw** rebuild when stored message tokens ≤ `CompressionMaxInputTokens`; otherwise intentionally merges a bounded fold segment into working memory. Hard (`>= hard`) → send-time retain trim then HTTP 413 by default (`EmergencyCompression: Off`). Set `EmergencyCompression: Sync` for blocking emergency compact before trim/413. Token estimates use tiktoken for text and OpenAI-style vision tiles for `image_url` (base64 is not BPE-counted) |
+| Soft / hard budgets | Soft (`> soft`) → Inline follow-up wrap-up on eligible turns by default (`RetainSelection=Inline`); Fixed/Smart queue background compression instead. By default chat waits for in-flight soft compression (`CancelBackgroundCompressionOnChat: false`); set it `true` to cancel soft compression when the next chat request arrives. Soft Fixed/Smart prefer a **full-raw** rebuild when stored message tokens ≤ `CompressionMaxInputTokens`; otherwise intentionally merge a bounded fold segment into working memory. Hard (`>= hard`) → send-time retain trim then HTTP 413 by default (`EmergencyCompression: Off`). Set `EmergencyCompression: Sync` for blocking Fixed-style emergency compact before trim/413 (Fixed/Smart only; ignored under Inline — see TODO-013). Token estimates use tiktoken for text and OpenAI-style vision tiles for `image_url` (base64 is not BPE-counted) |
 | Transparent until first memory | Before working memory exists, client messages pass through unchanged |
 | Conversation identity | Prefer a unique `X-Comprexy-Conversation-Id` per session; otherwise fingerprint from system + first two user messages |
 | Local-first, cloud-ready | Point `Provider` at Ollama, LM Studio, vLLM, OpenAI, Azure OpenAI–compatible APIs, and similar |

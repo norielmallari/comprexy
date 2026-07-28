@@ -11,11 +11,24 @@ public sealed class EfConversationMetricsSummaryRepository(ComprexyDbContext dbC
     public void Add(ConversationMetricsSummary summary) =>
         dbContext.ConversationMetricsSummaries.Add(summary);
 
-    public Task<ConversationMetricsSummary?> FindByConversationIdAsync(
+    public async Task<ConversationMetricsSummary?> FindByConversationIdAsync(
         Guid conversationId,
-        CancellationToken cancellationToken) =>
-        dbContext.ConversationMetricsSummaries
+        CancellationToken cancellationToken)
+    {
+        // Prefer the change tracker first. Inline CompleteAsync can Add a summary via
+        // RecordCompressionOverheadAsync, then call RecordSuccessfulTurnAsync in the same
+        // UoW before SaveChanges — a DB-only query would miss the pending Added row and
+        // attempt a duplicate insert on ConversationId.
+        var tracked = dbContext.ConversationMetricsSummaries.Local
+            .FirstOrDefault(s => s.ConversationId == conversationId);
+        if (tracked is not null)
+        {
+            return tracked;
+        }
+
+        return await dbContext.ConversationMetricsSummaries
             .FirstOrDefaultAsync(s => s.ConversationId == conversationId, cancellationToken);
+    }
 
     public Task<ConversationSummaryRollup?> GetRollupAsync(
         Guid conversationId,

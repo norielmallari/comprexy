@@ -15,7 +15,7 @@ public sealed class ConversationTools(
 {
     [McpServerTool(Name = "get_conversation_summary"), Description("Aggregate metrics for a specific conversation. Use when the client cannot forward X-Comprexy-Conversation-Id.")]
     public Task<string> GetConversationSummaryAsync(
-        [Description("Conversation id from model context or operator tooling.")] Guid conversationId,
+        [Description("UUID from get_current_conversation_id (proxy ToolSchema meta-tool), X-Comprexy-Conversation-Id, or operator tooling.")] Guid conversationId,
         CancellationToken cancellationToken) =>
         ExecuteAsync(
             "get_conversation_summary",
@@ -37,7 +37,7 @@ public sealed class ConversationTools(
 
     [McpServerTool(Name = "get_conversation_turns"), Description("Per-turn metrics for a specific conversation.")]
     public Task<string> GetConversationTurnsAsync(
-        [Description("Conversation id from model context or operator tooling.")] Guid conversationId,
+        [Description("UUID from get_current_conversation_id (proxy ToolSchema meta-tool), X-Comprexy-Conversation-Id, or operator tooling.")] Guid conversationId,
         CancellationToken cancellationToken) =>
         ExecuteAsync(
             "get_conversation_turns",
@@ -57,8 +57,8 @@ public sealed class ConversationTools(
 
     [McpServerTool(Name = "compare_conversations"), Description("Side-by-side comparison of two conversation telemetry summaries.")]
     public async Task<string> CompareConversationsAsync(
-        [Description("Left conversation id.")] Guid leftConversationId,
-        [Description("Right conversation id.")] Guid rightConversationId,
+        [Description("Left ConversationId (UUID from get_current_conversation_id or operator tooling).")] Guid leftConversationId,
+        [Description("Right ConversationId (UUID from get_current_conversation_id or operator tooling).")] Guid rightConversationId,
         CancellationToken cancellationToken)
     {
         var sw = McpToolCallAuditLogger.StartTimer();

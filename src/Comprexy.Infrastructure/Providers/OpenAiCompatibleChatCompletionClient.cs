@@ -331,8 +331,11 @@ public class OpenAiCompatibleChatCompletionClient : IChatCompletionClient
             root["model"] = endpoint.Model;
         }
 
-        if (request.Purpose == UpstreamRequestPurpose.Compression)
+        if (request.Purpose == UpstreamRequestPurpose.Compression && effectiveRequest is null)
         {
+            // Bare compression calls (Fixed/Smart) get explicit thinking kwargs. Inline wrap-up
+            // reuses the live client body with tools already stripped in Application — do not
+            // overwrite its chat_template_* and bust KV cache.
             root["chat_template_kwargs"] = new JsonObject
             {
                 ["enable_thinking"] = _compressionOptions.EnableThinking

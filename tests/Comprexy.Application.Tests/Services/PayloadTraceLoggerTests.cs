@@ -42,6 +42,10 @@ public class PayloadTraceLoggerTests
 
         public void Append(string text) => Entries.Add(text);
 
+        public void SetConversationId(Guid conversationId)
+        {
+        }
+
         private sealed class NoOp : IDisposable
         {
             public static readonly NoOp Instance = new();
@@ -359,6 +363,56 @@ public class RequestTraceFileSessionTests
             var text = File.ReadAllText(file);
             Assert.Contains("Comprexy request trace", text);
             Assert.Contains("model input", text);
+            Assert.Contains("# Ended:", text);
+        }
+        finally
+        {
+            if (Directory.Exists(directory))
+            {
+                Directory.Delete(directory, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public void SetConversationId_WhenEnabled_InsertsHeaderAfterCorrelationId()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), "comprexy-request-traces-" + Guid.NewGuid().ToString("N"));
+        var environment = new Mock<IHostEnvironment>();
+        environment.SetupGet(e => e.ContentRootPath).Returns(Path.GetTempPath());
+        var clock = new Mock<IClock>();
+        var now = new DateTimeOffset(2026, 7, 18, 2, 24, 15, 123, TimeSpan.Zero);
+        clock.SetupGet(c => c.UtcNow).Returns(now);
+        var conversationId = Guid.Parse("5127cb9d-a37d-4cae-b5ae-087216c77a78");
+
+        var session = new RequestTraceFileSession(
+            Options.Create(new TraceOptions
+            {
+                RequestFiles = true,
+                RequestLogDirectory = directory
+            }),
+            environment.Object,
+            clock.Object,
+            NullLogger<RequestTraceFileSession>.Instance);
+
+        try
+        {
+            using (session.Begin("abc12345"))
+            {
+                session.Append("client input\n  payload:\n    {}");
+                session.SetConversationId(conversationId);
+                session.Append("context budget\n  payload:\n    {}");
+            }
+
+            var file = Assert.Single(Directory.GetFiles(directory, "*.log"));
+            var text = File.ReadAllText(file);
+            var correlationIndex = text.IndexOf("# CorrelationId:", StringComparison.Ordinal);
+            var conversationIndex = text.IndexOf($"# ConversationId: {conversationId:D}", StringComparison.Ordinal);
+            var clientInputIndex = text.IndexOf("client input", StringComparison.Ordinal);
+            Assert.True(correlationIndex >= 0);
+            Assert.True(conversationIndex > correlationIndex);
+            Assert.True(clientInputIndex > conversationIndex);
+            Assert.Contains("context budget", text);
             Assert.Contains("# Ended:", text);
         }
         finally

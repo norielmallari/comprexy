@@ -13,7 +13,7 @@ public sealed class CurrentConversationResolver(
     public const string ConversationIdHeaderName = "X-Comprexy-Conversation-Id";
 
     public const string MissingHeaderMessage =
-        "No current conversation header was supplied. Call the explicit conversation tool with the ConversationId from model context.";
+        "No current conversation header was supplied. Call the explicit conversation tool with conversationId set to the UUID from get_current_conversation_id (proxy ToolSchema meta-tool), or from operator tooling / X-Comprexy-Conversation-Id.";
 
     public async Task<CurrentConversationResolveResult> ResolveAsync(CancellationToken cancellationToken)
     {

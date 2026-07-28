@@ -40,11 +40,20 @@ public class ContextPolicyOptions
     public int? CompressionMaxInputTokens { get; set; } = 65_536;
 
     /// <summary>
-    /// Soft compression retain strategy. Default <see cref="RetainSelectionMode.Fixed"/>.
+    /// Soft compression retain strategy. Default <see cref="RetainSelectionMode.Inline"/>.
     /// <see cref="RetainSelectionMode.Smart"/> is soft-only (never emergency/hard).
     /// Smart reuses the live chat message prefix plus a trailing retain-index instruction.
+    /// <see cref="RetainSelectionMode.Inline"/> disables background soft compression and
+    /// <see cref="EmergencyCompression"/> sync; after an eligible soft-pressure visible answer,
+    /// a blocking proxy-internal wrap-up call produces working memory.
     /// </summary>
-    public RetainSelectionMode RetainSelection { get; set; } = RetainSelectionMode.Fixed;
+    public RetainSelectionMode RetainSelection { get; set; } = RetainSelectionMode.Inline;
+
+    /// <summary>
+    /// Inline retain only: minimum client-visible assistant turns after a successful Inline
+    /// generation before another follow-up wrap-up is allowed. Ignored by Fixed and Smart.
+    /// </summary>
+    public int MinTurnsBetweenGenerations { get; set; } = 6;
 
     /// <summary>
     /// Number of trailing unfolded messages kept raw when Fixed compression runs (atomic

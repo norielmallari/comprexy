@@ -15,7 +15,7 @@ public sealed class ConversationRetrievalTools(
 {
     [McpServerTool(Name = "search_conversation"), Description("Keyword search over a conversation's messages and working memory. Use when the client cannot forward X-Comprexy-Conversation-Id.")]
     public Task<string> SearchConversationAsync(
-        [Description("Conversation id from model context or operator tooling.")] Guid conversationId,
+        [Description("UUID from get_current_conversation_id (proxy ToolSchema meta-tool), X-Comprexy-Conversation-Id, or operator tooling.")] Guid conversationId,
         [Description("Substring to match in message or working-memory content.")] string query,
         [Description("Max matches to return (clamped by McpTelemetry limits).")] int? limit = null,
         [Description("Include folded (compressed-away) messages. Default true.")] bool includeFolded = true,
@@ -49,7 +49,7 @@ public sealed class ConversationRetrievalTools(
 
     [McpServerTool(Name = "get_message_window"), Description("Raw messages in a Sequence range. Uses Sequence, not TurnIndex.")]
     public Task<string> GetMessageWindowAsync(
-        [Description("Conversation id from model context or operator tooling.")] Guid conversationId,
+        [Description("UUID from get_current_conversation_id (proxy ToolSchema meta-tool), X-Comprexy-Conversation-Id, or operator tooling.")] Guid conversationId,
         [Description("Inclusive start Sequence (>= 0).")] int sequenceStart,
         [Description("Inclusive end Sequence.")] int sequenceEnd,
         [Description("Include truncated RawWireJson. Default false.")] bool includeWireJson = false,
@@ -82,7 +82,7 @@ public sealed class ConversationRetrievalTools(
 
     [McpServerTool(Name = "get_recent_messages"), Description("Most recent messages for a conversation.")]
     public Task<string> GetRecentMessagesAsync(
-        [Description("Conversation id from model context or operator tooling.")] Guid conversationId,
+        [Description("UUID from get_current_conversation_id (proxy ToolSchema meta-tool), X-Comprexy-Conversation-Id, or operator tooling.")] Guid conversationId,
         [Description("When true, only unfolded (not yet folded) messages. Default false.")] bool unfoldedOnly = false,
         [Description("Include truncated RawWireJson. Default false.")] bool includeWireJson = false,
         CancellationToken cancellationToken = default) =>
@@ -106,7 +106,7 @@ public sealed class ConversationRetrievalTools(
 
     [McpServerTool(Name = "get_working_memory"), Description("Working-memory snapshot. Omit version for latest.")]
     public Task<string> GetWorkingMemoryAsync(
-        [Description("Conversation id from model context or operator tooling.")] Guid conversationId,
+        [Description("UUID from get_current_conversation_id (proxy ToolSchema meta-tool), X-Comprexy-Conversation-Id, or operator tooling.")] Guid conversationId,
         [Description("Optional working-memory version (>= 1). Omit for latest.")] int? version = null,
         CancellationToken cancellationToken = default) =>
         ExecuteAsync(
@@ -142,7 +142,7 @@ public sealed class ConversationRetrievalTools(
 
     [McpServerTool(Name = "get_open_tool_chains"), Description("Open assistant tool_call ids in unfolded history. Same closed-chain rule as compression.")]
     public Task<string> GetOpenToolChainsAsync(
-        [Description("Conversation id from model context or operator tooling.")] Guid conversationId,
+        [Description("UUID from get_current_conversation_id (proxy ToolSchema meta-tool), X-Comprexy-Conversation-Id, or operator tooling.")] Guid conversationId,
         CancellationToken cancellationToken = default) =>
         ExecuteAsync(
             "get_open_tool_chains",

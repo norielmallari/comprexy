@@ -2,6 +2,8 @@ namespace Comprexy.Domain.Entities;
 
 /// <summary>
 /// Conversation-level rollup of token metrics for operator proof and reporting.
+/// Prompt totals and net savings use tiktoken estimates (raw baseline vs prepared
+/// upstream). Per-turn <c>ActualPromptTokens</c> stay on turn rows for accuracy only.
 /// </summary>
 public class ConversationMetricsSummary : EntityBase
 {
@@ -50,7 +52,7 @@ public class ConversationMetricsSummary : EntityBase
     {
         TotalTurns += 1;
         TotalRawInputTokensEstimated += turn.RawInputTokensEstimated;
-        TotalCompressedPromptTokens += turn.ActualPromptTokens ?? turn.CompressedInputTokensEstimated;
+        TotalCompressedPromptTokens += turn.CompressedInputTokensEstimated;
         TotalCompletionTokens += turn.ActualCompletionTokens;
         TotalBaselineTokensEstimated += turn.BaselineTotalTokensEstimated;
         RecalculateActualAndSavings(now);

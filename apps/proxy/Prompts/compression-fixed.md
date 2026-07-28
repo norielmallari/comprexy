@@ -31,37 +31,5 @@ Remove:
 
 Do not invent file contents or paths that were not present in the segment.
 
-Return only the updated working memory, using this structure:
+Return only the updated working memory using the structure below:
 
-# Working Memory
-
-## Persona
-...
-
-## Current Goal
-...
-
-## Active Task
-...
-
-## Key Decisions
-- ...
-
-## Constraints
-- ...
-
-## Files And Code Context
-- path: why it matters / key facts
-- ...
-
-## Important Context
-- ...
-
-## Recent Corrections
-- ...
-
-## Open Questions
-- ...
-
-## Pending Tasks
-- ...
