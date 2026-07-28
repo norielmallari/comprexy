@@ -1,7 +1,7 @@
 namespace Comprexy.Domain.Entities;
 
 /// <summary>
-/// Snapshotted compact tool index for a conversation (one row per conversation in MVP).
+/// Snapshotted Virtual Tools (Tool IR) mapping for a conversation (one row per conversation in MVP).
 /// </summary>
 public class ConversationToolCatalog : EntityBase
 {
@@ -9,7 +9,14 @@ public class ConversationToolCatalog : EntityBase
 
     public string CatalogHash { get; private set; } = string.Empty;
 
-    public string CompactIndexJson { get; private set; } = string.Empty;
+    /// <summary>Validated MappingJson, or empty when <see cref="ToolIrDisabled"/>.</summary>
+    public string MappingJson { get; private set; } = string.Empty;
+
+    /// <summary>
+    /// When true, schema mapping failed for this catalog hash — forward client tools unchanged
+    /// (compression/budgets still run). Not full PassThrough.
+    /// </summary>
+    public bool ToolIrDisabled { get; private set; }
 
     public DateTimeOffset SnapshottedAt { get; private set; }
 
@@ -20,17 +27,18 @@ public class ConversationToolCatalog : EntityBase
     public static ConversationToolCatalog Create(
         Guid conversationId,
         string catalogHash,
-        string compactIndexJson,
-        DateTimeOffset snapshottedAt)
+        string mappingJson,
+        DateTimeOffset snapshottedAt,
+        bool toolIrDisabled = false)
     {
         if (string.IsNullOrWhiteSpace(catalogHash))
         {
             throw new ArgumentException("Catalog hash is required.", nameof(catalogHash));
         }
 
-        if (string.IsNullOrWhiteSpace(compactIndexJson))
+        if (!toolIrDisabled && string.IsNullOrWhiteSpace(mappingJson))
         {
-            throw new ArgumentException("Compact index JSON is required.", nameof(compactIndexJson));
+            throw new ArgumentException("Mapping JSON is required when Tool IR is enabled.", nameof(mappingJson));
         }
 
         return new ConversationToolCatalog
@@ -38,8 +46,40 @@ public class ConversationToolCatalog : EntityBase
             Id = Guid.NewGuid(),
             ConversationId = conversationId,
             CatalogHash = catalogHash,
-            CompactIndexJson = compactIndexJson,
+            MappingJson = mappingJson ?? string.Empty,
+            ToolIrDisabled = toolIrDisabled,
             SnapshottedAt = snapshottedAt
         };
+    }
+
+    public void ReplaceMapping(string catalogHash, string mappingJson, DateTimeOffset snapshottedAt)
+    {
+        if (string.IsNullOrWhiteSpace(catalogHash))
+        {
+            throw new ArgumentException("Catalog hash is required.", nameof(catalogHash));
+        }
+
+        if (string.IsNullOrWhiteSpace(mappingJson))
+        {
+            throw new ArgumentException("Mapping JSON is required.", nameof(mappingJson));
+        }
+
+        CatalogHash = catalogHash;
+        MappingJson = mappingJson;
+        ToolIrDisabled = false;
+        SnapshottedAt = snapshottedAt;
+    }
+
+    public void DisableToolIr(string catalogHash, DateTimeOffset snapshottedAt)
+    {
+        if (string.IsNullOrWhiteSpace(catalogHash))
+        {
+            throw new ArgumentException("Catalog hash is required.", nameof(catalogHash));
+        }
+
+        CatalogHash = catalogHash;
+        MappingJson = string.Empty;
+        ToolIrDisabled = true;
+        SnapshottedAt = snapshottedAt;
     }
 }

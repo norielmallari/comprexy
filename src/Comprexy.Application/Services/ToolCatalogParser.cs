@@ -15,7 +15,7 @@ public sealed record ParsedToolCatalog(
     bool HasMetaToolNameCollision);
 
 /// <summary>
-/// Parses OpenAI-compatible tools/functions, derives compact index rows, and computes catalog hash.
+/// Parses OpenAI-compatible tools/functions and computes catalog hash.
 /// </summary>
 public class ToolCatalogParser
 {
@@ -48,7 +48,7 @@ public class ToolCatalogParser
                 continue;
             }
 
-            if (ToolSchemaConstants.IsReservedMetaToolName(name))
+            if (ToolSchemaConstants.IsReservedToolName(name))
             {
                 hasCollision = true;
             }
@@ -71,28 +71,6 @@ public class ToolCatalogParser
             hash,
             normalizedJson,
             hasCollision);
-    }
-
-    public string BuildCompactIndexJson(IReadOnlyList<CompactToolEntry> entries)
-    {
-        var array = new JsonArray();
-        foreach (var entry in entries.OrderBy(e => e.Name, StringComparer.Ordinal))
-        {
-            var required = new JsonArray();
-            foreach (var field in entry.Required)
-            {
-                required.Add(field);
-            }
-
-            array.Add(new JsonObject
-            {
-                ["name"] = entry.Name,
-                ["description"] = entry.Description,
-                ["required"] = required
-            });
-        }
-
-        return array.ToJsonString(CanonicalOptions);
     }
 
     internal static string ComputeSha256Hex(string text)

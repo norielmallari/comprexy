@@ -11,7 +11,7 @@ using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 namespace Comprexy.Infrastructure.Persistence.Migrations
 {
     [DbContext(typeof(ComprexyDbContext))]
-    [Migration("20260724084844_InitialCreate")]
+    [Migration("20260728074007_InitialCreate")]
     partial class InitialCreate
     {
         /// <inheritdoc />
@@ -150,11 +150,6 @@ namespace Comprexy.Infrastructure.Persistence.Migrations
                     b.Property<int?>("FoldedIntoWorkingMemoryVersion")
                         .HasColumnType("INTEGER");
 
-                    b.Property<bool>("IsPinnedForToolSchema")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("INTEGER")
-                        .HasDefaultValue(false);
-
                     b.Property<string>("RawWireJson")
                         .HasColumnType("TEXT");
 
@@ -257,15 +252,20 @@ namespace Comprexy.Infrastructure.Persistence.Migrations
                         .HasColumnType("INTEGER")
                         .HasColumnOrder(0);
 
-                    b.Property<string>("CompactIndexJson")
-                        .IsRequired()
+                    b.Property<Guid>("ConversationId")
                         .HasColumnType("TEXT");
 
-                    b.Property<Guid>("ConversationId")
+                    b.Property<string>("MappingJson")
+                        .IsRequired()
                         .HasColumnType("TEXT");
 
                     b.Property<long>("SnapshottedAt")
                         .HasColumnType("INTEGER");
+
+                    b.Property<bool>("ToolIrDisabled")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER")
+                        .HasDefaultValue(false);
 
                     b.HasKey("Id");
 
@@ -298,9 +298,6 @@ namespace Comprexy.Infrastructure.Persistence.Migrations
                     b.Property<string>("DefinitionJson")
                         .IsRequired()
                         .HasColumnType("TEXT");
-
-                    b.Property<long?>("HydratedAt")
-                        .HasColumnType("INTEGER");
 
                     b.Property<string>("ToolName")
                         .IsRequired()

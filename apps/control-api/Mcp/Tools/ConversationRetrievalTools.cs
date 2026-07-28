@@ -13,16 +13,19 @@ public sealed class ConversationRetrievalTools(
     IOptions<McpTelemetryOptions> options,
     IHttpContextAccessor httpContextAccessor)
 {
-    [McpServerTool(Name = "search_conversation"), Description("Keyword search over a conversation's messages and working memory. Use when the client cannot forward X-Comprexy-Conversation-Id.")]
+    private const string ConversationIdDescription =
+        "UUID from comprexy_get_current_conversation_id (proxy ToolSchema meta-tool), response header X-Comprexy-Conversation-Id, or operator tooling.";
+
+    [McpServerTool(Name = "comprexy_search_conversation"), Description("Keyword search over a conversation's messages and working memory.")]
     public Task<string> SearchConversationAsync(
-        [Description("UUID from get_current_conversation_id (proxy ToolSchema meta-tool), X-Comprexy-Conversation-Id, or operator tooling.")] Guid conversationId,
+        [Description(ConversationIdDescription)] Guid conversationId,
         [Description("Substring to match in message or working-memory content.")] string query,
         [Description("Max matches to return (clamped by McpTelemetry limits).")] int? limit = null,
         [Description("Include folded (compressed-away) messages. Default true.")] bool includeFolded = true,
         [Description("Include working-memory content matches. Default true.")] bool includeWorkingMemory = true,
         CancellationToken cancellationToken = default) =>
         ExecuteAsync(
-            "search_conversation",
+            "comprexy_search_conversation",
             new { conversationId, query, limit, includeFolded, includeWorkingMemory },
             conversationId,
             async (take, ct) =>
@@ -47,15 +50,15 @@ public sealed class ConversationRetrievalTools(
             },
             cancellationToken);
 
-    [McpServerTool(Name = "get_message_window"), Description("Raw messages in a Sequence range. Uses Sequence, not TurnIndex.")]
+    [McpServerTool(Name = "comprexy_get_message_window"), Description("Raw messages in a Sequence range. Uses Sequence, not TurnIndex.")]
     public Task<string> GetMessageWindowAsync(
-        [Description("UUID from get_current_conversation_id (proxy ToolSchema meta-tool), X-Comprexy-Conversation-Id, or operator tooling.")] Guid conversationId,
+        [Description(ConversationIdDescription)] Guid conversationId,
         [Description("Inclusive start Sequence (>= 0).")] int sequenceStart,
         [Description("Inclusive end Sequence.")] int sequenceEnd,
         [Description("Include truncated RawWireJson. Default false.")] bool includeWireJson = false,
         CancellationToken cancellationToken = default) =>
         ExecuteAsync(
-            "get_message_window",
+            "comprexy_get_message_window",
             new { conversationId, sequenceStart, sequenceEnd, includeWireJson },
             conversationId,
             async (take, ct) =>
@@ -80,14 +83,14 @@ public sealed class ConversationRetrievalTools(
             },
             cancellationToken);
 
-    [McpServerTool(Name = "get_recent_messages"), Description("Most recent messages for a conversation.")]
+    [McpServerTool(Name = "comprexy_get_recent_messages"), Description("Most recent messages for a conversation.")]
     public Task<string> GetRecentMessagesAsync(
-        [Description("UUID from get_current_conversation_id (proxy ToolSchema meta-tool), X-Comprexy-Conversation-Id, or operator tooling.")] Guid conversationId,
+        [Description(ConversationIdDescription)] Guid conversationId,
         [Description("When true, only unfolded (not yet folded) messages. Default false.")] bool unfoldedOnly = false,
         [Description("Include truncated RawWireJson. Default false.")] bool includeWireJson = false,
         CancellationToken cancellationToken = default) =>
         ExecuteAsync(
-            "get_recent_messages",
+            "comprexy_get_recent_messages",
             new { conversationId, unfoldedOnly, includeWireJson },
             conversationId,
             async (take, ct) =>
@@ -104,13 +107,13 @@ public sealed class ConversationRetrievalTools(
             },
             cancellationToken);
 
-    [McpServerTool(Name = "get_working_memory"), Description("Working-memory snapshot. Omit version for latest.")]
+    [McpServerTool(Name = "comprexy_get_working_memory"), Description("Working-memory snapshot. Omit version for latest.")]
     public Task<string> GetWorkingMemoryAsync(
-        [Description("UUID from get_current_conversation_id (proxy ToolSchema meta-tool), X-Comprexy-Conversation-Id, or operator tooling.")] Guid conversationId,
+        [Description(ConversationIdDescription)] Guid conversationId,
         [Description("Optional working-memory version (>= 1). Omit for latest.")] int? version = null,
         CancellationToken cancellationToken = default) =>
         ExecuteAsync(
-            "get_working_memory",
+            "comprexy_get_working_memory",
             new { conversationId, version },
             conversationId,
             async (_, ct) =>
@@ -140,12 +143,12 @@ public sealed class ConversationRetrievalTools(
             },
             cancellationToken);
 
-    [McpServerTool(Name = "get_open_tool_chains"), Description("Open assistant tool_call ids in unfolded history. Same closed-chain rule as compression.")]
+    [McpServerTool(Name = "comprexy_get_open_tool_chains"), Description("Open assistant tool_call ids in unfolded history. Same closed-chain rule as compression. When isAwaitingClientToolResults is true, the tip assistant's tools are still in flight (e.g. this tool was called in parallel with sibling tools) — not a stuck chain.")]
     public Task<string> GetOpenToolChainsAsync(
-        [Description("UUID from get_current_conversation_id (proxy ToolSchema meta-tool), X-Comprexy-Conversation-Id, or operator tooling.")] Guid conversationId,
+        [Description(ConversationIdDescription)] Guid conversationId,
         CancellationToken cancellationToken = default) =>
         ExecuteAsync(
-            "get_open_tool_chains",
+            "comprexy_get_open_tool_chains",
             new { conversationId },
             conversationId,
             async (_, ct) =>

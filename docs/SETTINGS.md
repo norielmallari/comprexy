@@ -18,7 +18,7 @@ Copy `appsettings.Local.json.example` → `appsettings.Local.json` for machine-l
 
 Send a unique `X-Comprexy-Conversation-Id` header per logical session when multiple clients or tabs might share the same opening prompt.
 
-When omitted, Comprexy fingerprints the system prompt plus the first two user message texts. Templated openings can still collide across sessions. The resolved conversation id is echoed on responses.
+When omitted, Comprexy fingerprints the system prompt plus the first two **plain** user turns (Cursor `<user_query>` text when present; tool-echo user turns like `Called the … tool with the following input:` are skipped). Templated openings can still collide across sessions. The resolved conversation id is echoed on responses.
 
 ---
 
@@ -80,26 +80,29 @@ Token budgets, compression retain windows, and emergency behavior.
 
 ## ToolSchema
 
-Compact tool index for OpenAI-compatible `tools` / `functions` catalogs. Enabled by default; set `Mode` to `Off` to disable. Ignored when `Proxy:PassThrough` is true.
+Virtual Tools (Tool IR) for OpenAI-compatible `tools` / `functions` catalogs. Enabled by default (`Mode: Virtual`); set `Mode` to `Off` to disable. Ignored when `Proxy:PassThrough` is true.
 
 | Key | Default | Description |
 | --- | --- | --- |
-| `Mode` | `CompactIndex` | `Off` or `CompactIndex`. |
-| `MinToolCountToActivate` | `1` | Skip rewrite when the client catalog has fewer tools. |
-| `MaxHydrateRoundsPerRequest` | `8` | Caps internal meta-tool + recovery loops per chat request. Exhaustion returns `finish_reason=stop` text (never forwards `get_tool_definition` to the client). |
-| `SkipRefetchIfHydrated` | `true` | When true, repeat `get_tool_definition` for an already-hydrated tool skips re-marking hydration and returns `{ "already_hydrated": true, "tool_name", "instruction", "definition" }` (definition is always included; instruction tells the model to emit that exact function name, not nest it under `CallMcpTool.toolName`). Hydrated tools from this request's loop are added to outbound `tools[]` on the next meta round. A second consecutive already-hydrated-only round stops the hydrate loop early. |
-| `InstructionFile` | `Prompts/tool-schema.md` | System rules prepended to the compact index (relative to API content root). |
+| `Mode` | `Virtual` | `Off` or `Virtual`. |
+| `MappingMaxRetries` | `2` | Extra mapper attempts after the first on invalid MappingJson (total attempts = 1 + this value). Invalid maps are never persisted. |
+| `MaxRangeLines` | `250` | Cap for `comprexy_read_file_range` observations (`truncated: true` when capped). |
+| `MaxSearchMatches` | `40` | Cap for `comprexy_read_file_search` hits. |
+| `MaxDirListEntries` | `200` | Cap for `comprexy_dir_list` entries. |
+| `FileCacheAbsoluteExpiration` | `00:20:00` | TTL for in-memory file-body cache entries. |
+| `FileCacheSizeLimit` | `256` | Max cached file bodies (each entry size 1). |
+| `CallIdMapPendingAbsoluteExpiration` | `00:30:00` | TTL for abandoned pending IR↔client call-id map rows (EF + in-memory hot cache). |
+| `CallIdMapMaxConversations` | `1024` | Max conversations retained in the process-local call-id hot cache. |
 
-When `CompactIndex` is active:
+When `Virtual` is active:
 
-- Outbound `tools` is rewritten to `[get_tool_definition, get_current_conversation_id]`.
-- A stable system message carries rules + compact index JSON (`name`, `description`, `required` per tool).
-- Full schemas are hydrated via proxy-local meta-tool execution and persisted as pinned conversation turns.
-- `get_current_conversation_id` returns the active session UUID for tools that require `conversationId`.
-- Real tool calls are validated against stored JSON Schema before forwarding to the client.
-- If the client catalog already defines a reserved meta tool (`get_tool_definition` or `get_current_conversation_id`), compact index is disabled for that conversation (logged).
+- On catalog hash miss, Comprexy calls the **Compression** endpoint to produce validated **MappingJson** (blocking), using `Compression:Model` → `Provider:Model` → the client chat `model` from the request. Bindings must cover every client-schema `required` property via `arg_map` or `defaults`. Mapper prompt+completion tokens are added to conversation `TotalCompressionOverheadTokens`. Failures after retries set `ToolIrDisabled` for that hash and forward client tools unchanged; compression/budgets stay on.
+- Outbound `tools` = bound MVP `comprexy_read_file_*` / `comprexy_dir_list` + `comprexy_get_current_conversation_id` + full-schema **non-file** client tools.
+- The deterministic planner remaps IR calls to native client tool names/args via `arg_map` + `defaults` (or satisfies from the file-body cache). Stream and non-stream responses both rewrite `tool_calls` toward the client. Pending dual-id mappings are persisted in `ConversationToolCallMaps` (committed before emit) with an in-memory hot cache; TTL still applies to abandoned pending rows.
+- Inbound native tool results are distilled into IR observations for the model-facing transcript (map lookup: memory, else SQLite).
+- If the client catalog already defines a reserved name (`comprexy_get_current_conversation_id` or any MVP `comprexy_read_file_*` / `comprexy_dir_list` tool), Virtual is disabled for that conversation (logged).
 
-See [`ARCHITECTURE.md`](ARCHITECTURE.md#tool-schema-compact-index) for the runtime path.
+See [`ARCHITECTURE.md`](ARCHITECTURE.md#tool-schema-virtual-tools) for the runtime path.
 
 ---
 
@@ -126,7 +129,7 @@ Server-side MCP clients (Cursor, etc.) do not rely on CORS. Wildcard `AllowedHos
 
 | Key | Default | Description |
 | --- | --- | --- |
-| `PassThrough` | `false` | When true, forwards the original chat body without rebuild, compression, hard-limit 413, or tool-schema rewrite. Escape hatch only. |
+| `PassThrough` | `false` | When true, **everything is off**: forwards the original chat body with no context rebuild, no compression / working memory, no hard-limit 413, and no Virtual Tools rewrite. Single escape hatch — there is no separate “pre-WM client history” passthrough. |
 | `StripReasoningContent` | `false` | When true, strips `reasoning_content` / `reasoning` from outbound chat and compression messages. |
 
 ---
@@ -137,7 +140,7 @@ Token proof ledger for successful compressed-path turns. Persisted in SQLite (no
 
 | Key | Default | Description |
 | --- | --- | --- |
-| `Enabled` | `true` | When true, records per-turn raw vs compressed token metrics and folds compression LLM usage into conversation summaries. |
+| `Enabled` | `true` | When true, records per-turn raw vs compressed token metrics and folds compression LLM usage (soft/emergency compact, Inline wrap-up, and Tool IR schema mapping) into conversation summaries. |
 
 Operator read API (same `/v1/*` API-key gate as chat):
 
@@ -165,7 +168,7 @@ Telemetry summary semantics: `TurnCount`, weighted savings, simple average, peak
 
 Retrieval tools (keyword search, sequence windows, recent messages, working-memory snapshot, open tool chains) read `ConversationMessage` / `WorkingMemory` with snippet truncation (500 chars content / 4096 chars optional wire JSON). Message tools use `Sequence`; do not conflate with telemetry `TurnIndex`. Open tool chains reuse `ToolCallChainState` over unfolded messages.
 
-Local MCP URL: `http://localhost:8130/mcp`. Any IDE, coding agent, or MCP client with remote Streamable HTTP support can connect to it. When `Auth:RequiredApiKey` is set, send the same Bearer / `X-Api-Key` credentials used for `/v1`. Argument-free `get_current_*` tools and `comprexy://current/*` resources require `X-Comprexy-Conversation-Id` on the MCP HTTP request; clients that cannot forward that header should call explicit tools with `conversationId` set to the UUID from the proxy meta-tool `get_current_conversation_id` (or from operator tooling / response header `X-Comprexy-Conversation-Id`). Metric DTOs omit `RequestHash` / `SentPayloadHash`.
+Local MCP URL: `http://localhost:8130/mcp`. Any IDE, coding agent, or MCP client with remote Streamable HTTP support can connect to it. When `Auth:RequiredApiKey` is set, send the same Bearer / `X-Api-Key` credentials used for `/v1`. All telemetry tools are named `comprexy_*` and require `conversationId` (from the proxy meta-tool `comprexy_get_current_conversation_id`, operator tooling, or response header `X-Comprexy-Conversation-Id`). Resources use `comprexy://conversation/{conversationId}/…`. Metric DTOs omit `RequestHash` / `SentPayloadHash`.
 
 ---
 

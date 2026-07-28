@@ -2,36 +2,27 @@ namespace Comprexy.Application.Services;
 
 public static class ToolSchemaConstants
 {
-    public const string MetaToolName = "get_tool_definition";
+    public const string ConversationIdMetaToolName = "comprexy_get_current_conversation_id";
 
-    public const string ConversationIdMetaToolName = "get_current_conversation_id";
+    public const string FileManifestToolName = "comprexy_read_file_manifest";
+    public const string FileRangeToolName = "comprexy_read_file_range";
+    public const string FileSearchToolName = "comprexy_read_file_search";
+    public const string DirListToolName = "comprexy_dir_list";
 
-    public const string MetaToolWireJson = """
-        {
-          "type": "function",
-          "function": {
-            "name": "get_tool_definition",
-            "description": "Get the full JSON schema and validation rules for a tool from the compact index.",
-            "parameters": {
-              "type": "object",
-              "properties": {
-                "tool_name": {
-                  "type": "string",
-                  "description": "The exact tool name from the compact index."
-                }
-              },
-              "required": ["tool_name"]
-            }
-          }
-        }
-        """;
+    public static readonly IReadOnlyList<string> VirtualFileToolNames =
+    [
+        FileManifestToolName,
+        FileRangeToolName,
+        FileSearchToolName,
+        DirListToolName
+    ];
 
     public const string ConversationIdMetaToolWireJson = """
         {
           "type": "function",
           "function": {
-            "name": "get_current_conversation_id",
-            "description": "Return the ConversationId UUID for this chat session. Call before any tool that requires conversationId (for example comprexy telemetry MCP tools). No arguments.",
+            "name": "comprexy_get_current_conversation_id",
+            "description": "Return the ConversationId UUID for this chat session. Call before any Comprexy telemetry MCP tool that requires conversationId. No arguments.",
             "parameters": {
               "type": "object",
               "properties": {},
@@ -41,7 +32,13 @@ public static class ToolSchemaConstants
         }
         """;
 
-    public static bool IsReservedMetaToolName(string? name) =>
-        string.Equals(name, MetaToolName, StringComparison.Ordinal) ||
+    public static bool IsConversationIdMetaTool(string? name) =>
         string.Equals(name, ConversationIdMetaToolName, StringComparison.Ordinal);
+
+    public static bool IsVirtualFileTool(string? name) =>
+        !string.IsNullOrWhiteSpace(name) &&
+        VirtualFileToolNames.Contains(name, StringComparer.Ordinal);
+
+    public static bool IsReservedToolName(string? name) =>
+        IsConversationIdMetaTool(name) || IsVirtualFileTool(name);
 }

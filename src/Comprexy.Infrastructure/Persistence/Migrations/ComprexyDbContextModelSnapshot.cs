@@ -147,11 +147,6 @@ namespace Comprexy.Infrastructure.Persistence.Migrations
                     b.Property<int?>("FoldedIntoWorkingMemoryVersion")
                         .HasColumnType("INTEGER");
 
-                    b.Property<bool>("IsPinnedForToolSchema")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("INTEGER")
-                        .HasDefaultValue(false);
-
                     b.Property<string>("RawWireJson")
                         .HasColumnType("TEXT");
 
@@ -240,6 +235,81 @@ namespace Comprexy.Infrastructure.Persistence.Migrations
                     b.ToTable("ConversationMetricsSummaries", (string)null);
                 });
 
+            modelBuilder.Entity("Comprexy.Domain.Entities.ConversationToolCallMap", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("TEXT")
+                        .HasColumnOrder(1);
+
+                    b.Property<string>("ClientArgumentsJson")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ClientCallId")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ClientToolName")
+                        .HasColumnType("TEXT");
+
+                    b.Property<long>("ClusterId")
+                        .HasColumnType("INTEGER")
+                        .HasColumnOrder(0);
+
+                    b.Property<long?>("CompletedAt")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("ComprexyToolName")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<Guid>("ConversationId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int?>("EndLine")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("IrArgumentsJson")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("IrCallId")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Path")
+                        .HasColumnType("TEXT");
+
+                    b.Property<bool>("Pending")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER")
+                        .HasDefaultValue(true);
+
+                    b.Property<long>("RegisteredAt")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int?>("StartLine")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Strategy")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ClusterId")
+                        .IsUnique();
+
+                    b.HasIndex("ConversationId", "ClientCallId")
+                        .IsUnique();
+
+                    b.HasIndex("ConversationId", "IrCallId")
+                        .IsUnique();
+
+                    b.HasIndex("ConversationId", "Pending", "RegisteredAt");
+
+                    b.ToTable("ConversationToolCallMaps", (string)null);
+                });
+
             modelBuilder.Entity("Comprexy.Domain.Entities.ConversationToolCatalog", b =>
                 {
                     b.Property<Guid>("Id")
@@ -254,15 +324,20 @@ namespace Comprexy.Infrastructure.Persistence.Migrations
                         .HasColumnType("INTEGER")
                         .HasColumnOrder(0);
 
-                    b.Property<string>("CompactIndexJson")
-                        .IsRequired()
+                    b.Property<Guid>("ConversationId")
                         .HasColumnType("TEXT");
 
-                    b.Property<Guid>("ConversationId")
+                    b.Property<string>("MappingJson")
+                        .IsRequired()
                         .HasColumnType("TEXT");
 
                     b.Property<long>("SnapshottedAt")
                         .HasColumnType("INTEGER");
+
+                    b.Property<bool>("ToolIrDisabled")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER")
+                        .HasDefaultValue(false);
 
                     b.HasKey("Id");
 
@@ -295,9 +370,6 @@ namespace Comprexy.Infrastructure.Persistence.Migrations
                     b.Property<string>("DefinitionJson")
                         .IsRequired()
                         .HasColumnType("TEXT");
-
-                    b.Property<long?>("HydratedAt")
-                        .HasColumnType("INTEGER");
 
                     b.Property<string>("ToolName")
                         .IsRequired()

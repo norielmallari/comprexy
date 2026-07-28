@@ -101,4 +101,6 @@ public class EfConversationMessageRepository(ComprexyDbContext dbContext) : ICon
     }
 
     public void Add(ConversationMessage message) => dbContext.ConversationMessages.Add(message);
+
+    public void Remove(ConversationMessage message) => dbContext.ConversationMessages.Remove(message);
 }

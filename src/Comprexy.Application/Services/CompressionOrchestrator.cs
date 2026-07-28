@@ -111,11 +111,6 @@ public class CompressionOrchestrator : ICompressionOrchestrator
             ? _policy.EmergencyRecentMessageCount
             : _policy.CompressionRetainMessageCount;
         var keepRecent = _recentContextSelector.Select(unfolded, maxMessagesOverride: retainCount).ToList();
-        var pinned = unfolded.Where(m => m.IsPinnedForToolSchema).ToList();
-        keepRecent = keepRecent
-            .Concat(pinned.Where(p => keepRecent.All(k => k.Id != p.Id)))
-            .OrderBy(m => m.Sequence)
-            .ToList();
 
         if (unfolded.Count <= keepRecent.Count)
         {
@@ -383,19 +378,6 @@ public class CompressionOrchestrator : ICompressionOrchestrator
             }
 
             workingMemoryContent = acceptedWorkingMemory;
-
-            // Smart retain can nominate a fold set that omits pins; never fold tool-schema
-            // hydrate turns (full definitions must remain in raw chat context).
-            var pinnedFoldAttempts = messagesToFold.Count(m => m.IsPinnedForToolSchema);
-            if (pinnedFoldAttempts > 0)
-            {
-                _logger.LogInformation(
-                    "compression_preserving_pinned_tool_schema conversationId={ConversationId} mode={Mode} pinnedCount={PinnedCount}",
-                    conversationId,
-                    mode,
-                    pinnedFoldAttempts);
-                messagesToFold = messagesToFold.Where(m => !m.IsPinnedForToolSchema).ToList();
-            }
 
             if (messagesToFold.Count == 0)
             {

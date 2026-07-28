@@ -1,7 +1,7 @@
 namespace Comprexy.Domain.Entities;
 
 /// <summary>
-/// Full tool definition persisted after hydration via the meta-tool.
+/// Full client tool definition snapshot for passthrough and argument shapes.
 /// </summary>
 public class ConversationToolDefinition : EntityBase
 {
@@ -13,22 +13,8 @@ public class ConversationToolDefinition : EntityBase
 
     public string DefinitionJson { get; private set; } = string.Empty;
 
-    public DateTimeOffset? HydratedAt { get; private set; }
-
     private ConversationToolDefinition()
     {
-    }
-
-    public static ConversationToolDefinition Create(
-        Guid conversationId,
-        string toolName,
-        string definitionHash,
-        string definitionJson,
-        DateTimeOffset hydratedAt)
-    {
-        var entity = CreateFromSnapshot(conversationId, toolName, definitionHash, definitionJson);
-        entity.HydratedAt = hydratedAt;
-        return entity;
     }
 
     public static ConversationToolDefinition CreateFromSnapshot(
@@ -58,14 +44,11 @@ public class ConversationToolDefinition : EntityBase
             ConversationId = conversationId,
             ToolName = toolName,
             DefinitionHash = definitionHash,
-            DefinitionJson = definitionJson,
-            HydratedAt = null
+            DefinitionJson = definitionJson
         };
     }
 
-    public bool IsHydrated => HydratedAt.HasValue;
-
-    public void MarkHydrated(string definitionHash, string definitionJson, DateTimeOffset hydratedAt)
+    public void ReplaceSnapshot(string definitionHash, string definitionJson)
     {
         if (string.IsNullOrWhiteSpace(definitionHash))
         {
@@ -79,6 +62,5 @@ public class ConversationToolDefinition : EntityBase
 
         DefinitionHash = definitionHash;
         DefinitionJson = definitionJson;
-        HydratedAt = hydratedAt;
     }
 }

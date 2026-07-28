@@ -1,12 +1,49 @@
 ---
-description: EF Core query, tracking, keys, and index conventions
-globs: **/Persistence/**/*.cs,**/*Repository*.cs,**/*DbContext*.cs,**/Entities/**/*.cs,**/*Configuration*.cs
+description: EF Core query, tracking, keys, indexes, and SaveChanges / UoW ownership
+globs: **/Persistence/**/*.cs,**/*Repository*.cs,**/*DbContext*.cs,**/Entities/**/*.cs,**/*Configuration*.cs,**/Services/**/*.cs,**/Abstractions/**/*UnitOfWork*.cs,**/DependencyInjection/**/*.cs
 alwaysApply: false
 ---
 
 # EF Core
 
 Follow current EF Core performance practice: prefer lean queries, explicit loading shape, and tracking only when `SaveChanges` must see mutations.
+
+## SaveChanges / Unit of Work ownership
+
+Before adding or moving `SaveChangesAsync` / `IUnitOfWork` / `DbContext.SaveChanges*` calls, read `docs/ARCHITECTURE.md` § Persistence (Unit of Work ownership) and `internal/plans/uow-boundary.md`.
+
+### Who may flush
+
+| Owner | Unit | Allowed when |
+| --- | --- | --- |
+| `ProxyChatCompletionService` (and prepare helpers it owns) | Request-scoped chat `IUnitOfWork` | Complete; Inline phase 1/2; CatalogMutated; emergency-before-compress; snapshot rewind; inbound distill commit before dual-id Complete |
+| `CompressionOrchestrator` | Scoped UoW for that compression run | Success / Fail / cancel terminal paths |
+| Dual-id map (`ToolIrCallIdMapService`) | **Isolated** `IToolIrCallIdMapUnitOfWork` from `IToolIrCallIdMapUnitOfWorkFactory` only | Register / Complete / Clear / Sweep |
+
+### Dual-id rule
+
+- Pending IR↔client map rows use a **short-lived DbContext** — never the chat-scoped context.
+- Register must still commit **before** client-facing `tool_calls` leave the proxy.
+- Do not inject chat `IUnitOfWork` into `ToolIrCallIdMapService`.
+
+### Forbidden
+
+- Application leaf services / repositories calling `SaveChangesAsync` “because they mutated something”
+- Nested chat-context flushes inside ToolSchema / ToolIr helpers
+- Staging `ConversationToolCallMap` on the request-scoped `ComprexyDbContext`
+- New early flushes without documenting them in `docs/ARCHITECTURE.md` in the same change
+
+### Do
+
+- Stage in repositories; commit only at a named owner boundary
+- When adding a flush boundary: update ARCHITECTURE with a one-line reason
+- Prefer `await using` on map UoW from the factory; dispose owns the factory-created context only
+
+### Do not
+
+- Dispose the request-scoped `ComprexyDbContext` / chat `IUnitOfWork` from a leaf service
+- Shorten `ConversationRequestGate` by moving exclusive lease into map helpers
+- “Just flush” to make tests green when dirtiness spans multiple aggregates
 
 ## Keys and clustering (SQL Server–ready)
 

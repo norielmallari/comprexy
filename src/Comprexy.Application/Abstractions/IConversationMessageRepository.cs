@@ -42,4 +42,7 @@ public interface IConversationMessageRepository
         CancellationToken cancellationToken);
 
     void Add(ConversationMessage message);
+
+    /// <summary>Hard-deletes a tracked message (snapshot rewind discards the abandoned branch).</summary>
+    void Remove(ConversationMessage message);
 }

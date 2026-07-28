@@ -25,11 +25,14 @@ public static class ToolCallChainState
             return ToolCallChainOpenAssessment.Closed;
         }
 
+        var ordered = unfolded.OrderBy(m => m.Sequence).ToList();
         var announced = new HashSet<string>(StringComparer.Ordinal);
         var closed = new HashSet<string>(StringComparer.Ordinal);
         var unparseableToolCallAssistants = 0;
+        ConversationMessage? lastToolCallAssistant = null;
+        HashSet<string>? lastToolCallAssistantIds = null;
 
-        foreach (var message in unfolded.OrderBy(m => m.Sequence))
+        foreach (var message in ordered)
         {
             if (message.Role == MessageRole.Assistant)
             {
@@ -42,9 +45,13 @@ public static class ToolCallChainState
                 if (ids.Count == 0)
                 {
                     unparseableToolCallAssistants++;
+                    lastToolCallAssistant = message;
+                    lastToolCallAssistantIds = null;
                     continue;
                 }
 
+                lastToolCallAssistant = message;
+                lastToolCallAssistantIds = new HashSet<string>(ids, StringComparer.Ordinal);
                 foreach (var id in ids)
                 {
                     announced.Add(id);
@@ -73,12 +80,31 @@ public static class ToolCallChainState
             return new ToolCallChainOpenAssessment(
                 IsOpen: true,
                 UnmatchedCount: unmatched + unparseableToolCallAssistants,
-                OpenToolCallIds: openIds);
+                OpenToolCallIds: openIds,
+                IsAwaitingClientToolResults: false);
         }
 
-        return unmatched > 0
-            ? new ToolCallChainOpenAssessment(IsOpen: true, UnmatchedCount: unmatched, OpenToolCallIds: openIds)
-            : ToolCallChainOpenAssessment.Closed;
+        if (unmatched == 0)
+        {
+            return ToolCallChainOpenAssessment.Closed;
+        }
+
+        // Tip assistant announced N ids and none of them have results yet, and no older opens:
+        // typical mid-flight parallel batch (e.g. querying open chains as one of the parallel tools).
+        var awaitingClient = lastToolCallAssistant is not null &&
+            lastToolCallAssistantIds is { Count: > 0 } &&
+            openIds.Length == lastToolCallAssistantIds.Count &&
+            openIds.All(lastToolCallAssistantIds.Contains) &&
+            lastToolCallAssistantIds.All(id => !closed.Contains(id)) &&
+            !ordered.Any(m =>
+                m.Sequence > lastToolCallAssistant.Sequence &&
+                (m.Role == MessageRole.User || m.Role == MessageRole.Assistant));
+
+        return new ToolCallChainOpenAssessment(
+            IsOpen: true,
+            UnmatchedCount: unmatched,
+            OpenToolCallIds: openIds,
+            IsAwaitingClientToolResults: awaitingClient);
     }
 
     private static bool HasNonEmptyToolCallsArray(ConversationMessage message)
@@ -106,10 +132,12 @@ public static class ToolCallChainState
 public readonly record struct ToolCallChainOpenAssessment(
     bool IsOpen,
     int UnmatchedCount,
-    IReadOnlyList<string> OpenToolCallIds)
+    IReadOnlyList<string> OpenToolCallIds,
+    bool IsAwaitingClientToolResults = false)
 {
     public static ToolCallChainOpenAssessment Closed { get; } = new(
         IsOpen: false,
         UnmatchedCount: 0,
-        OpenToolCallIds: Array.Empty<string>());
+        OpenToolCallIds: Array.Empty<string>(),
+        IsAwaitingClientToolResults: false);
 }

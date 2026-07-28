@@ -192,6 +192,7 @@ public class ConversationRetrievalQueryServiceTests
 
         Assert.NotNull(chains);
         Assert.True(chains!.IsOpen);
+        Assert.True(chains.IsAwaitingClientToolResults);
         Assert.Equal(["call-1"], chains.OpenToolCallIds);
     }
 

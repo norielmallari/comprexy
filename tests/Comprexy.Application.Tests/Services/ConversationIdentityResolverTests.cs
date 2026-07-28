@@ -293,4 +293,62 @@ public class ConversationIdentityResolverTests
 
         Assert.NotEqual(key1, key2);
     }
+
+    [Fact]
+    public void Resolve_WithoutHeader_SkipsToolEchoUserTurns()
+    {
+        var toolEchoA =
+            "Called the Read tool with the following input: {\"filePath\":\"a.md\"}\n" +
+            "<path>a.md</path><content>\n1: old\n</content>";
+        var toolEchoB =
+            "Called the Read tool with the following input: {\"filePath\":\"b.md\"}\n" +
+            "<path>b.md</path><content>\n1: new body that changed\n</content>";
+
+        var messages1 = new List<ChatMessage>
+        {
+            new(MessageRole.System, "You are a helpful assistant."),
+            new(MessageRole.User, "Load the project personas and continue."),
+            new(MessageRole.Assistant, "…"),
+            new(MessageRole.User, toolEchoA),
+            new(MessageRole.User, "continue the roleplay")
+        };
+
+        var messages2 = new List<ChatMessage>
+        {
+            new(MessageRole.System, "You are a helpful assistant."),
+            new(MessageRole.User, "Load the project personas and continue."),
+            new(MessageRole.Assistant, "…"),
+            new(MessageRole.User, toolEchoB),
+            new(MessageRole.Assistant, "…"),
+            new(MessageRole.User, "continue the roleplay")
+        };
+
+        var key1 = _resolver.Resolve(null, messages1);
+        var key2 = _resolver.Resolve(null, messages2);
+
+        Assert.Equal(key1, key2);
+    }
+
+    [Fact]
+    public void Resolve_WithoutHeader_ToolEchoOnlySecondSlot_UsesNextPlainUser()
+    {
+        var withEcho = new List<ChatMessage>
+        {
+            new(MessageRole.System, "You are a helpful assistant."),
+            new(MessageRole.User, "Load the project personas and continue."),
+            new(MessageRole.Assistant, "…"),
+            new(MessageRole.User, "Called the Bash tool with the following input: {\"command\":\"cat x\"}"),
+            new(MessageRole.User, "Also add tests.")
+        };
+
+        var plainOnly = new List<ChatMessage>
+        {
+            new(MessageRole.System, "You are a helpful assistant."),
+            new(MessageRole.User, "Load the project personas and continue."),
+            new(MessageRole.Assistant, "…"),
+            new(MessageRole.User, "Also add tests.")
+        };
+
+        Assert.Equal(_resolver.Resolve(null, withEcho), _resolver.Resolve(null, plainOnly));
+    }
 }

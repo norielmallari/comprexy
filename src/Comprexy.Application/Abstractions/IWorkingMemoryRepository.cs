@@ -22,4 +22,13 @@ public interface IWorkingMemoryRepository
         CancellationToken cancellationToken);
 
     void Add(WorkingMemory workingMemory);
+
+    /// <summary>
+    /// Deletes working-memory versions at or above <paramref name="fromVersionInclusive"/>
+    /// (snapshot rewind invalidated those summaries).
+    /// </summary>
+    Task<int> DeleteFromVersionAsync(
+        Guid conversationId,
+        int fromVersionInclusive,
+        CancellationToken cancellationToken);
 }

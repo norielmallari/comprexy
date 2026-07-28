@@ -29,24 +29,13 @@ public static class ServiceCollectionExtensions
             ?? "Data Source=comprexy.db;Cache=Shared";
         services.AddSingleton<SqliteWalConnectionInterceptor>();
         services.AddSingleton<ClusterIdSaveChangesInterceptor>();
-        services.AddDbContext<ComprexyDbContext>((sp, options) =>
-        {
-            options.UseSqlite(connectionString, sqlite =>
-                sqlite.UseQuerySplittingBehavior(QuerySplittingBehavior.SplitQuery));
-            options.AddInterceptors(
-                sp.GetRequiredService<SqliteWalConnectionInterceptor>(),
-                sp.GetRequiredService<ClusterIdSaveChangesInterceptor>());
-            // EF Core 3+ does not silently client-evaluate queries (untranslatable LINQ throws).
-            // Escalate remaining warnings so query/shape issues cannot be ignored accidentally.
-            options.ConfigureWarnings(warnings =>
-            {
-                warnings.Default(WarningBehavior.Throw);
-                warnings.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning);
-                warnings.Ignore(CoreEventId.SensitiveDataLoggingEnabledWarning);
-                warnings.Ignore(RelationalEventId.AmbientTransactionWarning);
-                warnings.Ignore(CoreEventId.FirstWithoutOrderByAndFilterWarning);
-            });
-        });
+        // Factory is Singleton and needs Singleton DbContextOptions; keep scoped DbContext.
+        services.AddDbContext<ComprexyDbContext>(
+            (sp, options) => ConfigureComprexyDbContext(options, connectionString, sp),
+            contextLifetime: ServiceLifetime.Scoped,
+            optionsLifetime: ServiceLifetime.Singleton);
+        services.AddDbContextFactory<ComprexyDbContext>((sp, options) =>
+            ConfigureComprexyDbContext(options, connectionString, sp));
 
         services.AddScoped<IConversationRepository, EfConversationRepository>();
         services.AddScoped<IConversationMessageRepository, EfConversationMessageRepository>();
@@ -56,6 +45,8 @@ public static class ServiceCollectionExtensions
         services.AddScoped<IConversationMetricsSummaryRepository, EfConversationMetricsSummaryRepository>();
         services.AddScoped<IConversationToolCatalogRepository, EfConversationToolCatalogRepository>();
         services.AddScoped<IConversationToolDefinitionRepository, EfConversationToolDefinitionRepository>();
+        // ConversationToolCallMap rows are staged only via IToolIrCallIdMapUnitOfWork (isolated context).
+        services.AddSingleton<IToolIrCallIdMapUnitOfWorkFactory, EfToolIrCallIdMapUnitOfWorkFactory>();
         services.AddScoped<IUnitOfWork, EfUnitOfWork>();
 
         services.AddSingleton<IClock, SystemClock>();
@@ -84,5 +75,27 @@ public static class ServiceCollectionExtensions
         }
 
         return services;
+    }
+
+    private static void ConfigureComprexyDbContext(
+        DbContextOptionsBuilder options,
+        string connectionString,
+        IServiceProvider sp)
+    {
+        options.UseSqlite(connectionString, sqlite =>
+            sqlite.UseQuerySplittingBehavior(QuerySplittingBehavior.SplitQuery));
+        options.AddInterceptors(
+            sp.GetRequiredService<SqliteWalConnectionInterceptor>(),
+            sp.GetRequiredService<ClusterIdSaveChangesInterceptor>());
+        // EF Core 3+ does not silently client-evaluate queries (untranslatable LINQ throws).
+        // Escalate remaining warnings so query/shape issues cannot be ignored accidentally.
+        options.ConfigureWarnings(warnings =>
+        {
+            warnings.Default(WarningBehavior.Throw);
+            warnings.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning);
+            warnings.Ignore(CoreEventId.SensitiveDataLoggingEnabledWarning);
+            warnings.Ignore(RelationalEventId.AmbientTransactionWarning);
+            warnings.Ignore(CoreEventId.FirstWithoutOrderByAndFilterWarning);
+        });
     }
 }

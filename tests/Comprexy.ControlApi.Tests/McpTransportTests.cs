@@ -41,11 +41,7 @@ public sealed class McpTransportTests
             {
                 Endpoint = new Uri("http://localhost/mcp"),
                 TransportMode = HttpTransportMode.StreamableHttp,
-                EnableStandaloneGetStream = false,
-                AdditionalHeaders = new Dictionary<string, string>
-                {
-                    [CurrentConversationResolver.ConversationIdHeaderName] = conversationId.ToString()
-                }
+                EnableStandaloneGetStream = false
             },
             httpClient,
             loggerFactory: null,
@@ -61,30 +57,29 @@ public sealed class McpTransportTests
         {
             IReadOnlyDictionary<string, object?>? arguments = tool.Name switch
             {
-                "get_conversation_summary" or "get_conversation_turns"
-                    or "get_working_memory" or "get_recent_messages" or "get_open_tool_chains" =>
+                "comprexy_get_conversation_summary"
+                    or "comprexy_get_conversation_turns"
+                    or "comprexy_get_final_turn_snapshot"
+                    or "comprexy_get_compression_phase_breakdown"
+                    or "comprexy_get_budget_events"
+                    or "comprexy_get_evidence_markdown"
+                    or "comprexy_get_prompt_growth_timeline"
+                    or "comprexy_get_working_memory"
+                    or "comprexy_get_recent_messages"
+                    or "comprexy_get_open_tool_chains" =>
                     new Dictionary<string, object?> { ["conversationId"] = conversationId },
-                "search_conversation" => new Dictionary<string, object?>
+                "comprexy_search_conversation" => new Dictionary<string, object?>
                 {
                     ["conversationId"] = conversationId,
                     ["query"] = "fingerprint"
                 },
-                "get_message_window" => new Dictionary<string, object?>
+                "comprexy_get_message_window" => new Dictionary<string, object?>
                 {
                     ["conversationId"] = conversationId,
                     ["sequenceStart"] = 0,
                     ["sequenceEnd"] = 2
                 },
-                "search_current_conversation" => new Dictionary<string, object?>
-                {
-                    ["query"] = "fingerprint"
-                },
-                "get_current_message_window" => new Dictionary<string, object?>
-                {
-                    ["sequenceStart"] = 0,
-                    ["sequenceEnd"] = 2
-                },
-                "compare_conversations" => new Dictionary<string, object?>
+                "comprexy_compare_conversations" => new Dictionary<string, object?>
                 {
                     ["leftConversationId"] = conversationId,
                     ["rightConversationId"] = otherConversationId
@@ -100,15 +95,9 @@ public sealed class McpTransportTests
         var resources = await client.ListResourcesAsync();
         var templates = await client.ListResourceTemplatesAsync();
 
-        Assert.Equal(9, resources.Count);
-        Assert.Equal(4, templates.Count);
-        var resourceUris = resources.Select(resource => resource.Uri).Concat(
-            [
-                $"comprexy://conversation/{conversationId}/summary",
-                $"comprexy://conversation/{conversationId}/turns",
-                $"comprexy://conversation/{conversationId}/working-memory",
-                $"comprexy://conversation/{conversationId}/recent-messages"
-            ]);
+        Assert.Empty(resources);
+        Assert.Equal(McpTestData.ResourceTemplateCount, templates.Count);
+        var resourceUris = McpTestData.ResourceUrisFor(conversationId);
         foreach (var uri in resourceUris)
         {
             var result = await client.ReadResourceAsync(uri);
@@ -130,16 +119,11 @@ public sealed class McpTransportTests
                 services.AddSingleton(retrieval);
                 services.Configure<McpTelemetryOptions>(_ => { });
                 services.AddSingleton<McpToolCallAuditLogger>();
-                services.AddScoped<CurrentConversationResolver>();
                 services.AddMcpServer()
                     .WithHttpTransport(options => options.Stateless = true)
-                    .WithTools<CurrentConversationTools>()
                     .WithTools<ConversationTools>()
-                    .WithTools<CurrentConversationRetrievalTools>()
                     .WithTools<ConversationRetrievalTools>()
-                    .WithResources<CurrentConversationResources>()
                     .WithResources<ConversationResources>()
-                    .WithResources<CurrentConversationRetrievalResources>()
                     .WithResources<ConversationRetrievalResources>();
             })
             .Configure(app =>
@@ -160,25 +144,35 @@ internal static class McpTestData
 {
     public static readonly string[] ToolNames =
     [
-        "get_current_conversation_summary",
-        "get_current_final_turn_snapshot",
-        "get_current_compression_phase_breakdown",
-        "get_current_budget_events",
-        "get_current_evidence_markdown",
-        "get_current_prompt_growth_timeline",
-        "get_conversation_summary",
-        "get_conversation_turns",
-        "compare_conversations",
-        "search_current_conversation",
-        "get_current_message_window",
-        "get_current_recent_messages",
-        "get_current_working_memory",
-        "get_current_open_tool_chains",
-        "search_conversation",
-        "get_message_window",
-        "get_recent_messages",
-        "get_working_memory",
-        "get_open_tool_chains"
+        "comprexy_get_conversation_summary",
+        "comprexy_get_conversation_turns",
+        "comprexy_get_final_turn_snapshot",
+        "comprexy_get_compression_phase_breakdown",
+        "comprexy_get_budget_events",
+        "comprexy_get_evidence_markdown",
+        "comprexy_get_prompt_growth_timeline",
+        "comprexy_compare_conversations",
+        "comprexy_search_conversation",
+        "comprexy_get_message_window",
+        "comprexy_get_recent_messages",
+        "comprexy_get_working_memory",
+        "comprexy_get_open_tool_chains"
+    ];
+
+    public const int ResourceTemplateCount = 10;
+
+    public static IReadOnlyList<string> ResourceUrisFor(Guid conversationId) =>
+    [
+        $"comprexy://conversation/{conversationId}/summary",
+        $"comprexy://conversation/{conversationId}/turns",
+        $"comprexy://conversation/{conversationId}/phases",
+        $"comprexy://conversation/{conversationId}/final-turn",
+        $"comprexy://conversation/{conversationId}/budget-events",
+        $"comprexy://conversation/{conversationId}/evidence",
+        $"comprexy://conversation/{conversationId}/prompt-growth-timeline",
+        $"comprexy://conversation/{conversationId}/working-memory",
+        $"comprexy://conversation/{conversationId}/recent-messages",
+        $"comprexy://conversation/{conversationId}/open-tool-chains"
     ];
 
     public static Mock<IConversationMetricsQueryService> CreateMetrics(params Guid[] conversationIds)

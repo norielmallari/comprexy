@@ -1,6 +1,7 @@
 using Comprexy.Application.Abstractions;
 using Comprexy.Application.Configuration;
 using Comprexy.Application.Services;
+using Comprexy.Application.Services.ToolIr;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
@@ -65,9 +66,14 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<ContextBuilder>();
         services.AddSingleton<RecentContextSelector>();
         services.AddSingleton<CompressionPromptFactory>();
-        services.AddSingleton<ToolSchemaPromptFactory>();
         services.AddSingleton<ToolCatalogParser>();
         services.AddSingleton<ToolArgumentValidator>();
+        services.AddSingleton<ToolIrCallIdMap>();
+        services.AddScoped<IToolIrCallIdMapService, ToolIrCallIdMapService>();
+        services.AddSingleton<ToolIrFileBodyCache>();
+        services.AddSingleton<ToolIrPlanner>();
+        services.AddSingleton<ToolIrResultDistiller>();
+        services.AddScoped<ToolIrSchemaMapper>();
         services.AddScoped<ToolSchemaOrchestrator>();
         services.AddSingleton<ProviderEndpointResolver>();
         services.AddScoped<ICompressionOrchestrator, CompressionOrchestrator>();

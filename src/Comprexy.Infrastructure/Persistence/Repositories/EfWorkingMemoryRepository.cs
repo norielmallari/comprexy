@@ -44,4 +44,19 @@ public class EfWorkingMemoryRepository(ComprexyDbContext dbContext) : IWorkingMe
     }
 
     public void Add(WorkingMemory workingMemory) => dbContext.WorkingMemories.Add(workingMemory);
+
+    public Task<int> DeleteFromVersionAsync(
+        Guid conversationId,
+        int fromVersionInclusive,
+        CancellationToken cancellationToken)
+    {
+        if (fromVersionInclusive < 1)
+        {
+            throw new ArgumentOutOfRangeException(nameof(fromVersionInclusive));
+        }
+
+        return dbContext.WorkingMemories
+            .Where(w => w.ConversationId == conversationId && w.Version >= fromVersionInclusive)
+            .ExecuteDeleteAsync(cancellationToken);
+    }
 }

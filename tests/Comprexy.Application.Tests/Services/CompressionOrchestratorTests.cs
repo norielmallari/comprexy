@@ -604,7 +604,7 @@ public class CompressionOrchestratorTests
     }
 
     [Fact]
-    public async Task RunAsync_SmartFullRaw_NeverFoldsPinnedToolSchemaTurns()
+    public async Task RunAsync_SmartFullRaw_FoldsNonRetainedMessagesIncludingFormerPinWindow()
     {
         _policy = new ContextPolicyOptions
         {
@@ -621,8 +621,6 @@ public class CompressionOrchestratorTests
         var messages = Enumerable.Range(0, 5)
             .Select(sequence => Message(conversationId, sequence))
             .ToList();
-        messages[0].MarkPinnedForToolSchema();
-        messages[1].MarkPinnedForToolSchema();
 
         _conversationRepository.Setup(r => r.FindByIdAsync(conversationId, It.IsAny<CancellationToken>())).ReturnsAsync(conversation);
         SetupMessages(conversationId, messages);
@@ -648,8 +646,8 @@ public class CompressionOrchestratorTests
 
         Assert.NotNull(result);
         Assert.Equal(CompressionStatus.Succeeded, result!.Status);
-        Assert.False(messages[0].IsFolded);
-        Assert.False(messages[1].IsFolded);
+        Assert.True(messages[0].IsFolded);
+        Assert.True(messages[1].IsFolded);
         Assert.True(messages[2].IsFolded);
         Assert.True(messages[3].IsFolded);
         Assert.False(messages[4].IsFolded);

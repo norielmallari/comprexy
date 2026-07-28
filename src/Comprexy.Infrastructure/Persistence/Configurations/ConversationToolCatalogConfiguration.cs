@@ -12,7 +12,8 @@ public class ConversationToolCatalogConfiguration : IEntityTypeConfiguration<Con
         EntityBaseConfiguration.ConfigureKeys(builder);
 
         builder.Property(c => c.CatalogHash).IsRequired();
-        builder.Property(c => c.CompactIndexJson).IsRequired();
+        builder.Property(c => c.MappingJson).IsRequired();
+        builder.Property(c => c.ToolIrDisabled).IsRequired().HasDefaultValue(false);
         builder.Property(c => c.SnapshottedAt).IsRequired();
 
         builder.HasIndex(c => c.ConversationId).IsUnique();

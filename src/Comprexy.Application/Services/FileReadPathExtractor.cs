@@ -19,6 +19,10 @@ public static class FileReadPathExtractor
         @"Called the Read tool with the following input:\s*\{[^}]*[""']filePath[""']\s*:\s*[""'](?<path>[^""']+)[""']",
         RegexOptions.IgnoreCase | RegexOptions.CultureInvariant | RegexOptions.Compiled);
 
+    private static readonly Regex ToolCallIdProperty = new(
+        @"[""']tool_call_id[""']\s*:\s*[""'](?<id>[^""']+)[""']",
+        RegexOptions.CultureInvariant | RegexOptions.Compiled);
+
     private static readonly string[] PathPropertyNames =
     [
         "filePath",
@@ -63,7 +67,13 @@ public static class FileReadPathExtractor
         }
         catch (JsonException)
         {
-            // ignore
+            // Truncated / corrupt wire: still recover tool_call_id when present near the start.
+            var match = ToolCallIdProperty.Match(message.RawWireJson);
+            if (match.Success)
+            {
+                var value = match.Groups["id"].Value.Trim();
+                return string.IsNullOrWhiteSpace(value) ? null : value;
+            }
         }
 
         return null;

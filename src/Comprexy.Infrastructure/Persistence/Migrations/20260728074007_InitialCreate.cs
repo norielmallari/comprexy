@@ -52,8 +52,7 @@ namespace Comprexy.Infrastructure.Persistence.Migrations
                     RawWireJson = table.Column<string>(type: "TEXT", nullable: true),
                     TokenCount = table.Column<int>(type: "INTEGER", nullable: false),
                     CreatedAt = table.Column<long>(type: "INTEGER", nullable: false),
-                    FoldedIntoWorkingMemoryVersion = table.Column<int>(type: "INTEGER", nullable: true),
-                    IsPinnedForToolSchema = table.Column<bool>(type: "INTEGER", nullable: false, defaultValue: false)
+                    FoldedIntoWorkingMemoryVersion = table.Column<int>(type: "INTEGER", nullable: true)
                 },
                 constraints: table =>
                 {
@@ -110,7 +109,8 @@ namespace Comprexy.Infrastructure.Persistence.Migrations
                     Id = table.Column<Guid>(type: "TEXT", nullable: false),
                     ConversationId = table.Column<Guid>(type: "TEXT", nullable: false),
                     CatalogHash = table.Column<string>(type: "TEXT", nullable: false),
-                    CompactIndexJson = table.Column<string>(type: "TEXT", nullable: false),
+                    MappingJson = table.Column<string>(type: "TEXT", nullable: false),
+                    ToolIrDisabled = table.Column<bool>(type: "INTEGER", nullable: false, defaultValue: false),
                     SnapshottedAt = table.Column<long>(type: "INTEGER", nullable: false)
                 },
                 constraints: table =>
@@ -127,8 +127,7 @@ namespace Comprexy.Infrastructure.Persistence.Migrations
                     ConversationId = table.Column<Guid>(type: "TEXT", nullable: false),
                     ToolName = table.Column<string>(type: "TEXT", nullable: false),
                     DefinitionHash = table.Column<string>(type: "TEXT", nullable: false),
-                    DefinitionJson = table.Column<string>(type: "TEXT", nullable: false),
-                    HydratedAt = table.Column<long>(type: "INTEGER", nullable: true)
+                    DefinitionJson = table.Column<string>(type: "TEXT", nullable: false)
                 },
                 constraints: table =>
                 {

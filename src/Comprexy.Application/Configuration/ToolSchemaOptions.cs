@@ -6,13 +6,29 @@ public class ToolSchemaOptions
 {
     public const string SectionName = "ToolSchema";
 
-    public ToolSchemaMode Mode { get; set; } = ToolSchemaMode.CompactIndex;
+    public ToolSchemaMode Mode { get; set; } = ToolSchemaMode.Virtual;
 
-    public int MinToolCountToActivate { get; set; } = 1;
+    /// <summary>Mapper LLM retries on invalid MappingJson (total attempts = 1 + this value).</summary>
+    public int MappingMaxRetries { get; set; } = 2;
 
-    public int MaxHydrateRoundsPerRequest { get; set; } = 8;
+    /// <summary>Max lines returned by <c>comprexy_read_file_range</c> (truncated when capped).</summary>
+    public int MaxRangeLines { get; set; } = 250;
 
-    public bool SkipRefetchIfHydrated { get; set; } = true;
+    /// <summary>Max search hits returned by <c>comprexy_read_file_search</c>.</summary>
+    public int MaxSearchMatches { get; set; } = 40;
 
-    public string InstructionFile { get; set; } = "Prompts/tool-schema.md";
+    /// <summary>Max directory entries returned by <c>comprexy_dir_list</c>.</summary>
+    public int MaxDirListEntries { get; set; } = 200;
+
+    /// <summary>In-memory file-body cache TTL.</summary>
+    public TimeSpan FileCacheAbsoluteExpiration { get; set; } = TimeSpan.FromMinutes(20);
+
+    /// <summary>Max cached file bodies (each entry size 1).</summary>
+    public int FileCacheSizeLimit { get; set; } = 256;
+
+    /// <summary>TTL for abandoned pending IR↔client call-id map entries.</summary>
+    public TimeSpan CallIdMapPendingAbsoluteExpiration { get; set; } = TimeSpan.FromMinutes(30);
+
+    /// <summary>Max conversations retained in the process-local call-id map.</summary>
+    public int CallIdMapMaxConversations { get; set; } = 1024;
 }

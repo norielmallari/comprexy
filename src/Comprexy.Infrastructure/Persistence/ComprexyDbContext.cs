@@ -26,6 +26,8 @@ public class ComprexyDbContext : DbContext
 
     public DbSet<ConversationToolDefinition> ConversationToolDefinitions => Set<ConversationToolDefinition>();
 
+    public DbSet<ConversationToolCallMap> ConversationToolCallMaps => Set<ConversationToolCallMap>();
+
     protected override void ConfigureConventions(ModelConfigurationBuilder configurationBuilder)
     {
         configurationBuilder

@@ -3,6 +3,7 @@ using Comprexy.Application.Abstractions;
 using Comprexy.Application.Configuration;
 using Comprexy.Application.Models;
 using Comprexy.Application.Services;
+using Comprexy.Application.Services.ToolIr;
 using Comprexy.Domain.Entities;
 using Comprexy.Domain.Enums;
 using Microsoft.Extensions.Hosting;
@@ -42,6 +43,9 @@ public class ProxyChatCompletionServiceTests
 
     private ToolSchemaOptions _toolSchemaOptions = new() { Mode = ToolSchemaMode.Off };
 
+    private InMemoryConversationToolCallMapRepository _callIdMapRepo = new();
+    private int _mapSaveChangesCount;
+
     private int _estimatedTokensToReturn = 10;
 
     private int _wrapUpTipTokens = 5;
@@ -66,6 +70,8 @@ public class ProxyChatCompletionServiceTests
         && request.Messages[^1].Role == MessageRole.User
         && request.Messages[^1].Content == PromptFactory.BuildInlineWrapUpUserMessage().Content;
 
+    private readonly Dictionary<Guid, ConversationToolCatalog> _toolCatalogs = new();
+
     private ProxyChatCompletionService CreateService(
         IConversationRequestGate? requestGate = null,
         IConversationMetricsRecorder? metricsRecorder = null)
@@ -76,9 +82,14 @@ public class ProxyChatCompletionServiceTests
         _tokenEstimator.Setup(t => t.CountPromptTokens(It.IsAny<IEnumerable<ChatMessage>>(), It.IsAny<JsonElement?>()))
             .Returns(() => _estimatedTokensToReturn);
 
+        _toolCatalogs.Clear();
         _toolCatalogRepository
             .Setup(r => r.GetByConversationIdAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync((ConversationToolCatalog?)null);
+            .ReturnsAsync((Guid id, CancellationToken _) =>
+                _toolCatalogs.TryGetValue(id, out var catalog) ? catalog : null);
+        _toolCatalogRepository
+            .Setup(r => r.Add(It.IsAny<ConversationToolCatalog>()))
+            .Callback<ConversationToolCatalog>(c => _toolCatalogs[c.ConversationId] = c);
         _toolDefinitionRepository
             .Setup(r => r.GetByConversationIdAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync([]);
@@ -87,6 +98,26 @@ public class ProxyChatCompletionServiceTests
             .ReturnsAsync((CompressionEvent?)null);
         _hostLifetime.Setup(h => h.ApplicationStopping).Returns(CancellationToken.None);
         SetupWrapUpTipTokenEstimate(_wrapUpTipTokens);
+
+        var toolSchemaOptions = Options.Create(_toolSchemaOptions);
+        var endpointResolver = new ProviderEndpointResolver(
+            Options.Create(new ProviderOptions { BaseUrl = "http://upstream", ApiKey = "k", Model = _providerModel }),
+            Options.Create(_compressionOptions));
+        var fileCache = new ToolIrFileBodyCache(toolSchemaOptions);
+        var callIdHotCache = new ToolIrCallIdMap(_clock.Object, toolSchemaOptions);
+        _callIdMapRepo = new InMemoryConversationToolCallMapRepository();
+        _mapSaveChangesCount = 0;
+        var callIdMapService = new ToolIrCallIdMapService(
+            callIdHotCache,
+            new InMemoryToolIrCallIdMapUnitOfWorkFactory(
+                _callIdMapRepo,
+                () =>
+                {
+                    _mapSaveChangesCount++;
+                    return Task.CompletedTask;
+                }),
+            _clock.Object,
+            toolSchemaOptions);
 
         return new ProxyChatCompletionService(
             new ConversationIdentityResolver(),
@@ -98,23 +129,30 @@ public class ProxyChatCompletionServiceTests
             new ContextBuilder(),
             new ContextBudgetEvaluator(Options.Create(_policy)),
             new RecentContextSelector(Options.Create(_policy)),
-            new ProviderEndpointResolver(
-                Options.Create(new ProviderOptions { BaseUrl = "http://upstream", ApiKey = "k", Model = _providerModel }),
-                Options.Create(_compressionOptions)),
+            endpointResolver,
             _chatCompletionClient.Object,
             _compressionQueue.Object,
             _compressionOrchestrator.Object,
             _compressionEventRepository.Object,
             PromptFactory,
             new ToolSchemaOrchestrator(
-                Options.Create(_toolSchemaOptions),
+                toolSchemaOptions,
                 new ToolCatalogParser(),
-                new ToolSchemaPromptFactory("tool schema rules"),
                 new ToolArgumentValidator(),
+                new ToolIrSchemaMapper(
+                    toolSchemaOptions,
+                    Options.Create(_compressionOptions),
+                    endpointResolver,
+                    _chatCompletionClient.Object,
+                    _tokenEstimator.Object,
+                    metricsRecorder ?? Mock.Of<IConversationMetricsRecorder>(m => m.IsEnabled == false),
+                    NullLogger<ToolIrSchemaMapper>.Instance),
+                new ToolIrPlanner(toolSchemaOptions, fileCache),
+                new ToolIrResultDistiller(toolSchemaOptions, fileCache),
+                callIdMapService,
                 _toolCatalogRepository.Object,
                 _toolDefinitionRepository.Object,
                 _chatCompletionClient.Object,
-                _tokenEstimator.Object,
                 _clock.Object,
                 NullLogger<ToolSchemaOrchestrator>.Instance),
             metricsRecorder ?? Mock.Of<IConversationMetricsRecorder>(m => m.IsEnabled == false),
@@ -594,7 +632,7 @@ public class ProxyChatCompletionServiceTests
     }
 
     [Fact]
-    public async Task HandleAsync_BeforeFirstCompression_ForwardsFullClientMessages()
+    public async Task HandleAsync_BeforeFirstCompression_RebuildsFromStoredMessages_NotClientWire()
     {
         UpstreamRequest? forwarded = null;
         _conversationRepository.Setup(r => r.FindByKeyAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
@@ -611,382 +649,267 @@ public class ProxyChatCompletionServiceTests
         await service.HandleAsync(request, CancellationToken.None);
 
         Assert.NotNull(forwarded);
-        Assert.False(forwarded!.ReplaceMessages);
-        Assert.Equal(UpstreamRequestPurpose.Chat, forwarded.Purpose);
-        Assert.True(forwarded.OriginalClientRequest.HasValue);
-        Assert.True(forwarded.OriginalClientRequest!.Value.TryGetProperty("tools", out _));
-
-        // Client history is preserved without ConversationId injection.
-        Assert.Equal(request.Messages.Count, forwarded.Messages.Count);
-        Assert.Equal(request.Messages[0].Content, forwarded.Messages[0].Content);
-        Assert.Equal(request.Messages[1].Content, forwarded.Messages[1].Content);
-        Assert.DoesNotContain(forwarded.Messages, m => m.Content.Contains("ConversationId:", StringComparison.Ordinal));
-    }
-
-    [Fact]
-    public async Task HandleAsync_AfterWorkingMemoryExists_IncludesAllUnfoldedMessagesNotJustRecentWindow()
-    {
-        UpstreamRequest? forwarded = null;
-        var conversation = Conversation.Create("header:conv-wm", DateTimeOffset.UtcNow);
-        conversation.CaptureSystemPromptIfAbsent("You are helpful.");
-        var workingMemory = WorkingMemory.Create(
-            conversation.Id,
-            1,
-            "# Working Memory\n## Current Goal\nShip it",
-            20,
-            DateTimeOffset.UtcNow);
-        var now = DateTimeOffset.UtcNow;
-        // More unfolded messages than CompressionRetain — all must be forwarded.
-        var stored = Enumerable.Range(0, 12)
-            .Select(i => ConversationMessage.Create(
-                conversation.Id,
-                i,
-                i % 2 == 0 ? MessageRole.User : MessageRole.Assistant,
-                $"msg-{i}",
-                5,
-                now))
-            .ToList();
-
-        _conversationRepository.Setup(r => r.FindByKeyAsync("header:conv-wm", It.IsAny<CancellationToken>()))
-            .ReturnsAsync(conversation);
-        _messageRepository.Setup(r => r.GetByConversationIdAsync(conversation.Id, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(stored);
-        _workingMemoryRepository.Setup(r => r.GetLatestAsync(conversation.Id, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(workingMemory);
-        conversation.SetSyncedMessageCount(12, now);
-        _chatCompletionClient
-            .Setup(c => c.CompleteAsync(It.IsAny<ProviderEndpoint>(), It.IsAny<UpstreamRequest>(), It.IsAny<CancellationToken>()))
-            .Callback<ProviderEndpoint, UpstreamRequest, CancellationToken>((_, request, _) => forwarded = request)
-            .ReturnsAsync(new UpstreamChatResult("ack", "stop", 10, 2));
-
-        var service = CreateService();
-        await service.HandleAsync(BuildRequest(conversationHeader: "conv-wm", userContent: "next tip"), CancellationToken.None);
-
-        Assert.NotNull(forwarded);
         Assert.True(forwarded!.ReplaceMessages);
-        Assert.Contains(forwarded.Messages, m => m.Role == MessageRole.System && m.Content.Contains("Working Memory"));
-        // system + WM system + 12 unfolded prior + tip = at least 14 (tip may also persist as 13th)
-        Assert.True(forwarded.Messages.Count >= 14, $"Expected all unfolded history; got {forwarded.Messages.Count}");
-        Assert.Contains(forwarded.Messages, m => m.Content == "msg-0");
-        Assert.Equal("next tip", forwarded.Messages[^1].Content);
+        Assert.Equal(UpstreamRequestPurpose.Chat, forwarded.Purpose);
+        Assert.Equal(MessageRole.System, forwarded.Messages[0].Role);
+        Assert.Equal(request.Messages[^1].Content, forwarded.Messages[^1].Content);
+        Assert.DoesNotContain(forwarded.Messages, m => m.Content.Contains("ConversationId:", StringComparison.Ordinal));
+        // No WM block before first compression.
+        Assert.DoesNotContain(
+            forwarded.Messages,
+            m => m.Role == MessageRole.System && m.Content.Contains("compressed historical context", StringComparison.Ordinal));
     }
 
     [Fact]
-    public async Task HandleAsync_LiveChat_DedupesOlderDuplicateFileReadsFromOutgoingContext()
+    public async Task HandleAsync_PreWmVirtual_UsesStoredIrHistory_NotNativeClientToolCalls()
     {
-        UpstreamRequest? forwarded = null;
-        var conversation = Conversation.Create("header:conv-dedupe", DateTimeOffset.UtcNow);
-        conversation.CaptureSystemPromptIfAbsent("You are helpful.");
-        var workingMemory = WorkingMemory.Create(
-            conversation.Id,
-            1,
-            "# Working Memory\n## Current Goal\nShip it",
-            20,
-            DateTimeOffset.UtcNow);
+        _toolSchemaOptions = new ToolSchemaOptions { Mode = ToolSchemaMode.Virtual };
+        _estimatedTokensToReturn = 10;
+        const string irCallId = "call_ir_range_1";
+        const string clientCallId = "cur_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
         var now = DateTimeOffset.UtcNow;
-        const string path = "/workspace/repo/src/Entity.cs";
 
-        ConversationMessage ToolRead(int sequence, string toolCallId, string marker) =>
-            ConversationMessage.Create(
-                conversation.Id,
-                sequence,
-                MessageRole.Tool,
-                $"<path>{path}</path>\n{marker}",
-                20,
-                now,
-                $"{{\"role\":\"tool\",\"tool_call_id\":\"{toolCallId}\",\"content\":\"<path>{path}</path>\\n{marker}\"}}");
+        var conversation = Conversation.Create("header:pre-wm-ir", now);
+        conversation.CaptureSystemPromptIfAbsent("You are helpful.");
+        // Client previously synced: system + user + native assistant + native tool (4 messages).
+        conversation.SetSyncedMessageCount(4, now);
 
-        ConversationMessage AssistantRead(int sequence, string toolCallId) =>
-            ConversationMessage.Create(
-                conversation.Id,
-                sequence,
-                MessageRole.Assistant,
-                "re-read",
-                5,
-                now,
-                $"{{\"role\":\"assistant\",\"content\":\"re-read\",\"tool_calls\":[{{\"id\":\"{toolCallId}\",\"type\":\"function\",\"function\":{{\"name\":\"Read\",\"arguments\":\"{{\\\"path\\\":\\\"{path}\\\"}}\"}}}}]}}");
+        var irAssistantWire =
+            "{\"role\":\"assistant\",\"content\":\"\\n\\n\",\"tool_calls\":[{\"id\":\"" + irCallId +
+            "\",\"type\":\"function\",\"function\":{\"name\":\"" + ToolSchemaConstants.FileRangeToolName +
+            "\",\"arguments\":\"{\\\"path\\\":\\\"docs/a.md\\\",\\\"start_line\\\":1,\\\"end_line\\\":20}\"}}]}";
+        var irObservation =
+            "{\"type\":\"file_range\",\"path\":\"docs/a.md\",\"start_line\":1,\"end_line\":20,\"truncated\":false,\"content\":\"# Doc\\nbody\"}";
+        var irToolWire =
+            "{\"role\":\"tool\",\"tool_call_id\":\"" + irCallId + "\",\"content\":" +
+            JsonSerializer.Serialize(irObservation) + "}";
 
         var stored = new List<ConversationMessage>
         {
-            ConversationMessage.Create(conversation.Id, 0, MessageRole.User, "start", 3, now),
-            AssistantRead(1, "c1"),
-            ToolRead(2, "c1", "OLD_COPY"),
-            AssistantRead(3, "c2"),
-            ToolRead(4, "c2", "OLD_COPY_2"),
-            AssistantRead(5, "c3"),
-            ToolRead(6, "c3", "NEWEST_COPY"),
+            ConversationMessage.Create(conversation.Id, 0, MessageRole.User, "load personas", 5, now),
+            ConversationMessage.Create(
+                conversation.Id, 1, MessageRole.Assistant, "[tool_calls: comprexy_read_file_range]", 5, now, irAssistantWire),
+            ConversationMessage.Create(conversation.Id, 2, MessageRole.Tool, irObservation, 5, now, irToolWire)
         };
 
-        conversation.SetSyncedMessageCount(7, now);
-        _conversationRepository.Setup(r => r.FindByKeyAsync("header:conv-dedupe", It.IsAny<CancellationToken>()))
+        _conversationRepository.Setup(r => r.FindByKeyAsync("header:pre-wm-ir", It.IsAny<CancellationToken>()))
             .ReturnsAsync(conversation);
         _messageRepository.Setup(r => r.GetByConversationIdAsync(conversation.Id, It.IsAny<CancellationToken>()))
             .ReturnsAsync(stored);
         _workingMemoryRepository.Setup(r => r.GetLatestAsync(conversation.Id, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(workingMemory);
+            .ReturnsAsync((WorkingMemory?)null);
+
+        UpstreamRequest? forwarded = null;
+        SetupCompressionMapperForNonFileTools("read", "bash");
         _chatCompletionClient
-            .Setup(c => c.CompleteAsync(It.IsAny<ProviderEndpoint>(), It.IsAny<UpstreamRequest>(), It.IsAny<CancellationToken>()))
+            .Setup(c => c.CompleteAsync(
+                It.IsAny<ProviderEndpoint>(),
+                It.Is<UpstreamRequest>(r => r.Purpose == UpstreamRequestPurpose.Chat),
+                It.IsAny<CancellationToken>()))
             .Callback<ProviderEndpoint, UpstreamRequest, CancellationToken>((_, request, _) => forwarded = request)
             .ReturnsAsync(new UpstreamChatResult("ack", "stop", 10, 2));
 
         var service = CreateService();
-        await service.HandleAsync(
-            BuildRequest(conversationHeader: "conv-dedupe", userContent: "continue"),
-            CancellationToken.None);
+
+        // Client wire still carries native remapped tool_calls; only the tip is new.
+        var payload = new
+        {
+            model = "client-model",
+            tools = new object[]
+            {
+                new { type = "function", function = new { name = "read" } },
+                new { type = "function", function = new { name = "bash" } }
+            },
+            messages = new object[]
+            {
+                new { role = "system", content = "You are helpful." },
+                new { role = "user", content = "load personas" },
+                new
+                {
+                    role = "assistant",
+                    content = "\n\n",
+                    tool_calls = new object[]
+                    {
+                        new
+                        {
+                            id = clientCallId,
+                            type = "function",
+                            function = new
+                            {
+                                name = "read",
+                                arguments = "{\"filePath\":\"docs/a.md\",\"offset\":1,\"limit\":20}"
+                            }
+                        }
+                    }
+                },
+                new
+                {
+                    role = "tool",
+                    tool_call_id = clientCallId,
+                    content = "<path>docs/a.md</path><content>\n1: # Doc\n</content>"
+                },
+                new { role = "user", content = "continue" }
+            }
+        };
+        using var document = JsonDocument.Parse(JsonSerializer.Serialize(payload));
+        var request = Comprexy.Api.Mapping.ChatCompletionRequestParser.Parse(
+            document.RootElement.Clone(),
+            "pre-wm-ir");
+
+        await service.HandleAsync(request, CancellationToken.None);
 
         Assert.NotNull(forwarded);
-        var toolContents = forwarded!.Messages
-            .Where(m => m.Role == MessageRole.Tool)
-            .Select(m => m.Content ?? string.Empty)
+        Assert.True(forwarded!.ReplaceMessages);
+
+        var assistantWires = forwarded.Messages
+            .Where(m => m.Role == MessageRole.Assistant)
+            .Select(m => m.RawWireMessage?.GetRawText() ?? m.Content)
             .ToList();
-        Assert.Single(toolContents);
-        Assert.Contains("NEWEST_COPY", toolContents[0]);
-        Assert.DoesNotContain(toolContents, c => c.Contains("OLD_COPY", StringComparison.Ordinal));
-        Assert.All(stored, m => Assert.False(m.IsFolded));
+        Assert.Contains(assistantWires, w => w != null && w.Contains(ToolSchemaConstants.FileRangeToolName, StringComparison.Ordinal));
+        Assert.DoesNotContain(
+            assistantWires,
+            w => w != null &&
+                 w.Contains("\"name\":\"read\"", StringComparison.Ordinal) &&
+                 !w.Contains(ToolSchemaConstants.FileRangeToolName, StringComparison.Ordinal));
+
+        var toolContents = forwarded.Messages
+            .Where(m => m.Role == MessageRole.Tool)
+            .Select(m => m.Content)
+            .ToList();
+        Assert.Contains(toolContents, c => c != null && c.Contains("\"type\":\"file_range\"", StringComparison.Ordinal));
+        Assert.DoesNotContain(toolContents, c => c != null && c.Contains("<path>", StringComparison.Ordinal));
         Assert.Equal("continue", forwarded.Messages[^1].Content);
     }
 
     [Fact]
-    public async Task HandleAsync_LiveChat_WhenDedupeDisabled_KeepsDuplicateFileReads()
+    public async Task HandleAsync_Virtual_FirstTurnClientNativeFileHistory_NotPersistedOrForwarded()
     {
-        _policy.DedupeDuplicateFileReads = false;
+        _toolSchemaOptions = new ToolSchemaOptions { Mode = ToolSchemaMode.Virtual };
+        _estimatedTokensToReturn = 10;
+        const string clientCallId = "cur_firstturnpoisonaaaaaaaaaaaaaaaa";
+
+        var addedMessages = new List<ConversationMessage>();
+        _messageRepository.Setup(r => r.Add(It.IsAny<ConversationMessage>()))
+            .Callback<ConversationMessage>(m => addedMessages.Add(m));
+        _conversationRepository
+            .Setup(r => r.FindByKeyAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((Conversation?)null);
+        _conversationRepository
+            .Setup(r => r.Add(It.IsAny<Conversation>()));
+        _messageRepository
+            .Setup(r => r.GetByConversationIdAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(() => addedMessages.ToList());
+        _workingMemoryRepository
+            .Setup(r => r.GetLatestAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((WorkingMemory?)null);
+
+        SetupCompressionMapperForReadFileAndBash();
         UpstreamRequest? forwarded = null;
-        var conversation = Conversation.Create("header:conv-dedupe-off", DateTimeOffset.UtcNow);
-        conversation.CaptureSystemPromptIfAbsent("You are helpful.");
-        var workingMemory = WorkingMemory.Create(
-            conversation.Id,
-            1,
-            "# Working Memory\n## Current Goal\nShip it",
-            20,
-            DateTimeOffset.UtcNow);
-        var now = DateTimeOffset.UtcNow;
-        const string path = "/workspace/repo/src/Entity.cs";
-
-        ConversationMessage ToolRead(int sequence, string toolCallId, string marker) =>
-            ConversationMessage.Create(
-                conversation.Id,
-                sequence,
-                MessageRole.Tool,
-                $"<path>{path}</path>\n{marker}",
-                20,
-                now,
-                $"{{\"role\":\"tool\",\"tool_call_id\":\"{toolCallId}\",\"content\":\"<path>{path}</path>\\n{marker}\"}}");
-
-        ConversationMessage AssistantRead(int sequence, string toolCallId) =>
-            ConversationMessage.Create(
-                conversation.Id,
-                sequence,
-                MessageRole.Assistant,
-                "re-read",
-                5,
-                now,
-                $"{{\"role\":\"assistant\",\"content\":\"re-read\",\"tool_calls\":[{{\"id\":\"{toolCallId}\",\"type\":\"function\",\"function\":{{\"name\":\"Read\",\"arguments\":\"{{\\\"path\\\":\\\"{path}\\\"}}\"}}}}]}}");
-
-        var stored = new List<ConversationMessage>
-        {
-            ConversationMessage.Create(conversation.Id, 0, MessageRole.User, "start", 3, now),
-            AssistantRead(1, "c1"),
-            ToolRead(2, "c1", "OLD_COPY"),
-            AssistantRead(3, "c2"),
-            ToolRead(4, "c2", "NEWEST_COPY"),
-        };
-
-        conversation.SetSyncedMessageCount(5, now);
-        _conversationRepository.Setup(r => r.FindByKeyAsync("header:conv-dedupe-off", It.IsAny<CancellationToken>()))
-            .ReturnsAsync(conversation);
-        _messageRepository.Setup(r => r.GetByConversationIdAsync(conversation.Id, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(stored);
-        _workingMemoryRepository.Setup(r => r.GetLatestAsync(conversation.Id, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(workingMemory);
         _chatCompletionClient
-            .Setup(c => c.CompleteAsync(It.IsAny<ProviderEndpoint>(), It.IsAny<UpstreamRequest>(), It.IsAny<CancellationToken>()))
+            .Setup(c => c.CompleteAsync(
+                It.IsAny<ProviderEndpoint>(),
+                It.Is<UpstreamRequest>(r => r.Purpose == UpstreamRequestPurpose.Chat),
+                It.IsAny<CancellationToken>()))
             .Callback<ProviderEndpoint, UpstreamRequest, CancellationToken>((_, request, _) => forwarded = request)
-            .ReturnsAsync(new UpstreamChatResult("ack", "stop", 10, 2));
+            .ReturnsAsync(new UpstreamChatResult("ok", "stop", 10, 2));
 
         var service = CreateService();
-        await service.HandleAsync(
-            BuildRequest(conversationHeader: "conv-dedupe-off", userContent: "continue"),
-            CancellationToken.None);
 
-        Assert.NotNull(forwarded);
-        var toolContents = forwarded!.Messages
-            .Where(m => m.Role == MessageRole.Tool)
-            .Select(m => m.Content ?? string.Empty)
-            .ToList();
-        Assert.Equal(2, toolContents.Count);
-        Assert.Contains(toolContents, c => c.Contains("OLD_COPY", StringComparison.Ordinal));
-        Assert.Contains(toolContents, c => c.Contains("NEWEST_COPY", StringComparison.Ordinal));
-    }
-
-    [Fact]
-    public async Task HandleAsync_AfterEmergencyStillOverHardLimit_AppliesSendTimeTrimThenForwards()
-    {
-        _policy.SoftLimitTokens = 50;
-        _policy.HardLimitTokens = 100;
-        _policy.EmergencyCompression = EmergencyCompressionMode.Sync;
-        _policy.EmergencyRecentMessageCount = 2;
-
-        UpstreamRequest? forwarded = null;
-        var conversation = Conversation.Create("header:conv-trim", DateTimeOffset.UtcNow);
-        conversation.CaptureSystemPromptIfAbsent("You are helpful.");
-        var workingMemory = WorkingMemory.Create(
-            conversation.Id,
-            1,
-            "# Working Memory\n## Current Goal\nShip it",
-            20,
-            DateTimeOffset.UtcNow);
-        var now = DateTimeOffset.UtcNow;
-        var stored = Enumerable.Range(0, 10)
-            .Select(i => ConversationMessage.Create(
-                conversation.Id,
-                i,
-                i % 2 == 0 ? MessageRole.User : MessageRole.Assistant,
-                $"msg-{i}",
-                5,
-                now))
-            .ToList();
-
-        conversation.SetSyncedMessageCount(10, now);
-        _conversationRepository.Setup(r => r.FindByKeyAsync("header:conv-trim", It.IsAny<CancellationToken>()))
-            .ReturnsAsync(conversation);
-        _messageRepository.Setup(r => r.GetByConversationIdAsync(conversation.Id, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(stored);
-        _workingMemoryRepository.Setup(r => r.GetLatestAsync(conversation.Id, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(workingMemory);
-        _compressionOrchestrator
-            .Setup(o => o.RunAsync(conversation.Id, CompressionMode.Emergency, It.IsAny<CancellationToken>(), It.IsAny<string?>()))
-            .ReturnsAsync((CompressionEvent?)null);
-
-        _chatCompletionClient
-            .Setup(c => c.CompleteAsync(It.IsAny<ProviderEndpoint>(), It.IsAny<UpstreamRequest>(), It.IsAny<CancellationToken>()))
-            .Callback<ProviderEndpoint, UpstreamRequest, CancellationToken>((_, request, _) => forwarded = request)
-            .ReturnsAsync(new UpstreamChatResult("ack", "stop", 10, 2));
-
-        var service = CreateService();
-        var estimates = new Queue<int>([150, 150, 80]);
-        _tokenEstimator
-            .Setup(t => t.CountPromptTokens(It.IsAny<IEnumerable<ChatMessage>>(), It.IsAny<JsonElement?>()))
-            .Returns(() => estimates.Dequeue());
-
-        await service.HandleAsync(BuildRequest(conversationHeader: "conv-trim", userContent: "next tip"), CancellationToken.None);
-
-        Assert.NotNull(forwarded);
-        Assert.DoesNotContain(forwarded!.Messages, m => m.Content == "msg-0");
-        Assert.Contains(forwarded.Messages, m => m.Content == "msg-9");
-        Assert.Equal("next tip", forwarded.Messages[^1].Content);
-        _compressionOrchestrator.Verify(
-            o => o.RunAsync(conversation.Id, CompressionMode.Emergency, It.IsAny<CancellationToken>(), It.IsAny<string?>()),
-            Times.Once);
-        _chatCompletionClient.Verify(
-            c => c.CompleteAsync(It.IsAny<ProviderEndpoint>(), It.IsAny<UpstreamRequest>(), It.IsAny<CancellationToken>()),
-            Times.Once);
-    }
-
-    [Fact]
-    public async Task HandleAsync_AfterEmergencyWithToolSchema_ReEstimatesFromPostEmergencyRewrite()
-    {
-        // Regression: post-emergency token estimate must re-prepare ToolSchema against the
-        // rebuilt outgoing context. Reusing the pre-emergency rewrite would keep the old
-        // OutgoingMessages and drive a false hard-limit / trim decision.
-        _toolSchemaOptions = new ToolSchemaOptions
+        var payload = new
         {
-            Mode = ToolSchemaMode.CompactIndex,
-            MinToolCountToActivate = 1
-        };
-        _policy.SoftLimitTokens = 50;
-        _policy.HardLimitTokens = 100;
-        _policy.EmergencyCompression = EmergencyCompressionMode.Sync;
-        _policy.EmergencyRecentMessageCount = 2;
-
-        UpstreamRequest? forwarded = null;
-        var conversation = Conversation.Create("header:conv-schema-emergency", DateTimeOffset.UtcNow);
-        conversation.CaptureSystemPromptIfAbsent("You are helpful.");
-        var workingMemory = WorkingMemory.Create(
-            conversation.Id,
-            1,
-            "# Working Memory\n## Current Goal\nShip it",
-            20,
-            DateTimeOffset.UtcNow);
-        var now = DateTimeOffset.UtcNow;
-        var stored = Enumerable.Range(0, 10)
-            .Select(i => ConversationMessage.Create(
-                conversation.Id,
-                i,
-                i % 2 == 0 ? MessageRole.User : MessageRole.Assistant,
-                $"msg-{i}",
-                5,
-                now))
-            .ToList();
-
-        conversation.SetSyncedMessageCount(10, now);
-        _conversationRepository.Setup(r => r.FindByKeyAsync("header:conv-schema-emergency", It.IsAny<CancellationToken>()))
-            .ReturnsAsync(conversation);
-
-        var messageReads = 0;
-        _messageRepository.Setup(r => r.GetByConversationIdAsync(conversation.Id, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(() =>
+            model = "client-model",
+            tools = new object[]
             {
-                messageReads++;
-                if (messageReads == 1)
+                new
                 {
-                    return stored;
-                }
-
-                // After emergency: older history is folded; only the tip window remains raw.
-                foreach (var message in stored.Where(m => m.Sequence < 8))
-                {
-                    if (!message.IsFolded)
+                    type = "function",
+                    function = new
                     {
-                        message.MarkFoldedInto(workingMemory.Version);
+                        name = "read",
+                        description = "Read a file.",
+                        parameters = new
+                        {
+                            type = "object",
+                            properties = new { filePath = new { type = "string" } },
+                            required = new[] { "filePath" }
+                        }
+                    }
+                },
+                new
+                {
+                    type = "function",
+                    function = new
+                    {
+                        name = "bash",
+                        description = "Run a shell command.",
+                        parameters = new
+                        {
+                            type = "object",
+                            properties = new { command = new { type = "string" } },
+                            required = new[] { "command" }
+                        }
                     }
                 }
-
-                return stored;
-            });
-        _workingMemoryRepository.Setup(r => r.GetLatestAsync(conversation.Id, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(workingMemory);
-        _compressionOrchestrator
-            .Setup(o => o.RunAsync(conversation.Id, CompressionMode.Emergency, It.IsAny<CancellationToken>(), It.IsAny<string?>()))
-            .ReturnsAsync((CompressionEvent?)null);
-
-        _chatCompletionClient
-            .Setup(c => c.CompleteAsync(It.IsAny<ProviderEndpoint>(), It.IsAny<UpstreamRequest>(), It.IsAny<CancellationToken>()))
-            .Callback<ProviderEndpoint, UpstreamRequest, CancellationToken>((_, request, _) => forwarded = request)
-            .ReturnsAsync(new UpstreamChatResult("ack", "stop", 10, 2));
-
-        var estimateSnapshots = new List<IReadOnlyList<string>>();
-        var service = CreateService();
-        _tokenEstimator
-            .Setup(t => t.CountPromptTokens(It.IsAny<IEnumerable<ChatMessage>>(), It.IsAny<JsonElement?>()))
-            .Callback<IEnumerable<ChatMessage>, JsonElement?>((messages, _) =>
+            },
+            messages = new object[]
             {
-                estimateSnapshots.Add(messages.Select(m => m.Content ?? string.Empty).ToList());
-            })
-            .Returns<IEnumerable<ChatMessage>, JsonElement?>((messages, _) =>
-            {
-                // Pre-emergency rewrite still includes folded history → over hard.
-                // Post-emergency rewrite drops msg-0..msg-7 → under hard (no trim).
-                return messages.Any(m => m.Content == "msg-0") ? 150 : 80;
-            });
+                new { role = "system", content = "You are helpful." },
+                new { role = "user", content = "load personas" },
+                new
+                {
+                    role = "assistant",
+                    content = "",
+                    tool_calls = new object[]
+                    {
+                        new
+                        {
+                            id = clientCallId,
+                            type = "function",
+                            function = new
+                            {
+                                name = "read",
+                                arguments = "{\"filePath\":\"docs/a.md\"}"
+                            }
+                        }
+                    }
+                },
+                new
+                {
+                    role = "tool",
+                    tool_call_id = clientCallId,
+                    content = "<path>docs/a.md</path><content>\n1: # Doc\n</content>"
+                },
+                new { role = "user", content = "summarize" }
+            }
+        };
+        using var document = JsonDocument.Parse(JsonSerializer.Serialize(payload));
+        var request = Comprexy.Api.Mapping.ChatCompletionRequestParser.Parse(
+            document.RootElement.Clone(),
+            "first-turn-native");
 
-        await service.HandleAsync(
-            BuildRequest(conversationHeader: "conv-schema-emergency", userContent: "next tip"),
-            CancellationToken.None);
+        await service.HandleAsync(request, CancellationToken.None);
+
+        Assert.DoesNotContain(
+            addedMessages,
+            m => m.Role == MessageRole.Assistant &&
+                 (m.RawWireJson?.Contains("\"name\":\"read\"", StringComparison.Ordinal) ?? false));
+        Assert.DoesNotContain(
+            addedMessages,
+            m => m.Role == MessageRole.Tool &&
+                 (m.Content?.Contains("<path>", StringComparison.Ordinal) ?? false));
+        Assert.Contains(addedMessages, m => m.Role == MessageRole.User && m.Content == "load personas");
+        Assert.Contains(addedMessages, m => m.Role == MessageRole.User && m.Content == "summarize");
 
         Assert.NotNull(forwarded);
-        Assert.True(estimateSnapshots.Count >= 2);
-        Assert.Contains(estimateSnapshots[0], content => content == "msg-0");
-        var postEmergencyEstimate = estimateSnapshots
-            .Skip(1)
-            .First(snapshot => snapshot.Any(content => content.Contains("Working Memory", StringComparison.Ordinal)));
-        Assert.DoesNotContain(postEmergencyEstimate, content => content == "msg-0");
-        Assert.Contains(postEmergencyEstimate, content => content == "msg-9");
-        Assert.DoesNotContain(forwarded!.Messages, m => m.Content == "msg-0");
-        Assert.Contains(forwarded.Messages, m => m.Content == "msg-9");
-        Assert.True(forwarded.RewrittenClientRequest.HasValue);
-        _compressionOrchestrator.Verify(
-            o => o.RunAsync(conversation.Id, CompressionMode.Emergency, It.IsAny<CancellationToken>(), It.IsAny<string?>()),
-            Times.Once);
+        Assert.DoesNotContain(
+            forwarded!.Messages,
+            m => m.Role == MessageRole.Assistant &&
+                 (m.RawWireMessage?.GetRawText().Contains("\"name\":\"read\"", StringComparison.Ordinal) ?? false));
+        Assert.DoesNotContain(
+            forwarded.Messages,
+            m => m.Role == MessageRole.Tool &&
+                 (m.Content?.Contains("<path>", StringComparison.Ordinal) ?? false));
+        Assert.Equal("summarize", forwarded.Messages[^1].Content);
     }
 
     [Fact]
@@ -1102,79 +1025,212 @@ public class ProxyChatCompletionServiceTests
     }
 
     [Fact]
-    public async Task HandleAsync_CompactIndexWithTools_RewritesUpstreamRequestToMetaToolOnly()
+    public async Task HandleAsync_VirtualWithTools_RewritesOutboundToolsSurface()
     {
         _toolSchemaOptions = new ToolSchemaOptions
         {
-            Mode = ToolSchemaMode.CompactIndex,
-            MinToolCountToActivate = 1
+            Mode = ToolSchemaMode.Virtual
         };
         _estimatedTokensToReturn = 10;
 
         UpstreamRequest? forwarded = null;
-        JsonElement? rewrittenForEstimate = null;
         _conversationRepository.Setup(r => r.FindByKeyAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync((Conversation?)null);
         _workingMemoryRepository.Setup(r => r.GetLatestAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync((WorkingMemory?)null);
+        SetupCompressionMapperForNonFileTools("lookup");
         _chatCompletionClient
-            .Setup(c => c.CompleteAsync(It.IsAny<ProviderEndpoint>(), It.IsAny<UpstreamRequest>(), It.IsAny<CancellationToken>()))
+            .Setup(c => c.CompleteAsync(
+                It.IsAny<ProviderEndpoint>(),
+                It.Is<UpstreamRequest>(r => r.Purpose == UpstreamRequestPurpose.Chat),
+                It.IsAny<CancellationToken>()))
             .Callback<ProviderEndpoint, UpstreamRequest, CancellationToken>((_, request, _) => forwarded = request)
             .ReturnsAsync(new UpstreamChatResult("ack", "stop", 10, 2));
 
         var service = CreateService();
-        _tokenEstimator
-            .Setup(t => t.CountPromptTokens(It.IsAny<IEnumerable<ChatMessage>>(), It.IsAny<JsonElement?>()))
-            .Callback<IEnumerable<ChatMessage>, JsonElement?>((_, rewritten) =>
-            {
-                if (rewritten is JsonElement element &&
-                    element.TryGetProperty("tools", out var tools) &&
-                    tools.GetArrayLength() == 2 &&
-                    tools[0].GetProperty("function").GetProperty("name").GetString() == ToolSchemaConstants.MetaToolName &&
-                    tools[1].GetProperty("function").GetProperty("name").GetString() ==
-                    ToolSchemaConstants.ConversationIdMetaToolName)
-                {
-                    rewrittenForEstimate = element;
-                }
-            })
-            .Returns(() => _estimatedTokensToReturn);
         await service.HandleAsync(BuildRequest(), CancellationToken.None);
 
         Assert.NotNull(forwarded);
         Assert.True(forwarded!.RewrittenClientRequest.HasValue);
-        Assert.True(forwarded.ReplaceMessages);
-        Assert.Contains(
+        Assert.DoesNotContain(
             forwarded.Messages,
-            m => m.Role == MessageRole.System && m.Content.Contains("tool schema rules", StringComparison.Ordinal));
+            m => m.Role == MessageRole.System &&
+                 (m.Content?.Contains("tool schema rules", StringComparison.Ordinal) == true ||
+                  m.Content?.Contains("compact index", StringComparison.OrdinalIgnoreCase) == true));
         Assert.True(forwarded.RewrittenClientRequest!.Value.TryGetProperty("tools", out var rewrittenTools));
-        Assert.Equal(2, rewrittenTools.GetArrayLength());
-        Assert.Equal(
-            ToolSchemaConstants.MetaToolName,
-            rewrittenTools[0].GetProperty("function").GetProperty("name").GetString());
-        Assert.Equal(
-            ToolSchemaConstants.ConversationIdMetaToolName,
-            rewrittenTools[1].GetProperty("function").GetProperty("name").GetString());
-        Assert.True(forwarded.OriginalClientRequest!.Value.TryGetProperty("tools", out var originalTools));
-        Assert.Equal(1, originalTools.GetArrayLength());
-        Assert.Equal("lookup", originalTools[0].GetProperty("function").GetProperty("name").GetString());
-        Assert.True(rewrittenForEstimate.HasValue);
-        Assert.Equal(
-            ToolSchemaConstants.MetaToolName,
-            rewrittenForEstimate!.Value.GetProperty("tools")[0].GetProperty("function").GetProperty("name").GetString());
-        Assert.Equal(
-            ToolSchemaConstants.ConversationIdMetaToolName,
-            rewrittenForEstimate.Value.GetProperty("tools")[1].GetProperty("function").GetProperty("name").GetString());
+        var toolNames = rewrittenTools.EnumerateArray()
+            .Select(t => t.GetProperty("function").GetProperty("name").GetString())
+            .ToList();
+        Assert.Contains(ToolSchemaConstants.ConversationIdMetaToolName, toolNames);
+        Assert.Contains("lookup", toolNames);
+        Assert.DoesNotContain("get_tool_definition", toolNames);
+        Assert.DoesNotContain(
+            toolNames,
+            n => n is not null &&
+                 n.StartsWith("comprexy_", StringComparison.Ordinal) &&
+                 !ToolSchemaConstants.IsConversationIdMetaTool(n));
         _toolCatalogRepository.Verify(r => r.Add(It.IsAny<ConversationToolCatalog>()), Times.Once);
         _unitOfWork.Verify(u => u.SaveChangesAsync(It.IsAny<CancellationToken>()), Times.AtLeastOnce);
     }
 
     [Fact]
-    public async Task HandleAsync_CompactIndex_AcceptsClientToolResultForPersistedAssistantCall()
+    public async Task HandleAsync_VirtualInvalidMapExhaustion_SaveChangesEvenWhenRewriteNull()
     {
         _toolSchemaOptions = new ToolSchemaOptions
         {
-            Mode = ToolSchemaMode.CompactIndex,
-            MinToolCountToActivate = 1
+            Mode = ToolSchemaMode.Virtual,
+            MappingMaxRetries = 0
+        };
+        _estimatedTokensToReturn = 10;
+
+        _conversationRepository.Setup(r => r.FindByKeyAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((Conversation?)null);
+        _workingMemoryRepository.Setup(r => r.GetLatestAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((WorkingMemory?)null);
+
+        var service = CreateService();
+
+        var saveWhileDisabled = 0;
+        _unitOfWork
+            .Setup(u => u.SaveChangesAsync(It.IsAny<CancellationToken>()))
+            .Callback(() =>
+            {
+                if (_toolCatalogs.Values.Any(c => c.ToolIrDisabled))
+                {
+                    saveWhileDisabled++;
+                }
+            })
+            .Returns(Task.CompletedTask);
+
+        _chatCompletionClient
+            .Setup(c => c.CompleteAsync(
+                It.IsAny<ProviderEndpoint>(),
+                It.Is<UpstreamRequest>(r => r.Purpose == UpstreamRequestPurpose.Compression),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new UpstreamChatResult("""{"not":"valid"}""", "stop", 1, 1));
+        _chatCompletionClient
+            .Setup(c => c.CompleteAsync(
+                It.IsAny<ProviderEndpoint>(),
+                It.Is<UpstreamRequest>(r => r.Purpose == UpstreamRequestPurpose.Chat),
+                It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("upstream failed after prepare"));
+
+        await Assert.ThrowsAsync<InvalidOperationException>(
+            () => service.HandleAsync(BuildRequest(), CancellationToken.None));
+
+        var addedCatalog = Assert.Single(_toolCatalogs.Values);
+        Assert.True(addedCatalog.ToolIrDisabled);
+        Assert.True(string.IsNullOrWhiteSpace(addedCatalog.MappingJson));
+        // Prepare flushed DisableToolIr before upstream; Complete never ran.
+        Assert.True(saveWhileDisabled >= 1);
+        _unitOfWork.Verify(u => u.SaveChangesAsync(It.IsAny<CancellationToken>()), Times.AtLeastOnce);
+    }
+
+    [Fact]
+    public async Task HandleAsync_InlineMode_VirtualTools_WrapUpStripsToolsFromUpstreamRequest()
+    {
+        _toolSchemaOptions = new ToolSchemaOptions { Mode = ToolSchemaMode.Virtual };
+        _policy.RetainSelection = RetainSelectionMode.Inline;
+        _policy.CompressionRetainMessageCount = 1;
+        _estimatedTokensToReturn = 150;
+
+        var conversation = Conversation.Create("header:inline-virtual-strip", DateTimeOffset.UtcNow);
+        conversation.CaptureSystemPromptIfAbsent("You are helpful.");
+        conversation.SetSyncedMessageCount(2, DateTimeOffset.UtcNow);
+        var stored = new List<ConversationMessage>
+        {
+            ConversationMessage.Create(conversation.Id, 0, MessageRole.User, "older", 5, DateTimeOffset.UtcNow)
+        };
+        var workingMemory = WorkingMemory.Create(
+            conversation.Id,
+            1,
+            "# Working Memory\n## Current Goal\nEarlier",
+            8,
+            DateTimeOffset.UtcNow);
+
+        _conversationRepository.Setup(r => r.FindByKeyAsync("header:inline-virtual-strip", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(conversation);
+        _messageRepository.Setup(r => r.GetByConversationIdAsync(conversation.Id, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(stored);
+        _workingMemoryRepository.Setup(r => r.GetLatestAsync(conversation.Id, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(workingMemory);
+
+        SetupCompressionMapperForNonFileTools("lookup");
+
+        var captured = new List<UpstreamRequest>();
+        _chatCompletionClient
+            .Setup(c => c.CompleteAsync(It.IsAny<ProviderEndpoint>(), It.IsAny<UpstreamRequest>(), It.IsAny<CancellationToken>()))
+            .Returns<ProviderEndpoint, UpstreamRequest, CancellationToken>((_, request, _) =>
+            {
+                captured.Add(request);
+                if (IsWrapUpRequest(request))
+                {
+                    return Task.FromResult(new UpstreamChatResult(ValidWorkingMemory, "stop", 30, 8));
+                }
+
+                if (request.Purpose == UpstreamRequestPurpose.Compression)
+                {
+                    var user = request.Messages.First(m => m.Role == MessageRole.User).Content ?? string.Empty;
+                    var hashLine = user.Split('\n', StringSplitOptions.RemoveEmptyEntries)
+                        .First(line => line.StartsWith("schema_hash:", StringComparison.Ordinal));
+                    var hash = hashLine["schema_hash:".Length..].Trim();
+                    var mapping = JsonSerializer.Serialize(new
+                    {
+                        schema_hash = hash,
+                        client_capabilities = new[]
+                        {
+                            new
+                            {
+                                client_tool = "lookup",
+                                capability = "NON_FILE",
+                                risk = "low",
+                                supports = new { path = false, offset = false, limit = false, query = false }
+                            }
+                        },
+                        bindings = Array.Empty<object>()
+                    });
+                    return Task.FromResult(new UpstreamChatResult(mapping, "stop", 1, 1));
+                }
+
+                return Task.FromResult(new UpstreamChatResult(
+                    "Visible answer",
+                    "stop",
+                    40,
+                    12,
+                    AssistantMessageJson: """{"role":"assistant","content":"Visible answer"}"""));
+            });
+
+        var service = CreateService();
+        var result = await service.HandleAsync(
+            BuildRequest(conversationHeader: "inline-virtual-strip", userContent: "new tip"),
+            CancellationToken.None);
+
+        Assert.Equal("Visible answer", result.AssistantContent);
+        var main = Assert.Single(captured, r => r.Purpose == UpstreamRequestPurpose.Chat);
+        var wrapUp = Assert.Single(captured, IsWrapUpRequest);
+
+        Assert.True(main.RewrittenClientRequest.HasValue);
+        Assert.True(main.RewrittenClientRequest!.Value.TryGetProperty("tools", out var mainTools));
+        Assert.Contains(
+            mainTools.EnumerateArray().Select(t => t.GetProperty("function").GetProperty("name").GetString()),
+            n => n == "lookup" || n == ToolSchemaConstants.ConversationIdMetaToolName);
+
+        Assert.True(wrapUp.OriginalClientRequest.HasValue);
+        Assert.False(wrapUp.OriginalClientRequest!.Value.TryGetProperty("tools", out _));
+        Assert.False(wrapUp.OriginalClientRequest.Value.TryGetProperty("tool_choice", out _));
+        if (wrapUp.RewrittenClientRequest is { } wrapRewritten)
+        {
+            Assert.False(wrapRewritten.TryGetProperty("tools", out _));
+            Assert.False(wrapRewritten.TryGetProperty("tool_choice", out _));
+        }
+    }
+
+    [Fact]
+    public async Task HandleAsync_AcceptsClientToolResultForPersistedAssistantCall()
+    {
+        _toolSchemaOptions = new ToolSchemaOptions
+        {
+            Mode = ToolSchemaMode.Off
         };
         _estimatedTokensToReturn = 10;
 
@@ -1203,16 +1259,6 @@ public class ProxyChatCompletionServiceTests
             .ReturnsAsync([storedUser, storedAssistant]);
         _workingMemoryRepository.Setup(r => r.GetLatestAsync(conversation.Id, It.IsAny<CancellationToken>()))
             .ReturnsAsync((WorkingMemory?)null);
-        _toolCatalogRepository
-            .Setup(r => r.GetByConversationIdAsync(conversation.Id, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(ConversationToolCatalog.Create(
-                conversation.Id,
-                "hash",
-                """[{"name":"lookup","description":"Tool lookup.","required":[]}]""",
-                DateTimeOffset.UtcNow));
-        _toolDefinitionRepository
-            .Setup(r => r.GetByConversationIdAsync(conversation.Id, It.IsAny<CancellationToken>()))
-            .ReturnsAsync([]);
 
         _chatCompletionClient
             .Setup(c => c.CompleteAsync(It.IsAny<ProviderEndpoint>(), It.IsAny<UpstreamRequest>(), It.IsAny<CancellationToken>()))
@@ -1262,12 +1308,11 @@ public class ProxyChatCompletionServiceTests
     }
 
     [Fact]
-    public async Task HandleStreamingAsync_CompactIndex_EmitsUsageChunkWhenIncludeUsageRequested()
+    public async Task HandleStreamingAsync_EmitsUsageChunkWhenIncludeUsageRequested()
     {
         _toolSchemaOptions = new ToolSchemaOptions
         {
-            Mode = ToolSchemaMode.CompactIndex,
-            MinToolCountToActivate = 1
+            Mode = ToolSchemaMode.Off
         };
         _estimatedTokensToReturn = 10;
 
@@ -1350,12 +1395,11 @@ public class ProxyChatCompletionServiceTests
     }
 
     [Fact]
-    public async Task HandleStreamingAsync_CompactIndex_EmitsReasoningBeforeContent()
+    public async Task HandleStreamingAsync_EmitsReasoningBeforeContent()
     {
         _toolSchemaOptions = new ToolSchemaOptions
         {
-            Mode = ToolSchemaMode.CompactIndex,
-            MinToolCountToActivate = 1
+            Mode = ToolSchemaMode.Off
         };
         _estimatedTokensToReturn = 10;
 
@@ -1421,12 +1465,11 @@ public class ProxyChatCompletionServiceTests
     }
 
     [Fact]
-    public async Task HandleStreamingAsync_CompactIndex_ForwardsRefusalAndUsageEnvelope()
+    public async Task HandleStreamingAsync_ForwardsRefusalAndUsageEnvelope()
     {
         _toolSchemaOptions = new ToolSchemaOptions
         {
-            Mode = ToolSchemaMode.CompactIndex,
-            MinToolCountToActivate = 1
+            Mode = ToolSchemaMode.Off
         };
         _estimatedTokensToReturn = 10;
 
@@ -1507,12 +1550,11 @@ public class ProxyChatCompletionServiceTests
     }
 
     [Fact]
-    public async Task HandleStreamingAsync_CompactIndex_OmitsUsageChunkWithoutIncludeUsage()
+    public async Task HandleStreamingAsync_OmitsUsageChunkWithoutIncludeUsage()
     {
         _toolSchemaOptions = new ToolSchemaOptions
         {
-            Mode = ToolSchemaMode.CompactIndex,
-            MinToolCountToActivate = 1
+            Mode = ToolSchemaMode.Off
         };
         _estimatedTokensToReturn = 10;
 
@@ -1555,12 +1597,11 @@ public class ProxyChatCompletionServiceTests
     }
 
     [Fact]
-    public async Task HandleStreamingAsync_CompactIndex_ForwardsContentBeforeUpstreamStreamCompletes()
+    public async Task HandleStreamingAsync_ForwardsContentBeforeUpstreamStreamCompletes()
     {
         _toolSchemaOptions = new ToolSchemaOptions
         {
-            Mode = ToolSchemaMode.CompactIndex,
-            MinToolCountToActivate = 1
+            Mode = ToolSchemaMode.Off
         };
         _estimatedTokensToReturn = 10;
 
@@ -1617,17 +1658,16 @@ public class ProxyChatCompletionServiceTests
     }
 
     [Fact]
-    public async Task HandleStreamingAsync_CompactIndex_SuppressesMetaToolCallsAndStreamsFinalAnswer()
+    public async Task HandleStreamingAsync_Virtual_SatisfiesConversationIdMetaLocallyAndStreamsFinalAnswer()
     {
         _toolSchemaOptions = new ToolSchemaOptions
         {
-            Mode = ToolSchemaMode.CompactIndex,
-            MinToolCountToActivate = 1
+            Mode = ToolSchemaMode.Virtual
         };
         _estimatedTokensToReturn = 10;
 
         const string metaAssistantJson = """
-            {"role":"assistant","content":null,"tool_calls":[{"id":"call_meta","type":"function","function":{"name":"get_tool_definition","arguments":"{\"tool_name\":\"lookup\"}"}}]}
+            {"role":"assistant","content":null,"tool_calls":[{"id":"call_meta","type":"function","function":{"name":"comprexy_get_current_conversation_id","arguments":"{}"}}]}
             """;
 
         var streamCall = 0;
@@ -1635,9 +1675,7 @@ public class ProxyChatCompletionServiceTests
             .ReturnsAsync((Conversation?)null);
         _workingMemoryRepository.Setup(r => r.GetLatestAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync((WorkingMemory?)null);
-        _toolDefinitionRepository
-            .Setup(r => r.FindAsync(It.IsAny<Guid>(), "lookup", It.IsAny<CancellationToken>()))
-            .ReturnsAsync((ConversationToolDefinition?)null);
+        SetupCompressionMapperForNonFileTools("lookup");
         _chatCompletionClient
             .Setup(c => c.StreamAsync(
                 It.IsAny<ProviderEndpoint>(),
@@ -1655,7 +1693,7 @@ public class ProxyChatCompletionServiceTests
                     if (streamCall == 1)
                     {
                         await onRawSseData(
-                            """{"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_meta","type":"function","function":{"name":"get_tool_definition","arguments":"{\"tool_name\":\"lookup\"}"}}]},"finish_reason":"tool_calls"}]}""",
+                            """{"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_meta","type":"function","function":{"name":"comprexy_get_current_conversation_id","arguments":"{}"}}]},"finish_reason":"tool_calls"}]}""",
                             token);
                         await onRawSseData("[DONE]", token);
                         return new UpstreamChatResult(
@@ -1690,10 +1728,96 @@ public class ProxyChatCompletionServiceTests
             CancellationToken.None);
 
         Assert.Equal("done", result.AssistantContent);
+        Assert.DoesNotContain(chunks, c => c.Contains("comprexy_get_current_conversation_id", StringComparison.Ordinal));
         Assert.DoesNotContain(chunks, c => c.Contains("get_tool_definition", StringComparison.Ordinal));
         Assert.Contains(chunks, c => c.Contains("done", StringComparison.Ordinal));
-        Assert.Equal(1, chunks.Count(c => c == "[DONE]"));
+        Assert.Contains(chunks, c => c == "[DONE]");
         Assert.Equal(2, streamCall);
+    }
+
+    private void SetupCompressionMapperForNonFileTools(params string[] toolNames)
+    {
+        _chatCompletionClient
+            .Setup(c => c.CompleteAsync(
+                It.IsAny<ProviderEndpoint>(),
+                It.Is<UpstreamRequest>(r => r.Purpose == UpstreamRequestPurpose.Compression),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync((ProviderEndpoint _, UpstreamRequest request, CancellationToken _) =>
+            {
+                var user = request.Messages.First(m => m.Role == MessageRole.User).Content ?? string.Empty;
+                var hashLine = user.Split('\n', StringSplitOptions.RemoveEmptyEntries)
+                    .First(line => line.StartsWith("schema_hash:", StringComparison.Ordinal));
+                var hash = hashLine["schema_hash:".Length..].Trim();
+                var capabilities = toolNames.Select(name => new
+                {
+                    client_tool = name,
+                    capability = "NON_FILE",
+                    risk = "low",
+                    supports = new { path = false, offset = false, limit = false, query = false }
+                }).ToArray();
+                var mapping = JsonSerializer.Serialize(new
+                {
+                    schema_hash = hash,
+                    client_capabilities = capabilities,
+                    bindings = Array.Empty<object>()
+                });
+                return new UpstreamChatResult(mapping, "stop", 1, 1);
+            });
+    }
+
+    private void SetupCompressionMapperForReadFileAndBash()
+    {
+        _chatCompletionClient
+            .Setup(c => c.CompleteAsync(
+                It.IsAny<ProviderEndpoint>(),
+                It.Is<UpstreamRequest>(r => r.Purpose == UpstreamRequestPurpose.Compression),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync((ProviderEndpoint _, UpstreamRequest request, CancellationToken _) =>
+            {
+                var user = request.Messages.First(m => m.Role == MessageRole.User).Content ?? string.Empty;
+                var hashLine = user.Split('\n', StringSplitOptions.RemoveEmptyEntries)
+                    .First(line => line.StartsWith("schema_hash:", StringComparison.Ordinal));
+                var hash = hashLine["schema_hash:".Length..].Trim();
+                var mapping = JsonSerializer.Serialize(new
+                {
+                    schema_hash = hash,
+                    client_capabilities = new object[]
+                    {
+                        new
+                        {
+                            client_tool = "read",
+                            capability = "FILE_READ_RAW",
+                            risk = "low",
+                            supports = new { path = true, offset = true, limit = true, query = false }
+                        },
+                        new
+                        {
+                            client_tool = "bash",
+                            capability = "NON_FILE",
+                            risk = "high",
+                            supports = new { path = false, offset = false, limit = false, query = false }
+                        }
+                    },
+                    bindings = new object[]
+                    {
+                        new
+                        {
+                            comprexy_tool = "comprexy_read_file_range",
+                            primary_client_tool = "read",
+                            strategy = "direct",
+                            arg_map = new { path = "filePath", start_line = "offset", end_line = "limit" }
+                        },
+                        new
+                        {
+                            comprexy_tool = "comprexy_read_file_manifest",
+                            primary_client_tool = "read",
+                            strategy = "direct",
+                            arg_map = new { path = "filePath" }
+                        }
+                    }
+                });
+                return new UpstreamChatResult(mapping, "stop", 1, 1);
+            });
     }
 
     [Fact]
@@ -1817,6 +1941,7 @@ public class ProxyChatCompletionServiceTests
         Assert.True(stored[0].IsFolded);
         Assert.Equal(2, stored[0].FoldedIntoWorkingMemoryVersion);
         _compressionQueue.Verify(q => q.Enqueue(It.IsAny<CompressionJob>()), Times.Never);
+        // prepare/persist + inline wrap-up persist (dual-id clear uses isolated map UoW)
         _unitOfWork.Verify(u => u.SaveChangesAsync(It.IsAny<CancellationToken>()), Times.Exactly(2));
         metrics.Verify(
             m => m.RecordCompressionOverheadAsync(conversation.Id, 38, It.IsAny<CancellationToken>()),
@@ -2334,6 +2459,7 @@ public class ProxyChatCompletionServiceTests
         Assert.StartsWith("sanity:", addedEvent.ErrorMessage);
         Assert.False(stored[0].IsFolded);
         _workingMemoryRepository.Verify(r => r.Add(It.IsAny<WorkingMemory>()), Times.Never);
+        // prepare/persist + failed wrap-up persist (dual-id clear uses isolated map UoW)
         _unitOfWork.Verify(u => u.SaveChangesAsync(It.IsAny<CancellationToken>()), Times.Exactly(2));
     }
 
@@ -3069,6 +3195,177 @@ public class ProxyChatCompletionServiceTests
         Assert.Equal("tool_calls", result.FinishReason);
         Assert.NotNull(addedWorkingMemory);
         Assert.Equal(2, addedWorkingMemory!.Version);
+    }
+
+    [Fact]
+    public async Task HandleAsync_AfterWorkingMemoryExists_ForwardsWorkingMemoryAndTip()
+    {
+        UpstreamRequest? forwarded = null;
+        var conversation = Conversation.Create("header:conv-wm", DateTimeOffset.UtcNow);
+        conversation.CaptureSystemPromptIfAbsent("You are helpful.");
+        var workingMemory = WorkingMemory.Create(
+            conversation.Id,
+            1,
+            "# Working Memory\n## Current Goal\nShip it",
+            20,
+            DateTimeOffset.UtcNow);
+        var now = DateTimeOffset.UtcNow;
+        var stored = new List<ConversationMessage>
+        {
+            ConversationMessage.Create(conversation.Id, 0, MessageRole.User, "msg-0", 5, now),
+            ConversationMessage.Create(conversation.Id, 1, MessageRole.Assistant, "msg-1", 5, now)
+        };
+
+        _conversationRepository.Setup(r => r.FindByKeyAsync("header:conv-wm", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(conversation);
+        _messageRepository.Setup(r => r.GetByConversationIdAsync(conversation.Id, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(stored);
+        _workingMemoryRepository.Setup(r => r.GetLatestAsync(conversation.Id, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(workingMemory);
+        conversation.SetSyncedMessageCount(2, now);
+        _chatCompletionClient
+            .Setup(c => c.CompleteAsync(It.IsAny<ProviderEndpoint>(), It.IsAny<UpstreamRequest>(), It.IsAny<CancellationToken>()))
+            .Callback<ProviderEndpoint, UpstreamRequest, CancellationToken>((_, request, _) => forwarded = request)
+            .ReturnsAsync(new UpstreamChatResult("ack", "stop", 10, 2));
+
+        var service = CreateService();
+        await service.HandleAsync(BuildRequest(conversationHeader: "conv-wm", userContent: "next tip"), CancellationToken.None);
+
+        Assert.NotNull(forwarded);
+        Assert.Contains(forwarded!.Messages, m => m.Role == MessageRole.System && m.Content.Contains("Working Memory"));
+        Assert.Equal("next tip", forwarded.Messages[^1].Content);
+        _unitOfWork.Verify(u => u.SaveChangesAsync(It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task HandleAsync_VirtualInboundWithPendingDualId_ChatFlushThenIsolatedMapComplete()
+    {
+        _toolSchemaOptions = new ToolSchemaOptions { Mode = ToolSchemaMode.Virtual };
+        _estimatedTokensToReturn = 10;
+        const string clientCallId = "cur_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        const string irCallId = "ir_uow_1";
+        var now = DateTimeOffset.UtcNow;
+
+        var conversation = Conversation.Create("header:uow-inbound", now);
+        conversation.CaptureSystemPromptIfAbsent("You are helpful.");
+        conversation.SetSyncedMessageCount(3, now);
+        var assistantWire =
+            "{\"role\":\"assistant\",\"content\":null,\"tool_calls\":[{\"id\":\"" + clientCallId +
+            "\",\"type\":\"function\",\"function\":{\"name\":\"lookup\",\"arguments\":\"{}\"}}]}";
+        var stored = new List<ConversationMessage>
+        {
+            ConversationMessage.Create(conversation.Id, 0, MessageRole.User, "ask", 5, now),
+            ConversationMessage.Create(conversation.Id, 1, MessageRole.Assistant, string.Empty, 5, now, assistantWire)
+        };
+
+        _conversationRepository.Setup(r => r.FindByKeyAsync("header:uow-inbound", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(conversation);
+        _messageRepository.Setup(r => r.GetByConversationIdAsync(conversation.Id, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(stored);
+        _workingMemoryRepository.Setup(r => r.GetLatestAsync(conversation.Id, It.IsAny<CancellationToken>()))
+            .ReturnsAsync((WorkingMemory?)null);
+
+        var addedMessages = new List<ConversationMessage>();
+        _messageRepository.Setup(r => r.Add(It.IsAny<ConversationMessage>()))
+            .Callback<ConversationMessage>(m => addedMessages.Add(m));
+
+        var inboundDistillFlushSeen = false;
+        _unitOfWork
+            .Setup(u => u.SaveChangesAsync(It.IsAny<CancellationToken>()))
+            .Callback(() =>
+            {
+                if (addedMessages.Any(m => m.Role == MessageRole.Tool) &&
+                    _callIdMapRepo.Rows.Any(r => r.ClientCallId == clientCallId))
+                {
+                    inboundDistillFlushSeen = true;
+                }
+            })
+            .Returns(Task.CompletedTask);
+
+        SetupCompressionMapperForNonFileTools("lookup");
+        _chatCompletionClient
+            .Setup(c => c.CompleteAsync(
+                It.IsAny<ProviderEndpoint>(),
+                It.Is<UpstreamRequest>(r => r.Purpose == UpstreamRequestPurpose.Chat),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new UpstreamChatResult("ack", "stop", 10, 2));
+
+        var service = CreateService();
+        _callIdMapRepo.Add(ConversationToolCallMap.CreatePending(
+            conversation.Id,
+            irCallId,
+            clientCallId,
+            "passthrough_lookup",
+            "lookup",
+            "{}",
+            "{}",
+            "passthrough",
+            null,
+            null,
+            null,
+            now));
+
+        var payload = new
+        {
+            model = "client-model",
+            tools = new object[]
+            {
+                new { type = "function", function = new { name = "lookup" } }
+            },
+            messages = new object[]
+            {
+                new { role = "system", content = "You are helpful." },
+                new { role = "user", content = "ask" },
+                new
+                {
+                    role = "assistant",
+                    content = (string?)null,
+                    tool_calls = new object[]
+                    {
+                        new
+                        {
+                            id = clientCallId,
+                            type = "function",
+                            function = new { name = "lookup", arguments = "{}" }
+                        }
+                    }
+                },
+                new { role = "tool", tool_call_id = clientCallId, content = "native tool body" }
+            }
+        };
+        using var document = JsonDocument.Parse(JsonSerializer.Serialize(payload));
+        var request = Comprexy.Api.Mapping.ChatCompletionRequestParser.Parse(
+            document.RootElement.Clone(),
+            "uow-inbound");
+
+        await service.HandleAsync(request, CancellationToken.None);
+
+        Assert.True(inboundDistillFlushSeen);
+        Assert.DoesNotContain(_callIdMapRepo.Rows, r => r.ClientCallId == clientCallId);
+        Assert.True(_mapSaveChangesCount >= 1);
+        Assert.Contains(addedMessages, m => m.Role == MessageRole.Tool && m.Content.Contains("passthrough", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task HandleAsync_ModeOff_SuccessfulTurn_ChatSaveOnce_MapClearIsIsolated()
+    {
+        _toolSchemaOptions = new ToolSchemaOptions { Mode = ToolSchemaMode.Off };
+        _estimatedTokensToReturn = 10;
+        _conversationRepository.Setup(r => r.FindByKeyAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((Conversation?)null);
+        _workingMemoryRepository.Setup(r => r.GetLatestAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((WorkingMemory?)null);
+        _chatCompletionClient
+            .Setup(c => c.CompleteAsync(It.IsAny<ProviderEndpoint>(), It.IsAny<UpstreamRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new UpstreamChatResult("ok", "stop", 10, 2));
+
+        var service = CreateService();
+        await service.HandleAsync(BuildRequest(), CancellationToken.None);
+
+        // Complete flush only on chat UoW; end-of-turn dual-id clear uses isolated map UoW.
+        _unitOfWork.Verify(u => u.SaveChangesAsync(It.IsAny<CancellationToken>()), Times.Once);
+        Assert.True(_mapSaveChangesCount >= 1);
+        Assert.Empty(_callIdMapRepo.Rows);
     }
 
     private static string CreateContentSseChunk(string content) =>

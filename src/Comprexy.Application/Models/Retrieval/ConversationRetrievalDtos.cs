@@ -39,8 +39,6 @@ public sealed class ConversationMessageSnippetDto
 
     public int? FoldedIntoWorkingMemoryVersion { get; init; }
 
-    public bool IsPinnedForToolSchema { get; init; }
-
     public string? RawWireJson { get; init; }
 }
 
@@ -61,7 +59,18 @@ public sealed class OpenToolChainsDto
 {
     public Guid ConversationId { get; init; }
 
+    /// <summary>
+    /// True when any announced assistant tool_call id lacks a matching tool result
+    /// (same closed-chain rule as compression).
+    /// </summary>
     public bool IsOpen { get; init; }
+
+    /// <summary>
+    /// True when <see cref="IsOpen"/> solely because the tip assistant's tool_calls have no
+    /// results yet (typical while the client is still executing a parallel tool batch).
+    /// False for stuck/partial opens that span older turns.
+    /// </summary>
+    public bool IsAwaitingClientToolResults { get; init; }
 
     public int UnmatchedCount { get; init; }
 

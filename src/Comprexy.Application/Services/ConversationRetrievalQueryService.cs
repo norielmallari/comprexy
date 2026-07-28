@@ -204,6 +204,7 @@ public sealed class ConversationRetrievalQueryService : IConversationRetrievalQu
         {
             ConversationId = conversationId,
             IsOpen = assessment.IsOpen,
+            IsAwaitingClientToolResults = assessment.IsAwaitingClientToolResults,
             UnmatchedCount = assessment.UnmatchedCount,
             OpenToolCallIds = assessment.OpenToolCallIds
         };
@@ -230,7 +231,6 @@ public sealed class ConversationRetrievalQueryService : IConversationRetrievalQu
             TokenCount = message.TokenCount,
             IsFolded = message.IsFolded,
             FoldedIntoWorkingMemoryVersion = message.FoldedIntoWorkingMemoryVersion,
-            IsPinnedForToolSchema = message.IsPinnedForToolSchema,
             RawWireJson = includeWireJson
                 ? RetrievalQueryLimits.Truncate(
                     message.RawWireJson,

@@ -103,7 +103,7 @@ public class ToolCatalogParserTests
     }
 
     [Fact]
-    public void TryParse_DetectsMetaToolNameCollision()
+    public void TryParse_DetectsReservedVirtualToolNameCollision()
     {
         using var document = JsonDocument.Parse("""
             {
@@ -111,8 +111,8 @@ public class ToolCatalogParserTests
                 {
                   "type": "function",
                   "function": {
-                    "name": "get_tool_definition",
-                    "description": "Client-defined meta tool.",
+                    "name": "comprexy_read_file_range",
+                    "description": "Client-defined reserved name.",
                     "parameters": { "type": "object" }
                   }
                 },
@@ -143,7 +143,7 @@ public class ToolCatalogParserTests
                 {
                   "type": "function",
                   "function": {
-                    "name": "get_current_conversation_id",
+                    "name": "comprexy_get_current_conversation_id",
                     "description": "Client-defined meta tool.",
                     "parameters": { "type": "object" }
                   }
@@ -164,27 +164,5 @@ public class ToolCatalogParserTests
 
         Assert.NotNull(parsed);
         Assert.True(parsed!.HasMetaToolNameCollision);
-    }
-
-    [Fact]
-    public void BuildCompactIndexJson_OrdersByNameAndIncludesRequired()
-    {
-        var entries = new[]
-        {
-            new CompactToolEntry("zebra", "Tool zebra.", ["z"]),
-            new CompactToolEntry("alpha", "Tool alpha.", ["a", "b"])
-        };
-
-        var json = _parser.BuildCompactIndexJson(entries);
-        using var document = JsonDocument.Parse(json);
-
-        Assert.Equal(JsonValueKind.Array, document.RootElement.ValueKind);
-        Assert.Equal(2, document.RootElement.GetArrayLength());
-        Assert.Equal("alpha", document.RootElement[0].GetProperty("name").GetString());
-        Assert.Equal("zebra", document.RootElement[1].GetProperty("name").GetString());
-        var required = document.RootElement[0].GetProperty("required").EnumerateArray()
-            .Select(e => e.GetString()!)
-            .ToArray();
-        Assert.Equal(["a", "b"], required);
     }
 }

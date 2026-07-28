@@ -17,97 +17,22 @@ using Moq;
 
 namespace Comprexy.ControlApi.Tests;
 
-public sealed class CurrentConversationResolverTests
-{
-    [Fact]
-    public async Task ResolveAsync_ReturnsClearErrorsForMissingInvalidAndUnknownHeaders()
-    {
-        var metrics = new Mock<IConversationMetricsQueryService>();
-        metrics.Setup(x => x.ConversationExistsAsync(
-                It.IsAny<Guid>(),
-                It.IsAny<CancellationToken>()))
-            .ReturnsAsync(false);
-        var accessor = new HttpContextAccessor();
-        var resolver = new CurrentConversationResolver(accessor, metrics.Object);
-
-        var missing = await resolver.ResolveAsync(CancellationToken.None);
-        accessor.HttpContext = ContextWithHeader("not-a-guid");
-        var invalid = await resolver.ResolveAsync(CancellationToken.None);
-        accessor.HttpContext = ContextWithHeader(Guid.NewGuid().ToString());
-        var unknown = await resolver.ResolveAsync(CancellationToken.None);
-
-        Assert.Equal(CurrentConversationResolver.MissingHeaderMessage, missing.ErrorMessage);
-        Assert.Contains("Invalid X-Comprexy-Conversation-Id", invalid.ErrorMessage);
-        Assert.Contains("Conversation not found", unknown.ErrorMessage);
-    }
-
-    [Fact]
-    public async Task ResolveAsync_ConcurrentContextsDoNotLeakConversationIds()
-    {
-        var first = Guid.NewGuid();
-        var second = Guid.NewGuid();
-        var metrics = new Mock<IConversationMetricsQueryService>();
-        metrics.Setup(x => x.ConversationExistsAsync(
-                It.IsAny<Guid>(),
-                It.IsAny<CancellationToken>()))
-            .Returns(async (Guid _, CancellationToken _) =>
-            {
-                await Task.Yield();
-                return true;
-            });
-        var accessor = new HttpContextAccessor();
-        var resolver = new CurrentConversationResolver(accessor, metrics.Object);
-
-        async Task<Guid?> ResolveInOwnExecutionContext(Guid id)
-        {
-            accessor.HttpContext = ContextWithHeader(id.ToString());
-            await Task.Yield();
-            return (await resolver.ResolveAsync(CancellationToken.None)).ConversationId;
-        }
-
-        var results = await Task.WhenAll(
-            Task.Run(() => ResolveInOwnExecutionContext(first)),
-            Task.Run(() => ResolveInOwnExecutionContext(second)));
-
-        Assert.Equal([first, second], results);
-    }
-
-    private static DefaultHttpContext ContextWithHeader(string value)
-    {
-        var context = new DefaultHttpContext();
-        context.Request.Headers[CurrentConversationResolver.ConversationIdHeaderName] = value;
-        return context;
-    }
-}
-
 public sealed class McpToolAndResourceTests
 {
     [Fact]
-    public async Task CurrentTool_MissingInvalidAndUnknownHeadersReturnIsErrorPayloads()
+    public async Task ExplicitTool_UnknownConversationReturnsIsErrorPayload()
     {
         var metrics = McpTestData.CreateMetrics();
         var accessor = new HttpContextAccessor();
-        var tool = new CurrentConversationTools(
+        var tool = new ConversationTools(
             metrics.Object,
-            new CurrentConversationResolver(accessor, metrics.Object),
             new McpToolCallAuditLogger(new CapturingLogger<McpToolCallAuditLogger>()),
             Options.Create(new McpTelemetryOptions()),
             accessor);
 
-        var missing = await tool.GetCurrentConversationSummaryAsync(CancellationToken.None);
-        accessor.HttpContext = new DefaultHttpContext();
-        accessor.HttpContext.Request.Headers[CurrentConversationResolver.ConversationIdHeaderName] =
-            "not-a-guid";
-        var invalid = await tool.GetCurrentConversationSummaryAsync(CancellationToken.None);
-        accessor.HttpContext.Request.Headers[CurrentConversationResolver.ConversationIdHeaderName] =
-            Guid.NewGuid().ToString();
-        var unknown = await tool.GetCurrentConversationSummaryAsync(CancellationToken.None);
+        var unknown = await tool.GetConversationSummaryAsync(Guid.NewGuid(), CancellationToken.None);
 
-        Assert.All(
-            [missing, invalid, unknown],
-            result => Assert.True(JsonDocument.Parse(result).RootElement.GetProperty("isError").GetBoolean()));
-        Assert.Contains(CurrentConversationResolver.MissingHeaderMessage, missing);
-        Assert.Contains("Invalid X-Comprexy-Conversation-Id", invalid);
+        Assert.True(JsonDocument.Parse(unknown).RootElement.GetProperty("isError").GetBoolean());
         Assert.Contains("Conversation not found", unknown);
     }
 
@@ -189,7 +114,7 @@ public sealed class McpToolAndResourceTests
         Assert.Equal(7, observedTake);
         Assert.Contains("\"turnIndex\":1", result);
         var audit = Assert.Single(logger.Logs);
-        Assert.Equal("get_conversation_turns", audit.Properties["ToolName"]);
+        Assert.Equal("comprexy_get_conversation_turns", audit.Properties["ToolName"]);
         Assert.Equal(id, audit.Properties["ConversationId"]);
         Assert.Equal(id.ToString("D"), audit.Properties["ConversationSelector"]);
         Assert.Equal(1, audit.Properties["RowCount"]);
@@ -198,7 +123,7 @@ public sealed class McpToolAndResourceTests
     }
 
     [Fact]
-    public async Task CurrentListTools_AuditMaterializedPhaseAndTimelineRowCounts()
+    public async Task ExplicitListTools_AuditMaterializedPhaseAndTimelineRowCounts()
     {
         var id = Guid.NewGuid();
         var metrics = McpTestData.CreateMetrics(id);
@@ -225,26 +150,106 @@ public sealed class McpToolAndResourceTests
                     new PromptGrowthPointDto { TurnIndex = 3 }
                 ]
             });
-        var accessor = new HttpContextAccessor { HttpContext = new DefaultHttpContext() };
-        accessor.HttpContext.Request.Headers[CurrentConversationResolver.ConversationIdHeaderName] =
-            id.ToString();
         var logger = new CapturingLogger<McpToolCallAuditLogger>();
-        var tools = new CurrentConversationTools(
+        var tools = new ConversationTools(
             metrics.Object,
-            new CurrentConversationResolver(accessor, metrics.Object),
             new McpToolCallAuditLogger(logger),
             Options.Create(new McpTelemetryOptions()),
-            accessor);
+            new HttpContextAccessor());
 
-        await tools.GetCurrentCompressionPhaseBreakdownAsync(CancellationToken.None);
-        await tools.GetCurrentPromptGrowthTimelineAsync(CancellationToken.None);
+        await tools.GetCompressionPhaseBreakdownAsync(id, CancellationToken.None);
+        await tools.GetPromptGrowthTimelineAsync(id, CancellationToken.None);
 
         var audits = logger.Logs.ToDictionary(
             entry => (string)entry.Properties["ToolName"]!,
             StringComparer.Ordinal);
-        Assert.Equal(2, audits["get_current_compression_phase_breakdown"].Properties["RowCount"]);
-        Assert.Equal(3, audits["get_current_prompt_growth_timeline"].Properties["RowCount"]);
+        Assert.Equal(2, audits["comprexy_get_compression_phase_breakdown"].Properties["RowCount"]);
+        Assert.Equal(3, audits["comprexy_get_prompt_growth_timeline"].Properties["RowCount"]);
         Assert.All(audits.Values, audit => Assert.Equal(false, audit.Properties["IsError"]));
+    }
+
+    [Fact]
+    public async Task ExplicitSummaryToolAndResource_ReturnEquivalentData()
+    {
+        var id = Guid.NewGuid();
+        var metrics = McpTestData.CreateMetrics(id);
+        var options = Options.Create(new McpTelemetryOptions());
+        var tool = new ConversationTools(
+            metrics.Object,
+            new McpToolCallAuditLogger(new CapturingLogger<McpToolCallAuditLogger>()),
+            options,
+            new HttpContextAccessor());
+        var resource = new ConversationResources(metrics.Object, options);
+
+        var toolResult = await tool.GetConversationSummaryAsync(id, CancellationToken.None);
+        var resourceResult = await resource.GetSummaryAsync(id, CancellationToken.None);
+
+        Assert.Equal(toolResult, resourceResult);
+        Assert.Contains(id.ToString(), toolResult);
+    }
+
+    [Fact]
+    public async Task RetrievalSearchTool_RejectsEmptyQueryAndAuditsSuccess()
+    {
+        var id = Guid.NewGuid();
+        var retrieval = McpTestData.CreateRetrieval(id);
+        var logger = new CapturingLogger<McpToolCallAuditLogger>();
+        var tools = new ConversationRetrievalTools(
+            retrieval.Object,
+            new McpToolCallAuditLogger(logger),
+            Options.Create(new McpTelemetryOptions()),
+            new HttpContextAccessor());
+
+        retrieval.Setup(x => x.SearchAsync(
+                id,
+                It.IsAny<string>(),
+                It.IsAny<int?>(),
+                It.IsAny<bool>(),
+                It.IsAny<bool>(),
+                It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new ArgumentException("Search query must not be empty."));
+
+        var empty = await tools.SearchConversationAsync(
+            id,
+            "   ",
+            limit: null,
+            includeFolded: true,
+            includeWorkingMemory: true,
+            CancellationToken.None);
+        Assert.True(JsonDocument.Parse(empty).RootElement.GetProperty("isError").GetBoolean());
+
+        retrieval.Setup(x => x.SearchAsync(
+                id,
+                "fingerprint",
+                It.IsAny<int?>(),
+                true,
+                true,
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ConversationSearchResultDto
+            {
+                ConversationId = id,
+                Query = "fingerprint",
+                Matches =
+                [
+                    new ConversationSearchMatchDto
+                    {
+                        SourceType = "message",
+                        Sequence = 2,
+                        Text = "hit"
+                    }
+                ]
+            });
+
+        var ok = await tools.SearchConversationAsync(
+            id,
+            "fingerprint",
+            limit: null,
+            includeFolded: true,
+            includeWorkingMemory: true,
+            CancellationToken.None);
+        Assert.Contains("\"sequence\":2", ok);
+        Assert.Equal(1, logger.Logs.Last().Properties["RowCount"]);
+        Assert.Equal(false, logger.Logs.Last().Properties["IsError"]);
     }
 
     [Fact]
@@ -289,98 +294,6 @@ public sealed class McpToolAndResourceTests
         Assert.Null(errorAudit.Properties["ConversationId"]);
         Assert.Equal(0, errorAudit.Properties["RowCount"]);
         Assert.Equal(true, errorAudit.Properties["IsError"]);
-    }
-
-    [Fact]
-    public async Task CurrentSummaryToolAndResource_ReturnEquivalentData()
-    {
-        var id = Guid.NewGuid();
-        var metrics = McpTestData.CreateMetrics(id);
-        var accessor = new HttpContextAccessor { HttpContext = new DefaultHttpContext() };
-        accessor.HttpContext.Request.Headers[CurrentConversationResolver.ConversationIdHeaderName] =
-            id.ToString();
-        var resolver = new CurrentConversationResolver(accessor, metrics.Object);
-        var options = Options.Create(new McpTelemetryOptions());
-        var tool = new CurrentConversationTools(
-            metrics.Object,
-            resolver,
-            new McpToolCallAuditLogger(new CapturingLogger<McpToolCallAuditLogger>()),
-            options,
-            accessor);
-        var resource = new CurrentConversationResources(metrics.Object, resolver, options);
-
-        var toolResult = await tool.GetCurrentConversationSummaryAsync(CancellationToken.None);
-        var resourceResult = await resource.GetSummaryAsync(CancellationToken.None);
-
-        Assert.Equal(toolResult, resourceResult);
-        Assert.Contains(id.ToString(), toolResult);
-    }
-
-    [Fact]
-    public async Task RetrievalSearchTool_RejectsEmptyQueryAndAuditsSuccess()
-    {
-        var id = Guid.NewGuid();
-        var metrics = McpTestData.CreateMetrics(id);
-        var retrieval = McpTestData.CreateRetrieval(id);
-        var logger = new CapturingLogger<McpToolCallAuditLogger>();
-        var accessor = new HttpContextAccessor { HttpContext = new DefaultHttpContext() };
-        accessor.HttpContext.Request.Headers[CurrentConversationResolver.ConversationIdHeaderName] =
-            id.ToString();
-        var tools = new CurrentConversationRetrievalTools(
-            retrieval.Object,
-            new CurrentConversationResolver(accessor, metrics.Object),
-            new McpToolCallAuditLogger(logger),
-            Options.Create(new McpTelemetryOptions()),
-            accessor);
-
-        retrieval.Setup(x => x.SearchAsync(
-                id,
-                It.IsAny<string>(),
-                It.IsAny<int?>(),
-                It.IsAny<bool>(),
-                It.IsAny<bool>(),
-                It.IsAny<CancellationToken>()))
-            .ThrowsAsync(new ArgumentException("Search query must not be empty."));
-
-        var empty = await tools.SearchCurrentConversationAsync(
-            "   ",
-            limit: null,
-            includeFolded: true,
-            includeWorkingMemory: true,
-            CancellationToken.None);
-        Assert.True(JsonDocument.Parse(empty).RootElement.GetProperty("isError").GetBoolean());
-
-        retrieval.Setup(x => x.SearchAsync(
-                id,
-                "fingerprint",
-                It.IsAny<int?>(),
-                true,
-                true,
-                It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new ConversationSearchResultDto
-            {
-                ConversationId = id,
-                Query = "fingerprint",
-                Matches =
-                [
-                    new ConversationSearchMatchDto
-                    {
-                        SourceType = "message",
-                        Sequence = 2,
-                        Text = "hit"
-                    }
-                ]
-            });
-
-        var ok = await tools.SearchCurrentConversationAsync(
-            "fingerprint",
-            limit: null,
-            includeFolded: true,
-            includeWorkingMemory: true,
-            CancellationToken.None);
-        Assert.Contains("\"sequence\":2", ok);
-        Assert.Equal(1, logger.Logs.Last().Properties["RowCount"]);
-        Assert.Equal(false, logger.Logs.Last().Properties["IsError"]);
     }
 
     [Fact]

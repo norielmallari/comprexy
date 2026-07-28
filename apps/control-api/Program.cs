@@ -24,7 +24,6 @@ builder.Services.AddHttpContextAccessor();
 builder.Services.AddOptions<McpTelemetryOptions>()
     .Bind(builder.Configuration.GetSection(McpTelemetryOptions.SectionName));
 builder.Services.AddSingleton<McpToolCallAuditLogger>();
-builder.Services.AddScoped<CurrentConversationResolver>();
 
 var corsOrigins = builder.Configuration.GetSection("Cors:AllowedOrigins").Get<string[]>() ?? [];
 builder.Services.AddCors(options =>
@@ -47,13 +46,9 @@ builder.Services.AddCors(options =>
 
 builder.Services.AddMcpServer()
     .WithHttpTransport(options => options.Stateless = true)
-    .WithTools<CurrentConversationTools>()
     .WithTools<ConversationTools>()
-    .WithTools<CurrentConversationRetrievalTools>()
     .WithTools<ConversationRetrievalTools>()
-    .WithResources<CurrentConversationResources>()
     .WithResources<ConversationResources>()
-    .WithResources<CurrentConversationRetrievalResources>()
     .WithResources<ConversationRetrievalResources>();
 
 var app = builder.Build();

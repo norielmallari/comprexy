@@ -12,7 +12,7 @@ public sealed class ConversationRetrievalResources(
     IOptions<McpTelemetryOptions> options)
 {
     [McpServerResource(UriTemplate = "comprexy://conversation/{conversationId}/working-memory", Name = "conversation_working_memory", MimeType = "application/json")]
-    [Description("Explicit conversation latest working memory by id.")]
+    [Description("Latest working memory by conversation id.")]
     public Task<string> GetWorkingMemoryAsync(Guid conversationId, CancellationToken cancellationToken) =>
         ReadAsync(
             conversationId,
@@ -31,7 +31,7 @@ public sealed class ConversationRetrievalResources(
             cancellationToken);
 
     [McpServerResource(UriTemplate = "comprexy://conversation/{conversationId}/recent-messages", Name = "conversation_recent_messages", MimeType = "application/json")]
-    [Description("Explicit conversation recent messages by id.")]
+    [Description("Recent messages by conversation id.")]
     public Task<string> GetRecentMessagesAsync(Guid conversationId, CancellationToken cancellationToken) =>
         ReadAsync(
             conversationId,
@@ -46,6 +46,20 @@ public sealed class ConversationRetrievalResources(
                 return messages is null
                     ? McpTelemetryHelper.ErrorJson($"Conversation not found: {id}")
                     : McpTelemetryHelper.ToJson(messages);
+            },
+            cancellationToken);
+
+    [McpServerResource(UriTemplate = "comprexy://conversation/{conversationId}/open-tool-chains", Name = "conversation_open_tool_chains", MimeType = "application/json")]
+    [Description("Open tool-call chains by conversation id. isAwaitingClientToolResults marks tip-only in-flight batches.")]
+    public Task<string> GetOpenToolChainsAsync(Guid conversationId, CancellationToken cancellationToken) =>
+        ReadAsync(
+            conversationId,
+            async (id, _, ct) =>
+            {
+                var chains = await retrievalQuery.GetOpenToolChainsAsync(id, ct);
+                return chains is null
+                    ? McpTelemetryHelper.ErrorJson($"Conversation not found: {id}")
+                    : McpTelemetryHelper.ToJson(chains);
             },
             cancellationToken);
 
@@ -66,7 +80,7 @@ public sealed class ConversationRetrievalResources(
         }
         catch (Exception ex)
         {
-            return McpTelemetryHelper.ErrorJson($"Telemetry query failed: {ex.Message}");
+            return McpTelemetryHelper.ErrorJson($"Retrieval query failed: {ex.Message}");
         }
     }
 }

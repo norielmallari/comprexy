@@ -97,6 +97,7 @@ public class ToolCallChainStateTests
 
         var assessment = ToolCallChainState.Assess(messages);
         Assert.True(assessment.IsOpen);
+        Assert.True(assessment.IsAwaitingClientToolResults);
         Assert.Equal(2, assessment.UnmatchedCount);
         Assert.Equal(["c1", "c2"], assessment.OpenToolCallIds);
     }
@@ -143,7 +144,25 @@ public class ToolCallChainStateTests
 
         var assessment = ToolCallChainState.Assess(messages);
         Assert.True(assessment.IsOpen);
+        Assert.False(assessment.IsAwaitingClientToolResults);
         Assert.Equal(1, assessment.UnmatchedCount);
+    }
+
+    [Fact]
+    public void Assess_TipPendingThenUserContinues_IsStuckOpenNotAwaiting()
+    {
+        var conversationId = Guid.NewGuid();
+        var messages = new[]
+        {
+            User(conversationId, 0),
+            AssistantWithCalls(conversationId, 1, "c1", "c2"),
+            User(conversationId, 2)
+        };
+
+        var assessment = ToolCallChainState.Assess(messages);
+        Assert.True(assessment.IsOpen);
+        Assert.False(assessment.IsAwaitingClientToolResults);
+        Assert.Equal(["c1", "c2"], assessment.OpenToolCallIds);
     }
 
     [Fact]
@@ -158,6 +177,7 @@ public class ToolCallChainStateTests
 
         var assessment = ToolCallChainState.Assess(messages);
         Assert.True(assessment.IsOpen);
+        Assert.False(assessment.IsAwaitingClientToolResults);
         Assert.True(assessment.UnmatchedCount >= 1);
     }
 

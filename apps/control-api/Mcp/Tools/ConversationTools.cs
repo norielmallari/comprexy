@@ -13,12 +13,15 @@ public sealed class ConversationTools(
     IOptions<McpTelemetryOptions> options,
     IHttpContextAccessor httpContextAccessor)
 {
-    [McpServerTool(Name = "get_conversation_summary"), Description("Aggregate metrics for a specific conversation. Use when the client cannot forward X-Comprexy-Conversation-Id.")]
+    private const string ConversationIdDescription =
+        "UUID from comprexy_get_current_conversation_id (proxy ToolSchema meta-tool), response header X-Comprexy-Conversation-Id, or operator tooling.";
+
+    [McpServerTool(Name = "comprexy_get_conversation_summary"), Description("Aggregate metrics for a conversation.")]
     public Task<string> GetConversationSummaryAsync(
-        [Description("UUID from get_current_conversation_id (proxy ToolSchema meta-tool), X-Comprexy-Conversation-Id, or operator tooling.")] Guid conversationId,
+        [Description(ConversationIdDescription)] Guid conversationId,
         CancellationToken cancellationToken) =>
         ExecuteAsync(
-            "get_conversation_summary",
+            "comprexy_get_conversation_summary",
             new { conversationId },
             conversationId.ToString("D"),
             async (take, ct) =>
@@ -35,12 +38,12 @@ public sealed class ConversationTools(
             },
             cancellationToken);
 
-    [McpServerTool(Name = "get_conversation_turns"), Description("Per-turn metrics for a specific conversation.")]
+    [McpServerTool(Name = "comprexy_get_conversation_turns"), Description("Per-turn metrics for a conversation.")]
     public Task<string> GetConversationTurnsAsync(
-        [Description("UUID from get_current_conversation_id (proxy ToolSchema meta-tool), X-Comprexy-Conversation-Id, or operator tooling.")] Guid conversationId,
+        [Description(ConversationIdDescription)] Guid conversationId,
         CancellationToken cancellationToken) =>
         ExecuteAsync(
-            "get_conversation_turns",
+            "comprexy_get_conversation_turns",
             new { conversationId },
             conversationId.ToString("D"),
             async (take, ct) =>
@@ -55,10 +58,118 @@ public sealed class ConversationTools(
             },
             cancellationToken);
 
-    [McpServerTool(Name = "compare_conversations"), Description("Side-by-side comparison of two conversation telemetry summaries.")]
+    [McpServerTool(Name = "comprexy_get_final_turn_snapshot"), Description("Final turn token proof for a conversation.")]
+    public Task<string> GetFinalTurnSnapshotAsync(
+        [Description(ConversationIdDescription)] Guid conversationId,
+        CancellationToken cancellationToken) =>
+        ExecuteAsync(
+            "comprexy_get_final_turn_snapshot",
+            new { conversationId },
+            conversationId.ToString("D"),
+            async (_, ct) =>
+            {
+                if (!await metricsQuery.ConversationExistsAsync(conversationId, ct))
+                {
+                    return McpTelemetryHelper.Error($"Conversation not found: {conversationId}");
+                }
+
+                var snapshot = await metricsQuery.GetFinalTurnSnapshotAsync(conversationId, ct);
+                return snapshot is null
+                    ? McpTelemetryHelper.NotFound(conversationId)
+                    : McpTelemetryHelper.OkJson(snapshot, rowCount: 1);
+            },
+            cancellationToken);
+
+    [McpServerTool(Name = "comprexy_get_compression_phase_breakdown"), Description("Compression phase breakdown for a conversation.")]
+    public Task<string> GetCompressionPhaseBreakdownAsync(
+        [Description(ConversationIdDescription)] Guid conversationId,
+        CancellationToken cancellationToken) =>
+        ExecuteAsync(
+            "comprexy_get_compression_phase_breakdown",
+            new { conversationId },
+            conversationId.ToString("D"),
+            async (take, ct) =>
+            {
+                if (!await metricsQuery.ConversationExistsAsync(conversationId, ct))
+                {
+                    return McpTelemetryHelper.Error($"Conversation not found: {conversationId}");
+                }
+
+                var phases = await metricsQuery.GetPhaseBreakdownAsync(conversationId, take, ct);
+                return McpTelemetryHelper.OkJson(phases, rowCount: phases.Count);
+            },
+            cancellationToken);
+
+    [McpServerTool(Name = "comprexy_get_budget_events"), Description("Budget and trim events for a conversation.")]
+    public Task<string> GetBudgetEventsAsync(
+        [Description(ConversationIdDescription)] Guid conversationId,
+        CancellationToken cancellationToken) =>
+        ExecuteAsync(
+            "comprexy_get_budget_events",
+            new { conversationId },
+            conversationId.ToString("D"),
+            async (take, ct) =>
+            {
+                if (!await metricsQuery.ConversationExistsAsync(conversationId, ct))
+                {
+                    return McpTelemetryHelper.Error($"Conversation not found: {conversationId}");
+                }
+
+                var events = await metricsQuery.GetBudgetEventsAsync(conversationId, take, ct);
+                return events is null
+                    ? McpTelemetryHelper.NotFound(conversationId)
+                    : McpTelemetryHelper.OkJson(events, rowCount: 1);
+            },
+            cancellationToken);
+
+    [McpServerTool(Name = "comprexy_get_evidence_markdown"), Description("Commit-ready evidence markdown for a conversation.")]
+    public Task<string> GetEvidenceMarkdownAsync(
+        [Description(ConversationIdDescription)] Guid conversationId,
+        CancellationToken cancellationToken) =>
+        ExecuteAsync(
+            "comprexy_get_evidence_markdown",
+            new { conversationId },
+            conversationId.ToString("D"),
+            async (take, ct) =>
+            {
+                if (!await metricsQuery.ConversationExistsAsync(conversationId, ct))
+                {
+                    return McpTelemetryHelper.Error($"Conversation not found: {conversationId}");
+                }
+
+                var markdown = await metricsQuery.GetEvidenceMarkdownAsync(conversationId, take, ct);
+                return markdown is null
+                    ? McpTelemetryHelper.NotFound(conversationId)
+                    : McpTelemetryHelper.OkText(markdown, rowCount: 1);
+            },
+            cancellationToken);
+
+    [McpServerTool(Name = "comprexy_get_prompt_growth_timeline"), Description("Actual prompt tokens per turn for a conversation.")]
+    public Task<string> GetPromptGrowthTimelineAsync(
+        [Description(ConversationIdDescription)] Guid conversationId,
+        CancellationToken cancellationToken) =>
+        ExecuteAsync(
+            "comprexy_get_prompt_growth_timeline",
+            new { conversationId },
+            conversationId.ToString("D"),
+            async (take, ct) =>
+            {
+                if (!await metricsQuery.ConversationExistsAsync(conversationId, ct))
+                {
+                    return McpTelemetryHelper.Error($"Conversation not found: {conversationId}");
+                }
+
+                var timeline = await metricsQuery.GetPromptGrowthTimelineAsync(conversationId, take, ct);
+                return timeline is null
+                    ? McpTelemetryHelper.NotFound(conversationId)
+                    : McpTelemetryHelper.OkJson(timeline, rowCount: timeline.Points.Count);
+            },
+            cancellationToken);
+
+    [McpServerTool(Name = "comprexy_compare_conversations"), Description("Side-by-side comparison of two conversation telemetry summaries.")]
     public async Task<string> CompareConversationsAsync(
-        [Description("Left ConversationId (UUID from get_current_conversation_id or operator tooling).")] Guid leftConversationId,
-        [Description("Right ConversationId (UUID from get_current_conversation_id or operator tooling).")] Guid rightConversationId,
+        [Description("Left ConversationId (UUID from comprexy_get_current_conversation_id or operator tooling).")] Guid leftConversationId,
+        [Description("Right ConversationId (UUID from comprexy_get_current_conversation_id or operator tooling).")] Guid rightConversationId,
         CancellationToken cancellationToken)
     {
         var sw = McpToolCallAuditLogger.StartTimer();
@@ -96,7 +207,7 @@ public sealed class ConversationTools(
         }
 
         auditLogger.Log(
-            "compare_conversations",
+            "comprexy_compare_conversations",
             new { leftConversationId, rightConversationId },
             resolvedConversationId: null,
             outcome.RowCount,

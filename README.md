@@ -128,7 +128,7 @@ Reload the MCP client after starting control-api. If `Auth:RequiredApiKey` is co
 }
 ```
 
-Argument-free `get_current_*` tools require the MCP client to send `X-Comprexy-Conversation-Id`. Clients that cannot update that header per conversation should use the explicit tools with `conversationId` from the proxy meta-tool `get_current_conversation_id` (or from operator tooling / response header `X-Comprexy-Conversation-Id`).
+Telemetry MCP tools are named `comprexy_*` and require `conversationId` from the proxy meta-tool `comprexy_get_current_conversation_id` (or from operator tooling / response header `X-Comprexy-Conversation-Id`).
 
 ## Why Comprexy?
 
@@ -214,7 +214,7 @@ Settings load from `appsettings.json`, environment overlays, and optional gitign
 | `Provider` | Upstream OpenAI-compatible chat endpoint |
 | `Compression` | Optional separate compression model/prompts |
 | `ContextPolicy` | Soft/hard token limits, retain, emergency compression |
-| `ToolSchema` | Compact tool index (`Mode: CompactIndex` default; set `Off` to disable) |
+| `ToolSchema` | Virtual Tools (`Mode: Virtual` default; set `Off` to disable) |
 | `McpTelemetry` | Control-api MCP row limits and query timeout |
 | `Auth` | Optional API key gate on `/v1/*` and control-api `/mcp` |
 | `Proxy` | Pass-through and reasoning strip |

@@ -196,77 +196,75 @@ For a high-traffic scenario, the same data is loaded and processed repeatedly be
 
 ---
 
-## TODO-008 — Richer compact tool metadata and confirmation enforcement
+## TODO-008 — Richer Virtual file-tool observations
 
 | Field | Value |
 | --- | --- |
 | **Status** | `open` |
 | **Priority** | Medium |
-| **Area** | `ToolSchema` compact index, validation gates |
+| **Area** | `ToolSchema` Virtual Tools, distillation |
 
-**Summary:** MVP CompactIndex derive (A) copies `name`, `description`, and `parameters.required` only. The design wants `use_when`, `do_not_use_when`, `side_effect`, and `needs_confirmation` for better tool selection and safety. Confirmation for external / financial / destructive tools is prompt-only in MVP.
+**Summary:** MVP file observations are compact but shallow (heuristic imports/symbols, capped search/dir hits). Richer manifests (AST symbols, structured imports/exports) and safer confirmation for high-risk native backends would improve selection without exposing raw IDE file tools.
 
-**Workaround:** Rely on client-authored `description` quality and hard hydrate + JSON Schema arg gates.
+**Workaround:** Rely on tool descriptions and range/search caps (`MaxRangeLines` / `MaxSearchMatches`).
 
 **Acceptance criteria:**
 
-- [ ] Compact entries can carry richer fields from optional client extensions and/or derived heuristics.
-- [ ] Optional enforcement path for `needs_confirmation` / high side-effect tools (beyond prompt text).
-- [ ] Docs for extension shape and defaults when fields are absent.
-- [ ] Tests for selection metadata present in compact index and confirmation behavior when enabled.
+- [ ] Optional richer manifest fields from native metadata tools when the mapping exposes them.
+- [ ] Optional confirmation / high-risk gate for destructive native backends (beyond prompt text).
+- [ ] Docs for observation shape and defaults when fields are absent.
+- [ ] Tests for richer observation fields and confirmation behavior when enabled.
 
-**Notes:** Plan: [`internal/plans/tools-schema-index.md`](../internal/plans/tools-schema-index.md). Coordinate with [TODO-009](#todo-009--llm-compact-tool-index-summaries) if summaries supply these fields.
+**Notes:** Plan: [`internal/plans/virtual-tools.md`](../internal/plans/virtual-tools.md).
 
 ---
 
-## TODO-009 — LLM compact tool index summaries
+## TODO-009 — Process-wide MappingJson cache by schema hash
 
 | Field | Value |
 | --- | --- |
 | **Status** | `open` |
 | **Priority** | Low |
-| **Area** | `ToolSchema` snapshot, Compression endpoint |
+| **Area** | `ToolSchema` mapping, Compression endpoint |
 
-**Summary:** MVP does not call an LLM to rewrite tool descriptions. For vague or near-duplicate client `description`s, an optional one-shot summarize (at catalog snapshot time, cached by `definitionHash`) could produce stronger compact entries (`use_when` / `do_not_use_when` / side-effect hints).
+**Summary:** MVP persists MappingJson per conversation. Across conversations in one process that share the same catalog hash, the mapper may re-run. A process-wide memory cache keyed by `schema_hash` would skip re-LLM.
 
-**Workaround:** Field-map derive (A); improve client tool descriptions upstream.
+**Workaround:** Accept per-conversation mapping cost; DisableToolIr still avoids retries after failure for that conversation hash.
 
 **Acceptance criteria:**
 
-- [ ] Opt-in setting; default off.
-- [ ] Runs at snapshot time (or offline), not on every chat turn; reuse Compression (or dedicated) model endpoint.
-- [ ] Output validated to compact entry shape; fall back to derive (A) on failure.
-- [ ] Cache by tool `definitionHash` so unchanged tools are not re-summarized.
-- [ ] Tests for success, fallback, and cache hit.
+- [ ] Optional in-process cache keyed by `schema_hash` with TTL/size bounds.
+- [ ] Never cache invalid maps; DisableToolIr remains conversation-scoped unless product decides otherwise.
+- [ ] Escalate before adding a shared durable hash table.
+- [ ] Tests for hit/miss and invalid-map exclusion.
 
-**Notes:** Do not block CompactIndex MVP. Prefer after [TODO-008](#todo-008--richer-compact-tool-metadata-and-confirmation-enforcement) field shape exists. Plan: [`internal/plans/tools-schema-index.md`](../internal/plans/tools-schema-index.md).
+**Notes:** Plan: [`internal/plans/virtual-tools.md`](../internal/plans/virtual-tools.md).
 
 ---
 
-## TODO-010 — Grouped tool catalog and `list_tools_in_group`
+## TODO-010 — Virtualize additional non-file tool families
 
 | Field | Value |
 | --- | --- |
 | **Status** | `open` |
 | **Priority** | Low |
-| **Area** | `ToolSchema` meta-tools, compact index |
+| **Area** | `ToolSchema` Virtual Tools |
 
-**Summary:** For very large catalogs, the design adds a group index plus `list_tools_in_group` before per-tool `get_tool_definition`. MVP is two-stage only (compact index → full def).
+**Summary:** MVP virtualizes file tools only; edit/terminal/MCP/browser stay full-schema passthrough. Later phases may add Virtual surfaces for those families.
 
-**Workaround:** CompactIndex with `MinToolCountToActivate`; accept a larger flat index until catalogs demand grouping.
+**Workaround:** Non-file tools pass through unchanged when Virtual is active.
 
 **Acceptance criteria:**
 
-- [ ] Optional group index in the snapshotted system payload when enabled / above a threshold.
-- [ ] Proxy-local `list_tools_in_group` meta-tool returning compact summaries for that group.
-- [ ] Hard gates treat the new meta-tool like `get_tool_definition` (allowed without prior hydration).
-- [ ] Docs and tests for group → compact → full-def flow.
+- [ ] Mapping schema extended for the new Virtual tool family.
+- [ ] Planner + distill paths for the new tools without an inner invisible multi-tool loop unless explicitly designed.
+- [ ] Docs and tests for outbound surface and wire remap.
 
-**Notes:** Plan: [`internal/plans/tools-schema-index.md`](../internal/plans/tools-schema-index.md). Design: [`internal/tool-calls-schema-index.md`](../internal/tool-calls-schema-index.md).
+**Notes:** Plan: [`internal/plans/virtual-tools.md`](../internal/plans/virtual-tools.md). Design: [`internal/tool-ir.md`](../internal/tool-ir.md).
 
 ---
 
-## TODO-011 — Tool catalog mismatch Refresh setting
+## TODO-011 — Tool catalog mismatch policy knobs
 
 | Field | Value |
 | --- | --- |
@@ -274,18 +272,18 @@ For a high-traffic scenario, the same data is loaded and processed repeatedly be
 | **Priority** | Medium |
 | **Area** | `ToolSchema` snapshot, `ConversationToolCatalog` |
 
-**Summary:** MVP assumes client `tools[]` is stable for a conversation. On inbound catalog hash mismatch vs snapshot, Comprexy keeps the snapshot and warns. Operators may need `OnCatalogMismatch = KeepSnapshot | Refresh`.
+**Summary:** Virtual MVP remaps on inbound catalog hash mismatch (blocking). Operators may want explicit `OnCatalogMismatch` policies (always remap vs require new conversation) and timeouts for the mapper.
 
-**Workaround:** Start a new conversation (new `X-Comprexy-Conversation-Id`) when the tool catalog intentionally changes.
+**Workaround:** Start a new conversation when the catalog intentionally changes in a way that should not block chat.
 
 **Acceptance criteria:**
 
-- [ ] `ToolSchema:OnCatalogMismatch` setting with default `KeepSnapshot`.
-- [ ] `Refresh` rebuilds catalog snapshot, compact index, and clears or rehashes per-tool hydration as needed.
+- [ ] Documented mismatch policy setting(s) with clear defaults.
+- [ ] Optional mapper timeout separate from Compression timeout.
 - [ ] Logging for mismatch and chosen policy.
-- [ ] Docs in SETTINGS.md; tests for Keep vs Refresh.
+- [ ] Docs in SETTINGS.md; tests for policy behavior.
 
-**Notes:** Plan: [`internal/plans/tools-schema-index.md`](../internal/plans/tools-schema-index.md).
+**Notes:** Plan: [`internal/plans/virtual-tools.md`](../internal/plans/virtual-tools.md).
 
 ---
 
@@ -297,7 +295,7 @@ For a high-traffic scenario, the same data is loaded and processed repeatedly be
 | **Priority** | Low |
 | **Area** | `ToolSchema` arg validation |
 
-**Summary:** MVP validates tool call arguments with a real JSON Schema library against each tool’s `parameters` as sent. Exotic or inconsistent dialects may yield noisy fail-closed errors.
+**Summary:** MVP validates tool call arguments with a real JSON Schema library against each tool’s `parameters` as sent (Virtual schemas and passthrough client defs). Exotic or inconsistent dialects may yield noisy fail-closed errors.
 
 **Workaround:** Fail closed with the validator message in the synthetic JSON tool error; fix upstream tool schemas.
 
@@ -307,7 +305,7 @@ For a high-traffic scenario, the same data is loaded and processed repeatedly be
 - [ ] Clear docs for supported keywords vs ignored/rejected.
 - [ ] Tests for subset accept/reject behavior vs full-validator mode.
 
-**Notes:** Only pursue if production catalogs prove noisy. Plan: [`internal/plans/tools-schema-index.md`](../internal/plans/tools-schema-index.md).
+**Notes:** Only pursue if production catalogs prove noisy.
 
 ---
 

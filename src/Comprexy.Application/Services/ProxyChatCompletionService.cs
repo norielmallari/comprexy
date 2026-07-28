@@ -289,17 +289,27 @@ public class ProxyChatCompletionService
 
         _requestTraceFiles.SetConversationId(conversation.Id);
 
-        // Client history shorter than our cursor (retry / rewind) — realign before diffing.
-        if (conversation.SyncedMessageCount > request.Messages.Count)
+        // Client history shorter than our cursor (retry / snapshot rewind) — realign before diffing.
+        var rewoundToSnapshot = conversation.SyncedMessageCount > request.Messages.Count;
+        if (rewoundToSnapshot)
         {
             _logger.LogWarning(
-                "Conversation {ConversationId} sync cursor ({Synced}) was ahead of client history ({ClientCount}); realigning.",
+                "Conversation {ConversationId} sync cursor ({Synced}) was ahead of client history ({ClientCount}); realigning for snapshot rewind.",
                 conversation.Id,
                 conversation.SyncedMessageCount,
                 request.Messages.Count);
             conversation.SetSyncedMessageCount(request.Messages.Count, now);
+
+            var keepNonSystemCount = request.Messages.Count(m => m.Role != MessageRole.System);
+            await ApplyClientSnapshotRewindAsync(
+                conversation,
+                storedMessages,
+                keepNonSystemCount,
+                cancellationToken);
         }
 
+        var syncedPrefixCount = Math.Min(conversation.SyncedMessageCount, request.Messages.Count);
+        var clientSyncedPrefix = request.Messages.Take(syncedPrefixCount).ToList();
         var newClientMessages = request.Messages.Skip(conversation.SyncedMessageCount).ToList();
         var systemMessage = newClientMessages.FirstOrDefault(m => m.Role == MessageRole.System)
             ?? request.Messages.FirstOrDefault(m => m.Role == MessageRole.System);
@@ -311,25 +321,62 @@ public class ProxyChatCompletionService
             ? 0
             : storedMessages.Max(m => m.Sequence) + 1;
         var newlyPersisted = new List<ConversationMessage>();
-        foreach (var message in nonSystemNewMessages)
-        {
-            newlyPersisted.Add(PersistMessage(conversation.Id, nextSequence++, message, now));
-        }
-
         if (_toolSchemaOrchestrator.ShouldAttemptActivation(_proxyOptions.PassThrough))
         {
-            var newToolMessages = nonSystemNewMessages.Where(m => m.Role == MessageRole.Tool).ToList();
-            if (newToolMessages.Count > 0)
+            var historyForValidation = storedMessages
+                .Concat(newlyPersisted)
+                .OrderBy(m => m.Sequence)
+                .ToList();
+
+            // Ensure MappingJson before staging so replaced native file tools are known on the
+            // first Virtual turn (client may dump read/glob history before any IR emit).
+            var (replacedClientToolNames, catalogMutatedForInbound) =
+                await _toolSchemaOrchestrator.ResolveReplacedClientToolNamesAsync(
+                    conversation.Id,
+                    request.RawRequest,
+                    cancellationToken);
+            if (catalogMutatedForInbound)
             {
-                // History for announce/close must exclude the tool results under validation;
-                // include same-batch assistants so client-replayed tool_calls are visible.
-                var validationHistory = storedMessages
-                    .Concat(newlyPersisted.Where(m => m.Role != MessageRole.Tool))
-                    .OrderBy(m => m.Sequence)
-                    .ToList();
-                _toolSchemaOrchestrator.ValidateDownstreamToolResults(
-                    newToolMessages,
-                    validationHistory);
+                await _unitOfWork.SaveChangesAsync(cancellationToken);
+            }
+
+            // Rewrite Virtual Tools inbound results before persist so DB/model see IR observations.
+            // Complete dual-id rows only after PersistMessage so a crash mid-batch can still retry.
+            // clientSyncedPrefix heals snapshot rewind: announcing assistants often sit before the tip.
+            // Replaced native file-tool assistants/results are dropped (never staged into IR transcript).
+            var inboundRewrite = await _toolSchemaOrchestrator.ValidateAndRewriteInboundToolResultsAsync(
+                conversation.Id,
+                nonSystemNewMessages,
+                historyForValidation,
+                clientSyncedPrefix,
+                cancellationToken,
+                replacedClientToolNames);
+
+            foreach (var message in inboundRewrite.Messages)
+            {
+                newlyPersisted.Add(PersistMessage(conversation.Id, nextSequence++, message, now));
+            }
+
+            // Inbound distill commit: persist rewritten tool observations before isolated dual-id Complete
+            // (docs/ARCHITECTURE.md § Persistence — Unit of Work ownership).
+            if (inboundRewrite.CompletedClientCallIds.Count > 0)
+            {
+                await _unitOfWork.SaveChangesAsync(cancellationToken);
+            }
+
+            foreach (var clientCallId in inboundRewrite.CompletedClientCallIds)
+            {
+                await _toolSchemaOrchestrator.CompleteInboundToolCallAsync(
+                    conversation.Id,
+                    clientCallId,
+                    cancellationToken);
+            }
+        }
+        else
+        {
+            foreach (var message in nonSystemNewMessages)
+            {
+                newlyPersisted.Add(PersistMessage(conversation.Id, nextSequence++, message, now));
             }
         }
 
@@ -408,115 +455,14 @@ public class ProxyChatCompletionService
         var currentUserMessage = requestTip;
 
         var workingMemory = await _workingMemoryRepository.GetLatestAsync(conversation.Id, cancellationToken);
-        var ranPreCompressionEmergency = false;
         if (metricsPrepare is not null)
         {
             metricsPrepare = metricsPrepare with { WorkingMemoryVersionUsed = workingMemory?.Version };
         }
 
-        // Until the first successful compression, forward the client's full message list
-        // (transparent messages). The retain/sliding window is applied only during compression.
-        if (workingMemory is null)
-        {
-            var preWmToolSchema = await TryPrepareToolSchemaAsync(
-                conversation.Id,
-                request.Messages,
-                request.RawRequest,
-                allMessages,
-                cancellationToken);
-            var preWmMessages = preWmToolSchema?.OutgoingMessages ?? request.Messages;
-            var preWmPayload = preWmToolSchema?.RewrittenClientRequest ?? request.RawRequest;
-            var preCompressionTokens = _tokenEstimator.CountPromptTokens(preWmMessages, preWmPayload);
-            var preCompressionDecision = _budgetEvaluator.Evaluate(preCompressionTokens);
-
-            if (preCompressionDecision != ContextBudgetDecision.EmergencyCompressionRequired)
-            {
-                _logger.LogDebug(
-                    "No working memory yet for conversation {ConversationId}; forwarding full client history until first compression.",
-                    conversation.Id);
-                LogContextBudget(
-                    conversation.Id,
-                    preCompressionTokens,
-                    preCompressionDecision,
-                    windowStartSequence: allMessages[0].Sequence,
-                    windowEndSequence: currentMessageEntity.Sequence,
-                    recentRawCount: allMessages.Count);
-
-                return await BuildPreparedRequestAsync(
-                    conversation,
-                    nextSequence,
-                    preCompressionTokens,
-                    preCompressionDecision,
-                    endpoint,
-                    request.Messages,
-                    request.RawRequest,
-                    request,
-                    allMessages,
-                    skipCompression: false,
-                    request.Messages.Count,
-                    allMessages[0].Sequence,
-                    currentMessageEntity.Sequence,
-                    allMessages.Count,
-                    replaceMessages: false,
-                    cancellationToken,
-                    preWmToolSchema,
-                    metricsPrepare);
-            }
-
-            // Evaluate only returns EmergencyCompressionRequired when HardLimitTokens is set.
-            var hardLimitTokens = _policy.HardLimitTokens
-                ?? throw new InvalidOperationException(
-                    "EmergencyCompressionRequired requires ContextPolicy:HardLimitTokens.");
-
-            if (!EmergencySyncEnabled)
-            {
-                _logger.LogInformation(
-                    "Hard limit exceeded before first compression for conversation {ConversationId}; emergency compression is {Mode}, rejecting.",
-                    conversation.Id,
-                    _policy.RetainSelection == RetainSelectionMode.Inline ? "Inline (ignored)" : _policy.EmergencyCompression);
-                throw new ContextBudgetExceededException(
-                    conversation.Id,
-                    preCompressionTokens,
-                    hardLimitTokens);
-            }
-
-            _logger.LogInformation(
-                "Hard limit exceeded before first compression for conversation {ConversationId}; running emergency compression.",
-                conversation.Id);
-            await _unitOfWork.SaveChangesAsync(cancellationToken);
-            await _compressionOrchestrator.RunAsync(
-                conversation.Id,
-                CompressionMode.Emergency,
-                cancellationToken,
-                _endpointResolver.ResolveUpstream().ResolveOutboundModel(request.RawRequest));
-            ranPreCompressionEmergency = true;
-            workingMemory = await _workingMemoryRepository.GetLatestAsync(conversation.Id, cancellationToken);
-            if (metricsPrepare is not null)
-            {
-                metricsPrepare = metricsPrepare with { WorkingMemoryVersionUsed = workingMemory?.Version };
-            }
-            var refreshedAfterFirstCompression = await _messageRepository.GetByConversationIdAsync(
-                conversation.Id,
-                cancellationToken);
-            if (refreshedAfterFirstCompression.Count > 0)
-            {
-                allMessages = refreshedAfterFirstCompression;
-                currentMessageEntity = refreshedAfterFirstCompression.FirstOrDefault(m => m.Id == currentMessageEntity.Id)
-                    ?? refreshedAfterFirstCompression.FirstOrDefault(m => m.Sequence == currentMessageEntity.Sequence)
-                    ?? refreshedAfterFirstCompression[^1];
-            }
-
-            if (workingMemory is null)
-            {
-                throw new ContextBudgetExceededException(
-                    conversation.Id,
-                    preCompressionTokens,
-                    hardLimitTokens);
-            }
-        }
-
-        // After compression: send every still-unfolded message. Retain/window decisions happen
-        // only inside CompressionOrchestrator when folding into working memory (except send-time
+        // Always rebuild from stored (IR-side) messages. WM is optional — pre-first-compression
+        // is the same path with workingMemory == null (never forward client wire history).
+        // Retain/window folding still happens only inside CompressionOrchestrator (except send-time
         // emergency trim below when still over the hard limit after compression).
         var recentRaw = PrepareRecentRawForChatTemplate(
             conversation.Id,
@@ -537,28 +483,22 @@ public class ProxyChatCompletionService
             conversation.Id,
             outgoing,
             request.RawRequest,
-            allMessages,
             cancellationToken);
         var estimateMessages = toolSchema?.OutgoingMessages ?? outgoing;
         var estimatePayload = toolSchema?.RewrittenClientRequest ?? request.RawRequest;
         var estimatedTokens = _tokenEstimator.CountPromptTokens(estimateMessages, estimatePayload);
-        var decision = ranPreCompressionEmergency
-            ? ContextBudgetDecision.EmergencyCompressionRequired
-            : _budgetEvaluator.Evaluate(estimatedTokens);
+        var decision = _budgetEvaluator.Evaluate(estimatedTokens);
         var windowStart = recentRaw.Count > 0 ? recentRaw[0].Sequence : (int?)null;
         var windowEnd = currentMessageEntity.Sequence;
         LogContextBudget(
             conversation.Id,
             estimatedTokens,
             decision,
-            postEmergency: ranPreCompressionEmergency,
             windowStartSequence: windowStart,
             windowEndSequence: windowEnd,
             recentRawCount: recentRaw.Count);
 
-        if (!ranPreCompressionEmergency
-            && decision == ContextBudgetDecision.EmergencyCompressionRequired
-            && EmergencySyncEnabled)
+        if (decision == ContextBudgetDecision.EmergencyCompressionRequired && EmergencySyncEnabled)
         {
             await _unitOfWork.SaveChangesAsync(cancellationToken);
             await _compressionOrchestrator.RunAsync(
@@ -596,7 +536,6 @@ public class ProxyChatCompletionService
                 conversation.Id,
                 outgoing,
                 request.RawRequest,
-                allMessages,
                 cancellationToken);
             estimateMessages = toolSchema?.OutgoingMessages ?? outgoing;
             estimatePayload = toolSchema?.RewrittenClientRequest ?? request.RawRequest;
@@ -612,9 +551,7 @@ public class ProxyChatCompletionService
                 windowEndSequence: windowEnd,
                 recentRawCount: recentRaw.Count);
         }
-        else if (!ranPreCompressionEmergency
-                 && decision == ContextBudgetDecision.EmergencyCompressionRequired
-                 && !EmergencySyncEnabled)
+        else if (decision == ContextBudgetDecision.EmergencyCompressionRequired && !EmergencySyncEnabled)
         {
             _logger.LogInformation(
                 "Hard limit reached for conversation {ConversationId}; emergency compression is {Mode}, skipping sync compact.",
@@ -642,7 +579,6 @@ public class ProxyChatCompletionService
                     conversation.Id,
                     outgoing,
                     request.RawRequest,
-                    allMessages,
                     cancellationToken);
                 estimateMessages = toolSchema?.OutgoingMessages ?? outgoing;
                 estimatePayload = toolSchema?.RewrittenClientRequest ?? estimatePayload;
@@ -693,7 +629,6 @@ public class ProxyChatCompletionService
         Guid conversationId,
         IReadOnlyList<ChatMessage> outgoingMessages,
         JsonElement? rawRequest,
-        IReadOnlyList<ConversationMessage> allMessages,
         CancellationToken cancellationToken)
     {
         if (!_toolSchemaOrchestrator.ShouldAttemptActivation(_proxyOptions.PassThrough))
@@ -701,19 +636,20 @@ public class ProxyChatCompletionService
             return null;
         }
 
-        var toolSchema = await _toolSchemaOrchestrator.TryPrepareRewriteAsync(
+        var outcome = await _toolSchemaOrchestrator.TryPrepareRewriteAsync(
             conversationId,
             outgoingMessages,
             rawRequest,
-            allMessages,
             cancellationToken);
 
-        if (toolSchema is not null)
+        // Flush MappingJson success and DisableToolIr alike. Staged messages may also flush here
+        // when CatalogMutated (same early-flush behavior as the prior Virtual success path).
+        if (outcome.CatalogMutated)
         {
             await _unitOfWork.SaveChangesAsync(cancellationToken);
         }
 
-        return toolSchema;
+        return outcome.Result;
     }
 
     private async Task<PreparedRequest> BuildPreparedRequestAsync(
@@ -741,7 +677,6 @@ public class ProxyChatCompletionService
                 conversation.Id,
                 outgoingMessages,
                 rawRequest,
-                allMessages,
                 cancellationToken);
 
         var messages = outgoingMessages;
@@ -753,7 +688,7 @@ public class ProxyChatCompletionService
             tokens = _tokenEstimator.CountPromptTokens(messages, toolSchema.RewrittenClientRequest);
         }
 
-        // ToolSchema injects system rules into Messages — always replace wire messages when active.
+        // ToolSchema rewrites tools[] — always replace wire messages when active.
         var effectiveReplaceMessages = toolSchema is not null || replaceMessages;
         // Pre-follow-up estimate: main outbound tokens before any wrap-up (hard-limit check only;
         // CompressionMaxInputTokens is intentionally not applied here — matches prior tip headroom).
@@ -840,7 +775,6 @@ public class ProxyChatCompletionService
 
         var turnsSince = allMessages.Count(m =>
             m.Role == MessageRole.Assistant
-            && !m.IsPinnedForToolSchema
             && m.CreatedAt > latestSucceeded.CompletedAt);
 
         if (turnsSince >= _policy.MinTurnsBetweenGenerations)
@@ -1013,6 +947,83 @@ public class ProxyChatCompletionService
         return (trimmed, outgoing, estimatedTokens, windowStart);
     }
 
+    /// <summary>
+    /// Discards persisted turns past the client snapshot and invalidates working-memory versions
+    /// that absorbed any of those turns. Mutates <paramref name="storedMessages"/> in place.
+    /// </summary>
+    private async Task ApplyClientSnapshotRewindAsync(
+        Conversation conversation,
+        List<ConversationMessage> storedMessages,
+        int keepNonSystemCount,
+        CancellationToken cancellationToken)
+    {
+        if (keepNonSystemCount < 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(keepNonSystemCount));
+        }
+
+        // Abandoned open IR→client rounds from the discarded branch must not block healing.
+        if (_toolSchemaOrchestrator.ShouldAttemptActivation(_proxyOptions.PassThrough))
+        {
+            await _toolSchemaOrchestrator.ClearPendingToolCallMapsAsync(conversation.Id, cancellationToken);
+        }
+
+        var toDelete = storedMessages
+            .Where(m => m.Sequence >= keepNonSystemCount)
+            .OrderBy(m => m.Sequence)
+            .ToList();
+
+        int? invalidateWmFrom = null;
+        foreach (var message in toDelete)
+        {
+            if (message.FoldedIntoWorkingMemoryVersion is int foldedVersion)
+            {
+                invalidateWmFrom = invalidateWmFrom is null
+                    ? foldedVersion
+                    : Math.Min(invalidateWmFrom.Value, foldedVersion);
+            }
+        }
+
+        if (invalidateWmFrom is int fromVersion)
+        {
+            foreach (var kept in storedMessages.Where(m =>
+                         m.Sequence < keepNonSystemCount &&
+                         m.FoldedIntoWorkingMemoryVersion is int v &&
+                         v >= fromVersion))
+            {
+                kept.ClearFold();
+            }
+
+            var removedWm = await _workingMemoryRepository.DeleteFromVersionAsync(
+                conversation.Id,
+                fromVersion,
+                cancellationToken);
+            _logger.LogInformation(
+                "Snapshot rewind for conversation {ConversationId}: invalidated working memory from version {FromVersion} (deleted {DeletedCount} version row(s)).",
+                conversation.Id,
+                fromVersion,
+                removedWm);
+        }
+
+        foreach (var message in toDelete)
+        {
+            _messageRepository.Remove(message);
+            storedMessages.Remove(message);
+        }
+
+        if (toDelete.Count > 0)
+        {
+            _logger.LogInformation(
+                "Snapshot rewind for conversation {ConversationId}: deleted {DeletedCount} stored message(s) from sequence {FromSequence} (keeping {KeepCount} non-system turn(s)).",
+                conversation.Id,
+                toDelete.Count,
+                keepNonSystemCount,
+                keepNonSystemCount);
+        }
+
+        await _unitOfWork.SaveChangesAsync(cancellationToken);
+    }
+
     private void EnrichStoredMessagesFromClientHistory(
         List<ConversationMessage> storedMessages,
         IReadOnlyList<ChatMessage> clientMessages)
@@ -1109,8 +1120,7 @@ public class ProxyChatCompletionService
         Guid conversationId,
         int sequence,
         ChatMessage message,
-        DateTimeOffset now,
-        bool pinForToolSchema = false)
+        DateTimeOffset now)
     {
         var tokenCount = _tokenEstimator.CountTokens([message]);
         var rawWireJson = message.RawWireMessage?.GetRawText();
@@ -1122,10 +1132,6 @@ public class ProxyChatCompletionService
             tokenCount,
             now,
             rawWireJson);
-        if (pinForToolSchema)
-        {
-            entity.MarkPinnedForToolSchema();
-        }
 
         _messageRepository.Add(entity);
         return entity;
@@ -1201,14 +1207,12 @@ public class ProxyChatCompletionService
                     prepared.Conversation.Id,
                     sequence++,
                     turn.AssistantMessage,
-                    _clock.UtcNow,
-                    pinForToolSchema: turn.PinBoth);
+                    _clock.UtcNow);
                 PersistMessage(
                     prepared.Conversation.Id,
                     sequence++,
                     turn.ToolMessage,
-                    _clock.UtcNow,
-                    pinForToolSchema: turn.PinBoth);
+                    _clock.UtcNow);
             }
         }
 
@@ -1233,6 +1237,20 @@ public class ProxyChatCompletionService
             assistantWireJson);
 
         _messageRepository.Add(assistantEntity);
+        sequence++;
+
+        if (prepared.ToolSchema is not null)
+        {
+            foreach (var toolResult in prepared.ToolSchema.Session.PendingLocalToolResults)
+            {
+                PersistMessage(
+                    prepared.Conversation.Id,
+                    sequence++,
+                    toolResult,
+                    _clock.UtcNow);
+            }
+        }
+
         prepared.Conversation.SetSyncedMessageCount(prepared.IncomingMessageCount + 1, _clock.UtcNow);
 
         if (!prepared.SkipCompression && prepared.MetricsPrepare is not null)
@@ -1333,6 +1351,10 @@ public class ProxyChatCompletionService
         }
 
         var promptTokens = upstreamResult.PromptTokens ?? prepared.EstimatedTokens;
+        await _toolSchemaOrchestrator.OnRequestCompletedAsync(
+            prepared.Conversation.Id,
+            assistantWireJson,
+            cancellationToken);
         return new ProxyChatCompletionResult(
             prepared.Conversation.Id,
             assistantContent,
@@ -1389,11 +1411,6 @@ public class ProxyChatCompletionService
 
         var keepRecent = _recentContextSelector
             .Select(foldUniverse, maxMessagesOverride: _policy.CompressionRetainMessageCount)
-            .ToList();
-        var pinned = foldUniverse.Where(m => m.IsPinnedForToolSchema).ToList();
-        keepRecent = keepRecent
-            .Concat(pinned.Where(p => keepRecent.All(k => k.Id != p.Id)))
-            .OrderBy(m => m.Sequence)
             .ToList();
         var keepIds = keepRecent.Select(m => m.Id).ToHashSet();
         var foldSet = foldUniverse

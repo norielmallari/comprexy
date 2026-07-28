@@ -107,4 +107,22 @@ public class FileReadPathExtractorTests
 
         Assert.Equal("call_abc", FileReadPathExtractor.TryExtractToolCallId(message));
     }
+
+    [Fact]
+    public void TryExtractToolCallId_TruncatedWireJson_RecoversId()
+    {
+        var conversationId = Guid.NewGuid();
+        var truncated =
+            """{"role":"tool","tool_call_id":"call_trunc","content":[{"type":"text","text":"unterminated""";
+        var message = ConversationMessage.Create(
+            conversationId,
+            1,
+            MessageRole.Tool,
+            "x",
+            1,
+            DateTimeOffset.UtcNow,
+            truncated);
+
+        Assert.Equal("call_trunc", FileReadPathExtractor.TryExtractToolCallId(message));
+    }
 }

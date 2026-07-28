@@ -1,10 +1,9 @@
-using System.Security.Cryptography;
-using System.Text;
 using System.Text.Json;
 using Comprexy.Application.Abstractions;
 using Comprexy.Application.Configuration;
 using Comprexy.Application.Models;
 using Comprexy.Application.Services;
+using Comprexy.Application.Services.ToolIr;
 using Comprexy.Domain.Entities;
 using Comprexy.Domain.Enums;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -18,28 +17,90 @@ public class ToolSchemaOrchestratorTests
     private readonly Mock<IConversationToolCatalogRepository> _catalogRepository = new();
     private readonly Mock<IConversationToolDefinitionRepository> _definitionRepository = new();
     private readonly Mock<IChatCompletionClient> _chatCompletionClient = new();
-    private readonly Mock<ITokenEstimator> _tokenEstimator = new();
     private readonly Mock<IClock> _clock = new();
+    private readonly Mock<IConversationMetricsRecorder> _metricsRecorder = new();
+    private readonly Dictionary<Guid, ConversationToolCatalog> _catalogs = new();
+    private readonly List<ConversationToolDefinition> _definitions = [];
+    private ToolIrCallIdMap _callIdMap = null!;
+    private InMemoryConversationToolCallMapRepository _callIdMapRepo = null!;
+    private IToolIrCallIdMapService _callIdMapService = null!;
+    private ToolIrFileBodyCache _fileCache = null!;
+    private DateTimeOffset _now = DateTimeOffset.UtcNow;
 
     private ToolSchemaOptions _options = new()
     {
-        Mode = ToolSchemaMode.CompactIndex,
-        MinToolCountToActivate = 1,
-        SkipRefetchIfHydrated = true
+        Mode = ToolSchemaMode.Virtual,
+        MappingMaxRetries = 2,
+        MaxRangeLines = 250,
+        CallIdMapPendingAbsoluteExpiration = TimeSpan.FromMinutes(30)
     };
 
-    private ToolSchemaOrchestrator CreateOrchestrator() =>
-        new(
-            Options.Create(_options),
+    public ToolSchemaOrchestratorTests()
+    {
+        _clock.Setup(c => c.UtcNow).Returns(() => _now);
+        _catalogRepository
+            .Setup(r => r.GetByConversationIdAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((Guid id, CancellationToken _) =>
+                _catalogs.TryGetValue(id, out var catalog) ? catalog : null);
+        _catalogRepository
+            .Setup(r => r.Add(It.IsAny<ConversationToolCatalog>()))
+            .Callback<ConversationToolCatalog>(c => _catalogs[c.ConversationId] = c);
+        _definitionRepository
+            .Setup(r => r.GetByConversationIdAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(() => _definitions.ToList());
+        _definitionRepository
+            .Setup(r => r.Add(It.IsAny<ConversationToolDefinition>()))
+            .Callback<ConversationToolDefinition>(d => _definitions.Add(d));
+    }
+
+    private ToolSchemaOrchestrator CreateOrchestrator(
+        string? providerModel = "m",
+        string? compressionModel = null)
+    {
+        var toolOptions = Options.Create(_options);
+        _fileCache = new ToolIrFileBodyCache(toolOptions);
+        _callIdMap = new ToolIrCallIdMap(_clock.Object, toolOptions);
+        _callIdMapRepo = new InMemoryConversationToolCallMapRepository();
+        _callIdMapService = new ToolIrCallIdMapService(
+            _callIdMap,
+            new InMemoryToolIrCallIdMapUnitOfWorkFactory(_callIdMapRepo),
+            _clock.Object,
+            toolOptions);
+        var endpointResolver = new ProviderEndpointResolver(
+            Options.Create(new ProviderOptions { BaseUrl = "http://upstream", ApiKey = "k", Model = providerModel }),
+            Options.Create(new CompressionOptions { Model = compressionModel }));
+        _metricsRecorder.Setup(m => m.IsEnabled).Returns(true);
+        _metricsRecorder
+            .Setup(m => m.RecordCompressionOverheadAsync(
+                It.IsAny<Guid>(),
+                It.IsAny<int>(),
+                It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        return new ToolSchemaOrchestrator(
+            toolOptions,
             new ToolCatalogParser(),
-            new ToolSchemaPromptFactory("tool schema rules"),
             new ToolArgumentValidator(),
+            new ToolIrSchemaMapper(
+                toolOptions,
+                Options.Create(new CompressionOptions()),
+                endpointResolver,
+                _chatCompletionClient.Object,
+                Mock.Of<ITokenEstimator>(),
+                _metricsRecorder.Object,
+                NullLogger<ToolIrSchemaMapper>.Instance),
+            new ToolIrPlanner(toolOptions, _fileCache),
+            new ToolIrResultDistiller(toolOptions, _fileCache),
+            _callIdMapService,
             _catalogRepository.Object,
             _definitionRepository.Object,
             _chatCompletionClient.Object,
-            _tokenEstimator.Object,
             _clock.Object,
             NullLogger<ToolSchemaOrchestrator>.Instance);
+    }
+
+    private static void AssertOpaqueClientCallId(string clientCallId) =>
+        Assert.Matches(@"^cur_[0-9a-f]{32}$", clientCallId);
 
     private static JsonElement ParseRequest(string json)
     {
@@ -47,21 +108,135 @@ public class ToolSchemaOrchestratorTests
         return document.RootElement.Clone();
     }
 
-    private static JsonElement ToolsRequest(params string[] toolNames)
-    {
-        var tools = toolNames.Select(name => new
-        {
-            type = "function",
-            function = new
+    private static JsonElement ReadAndShellToolsRequest() =>
+        ParseRequest(
+            """
             {
-                name,
-                description = $"Tool {name}.",
-                parameters = new { type = "object", required = Array.Empty<string>() }
+              "model": "client-model",
+              "tools": [
+                {
+                  "type": "function",
+                  "function": {
+                    "name": "Read",
+                    "description": "Read a file.",
+                    "parameters": {
+                      "type": "object",
+                      "properties": {
+                        "path": { "type": "string" }
+                      },
+                      "required": ["path"]
+                    }
+                  }
+                },
+                {
+                  "type": "function",
+                  "function": {
+                    "name": "Shell",
+                    "description": "Run a shell command.",
+                    "parameters": {
+                      "type": "object",
+                      "properties": {
+                        "command": { "type": "string" }
+                      },
+                      "required": ["command"]
+                    }
+                  }
+                }
+              ]
             }
-        }).ToArray();
+            """);
 
-        return ParseRequest(JsonSerializer.Serialize(new { tools }));
+    private static string CatalogHashFor(JsonElement request)
+    {
+        var parsed = new ToolCatalogParser().TryParse(request);
+        Assert.NotNull(parsed);
+        return parsed!.CatalogHash;
     }
+
+    private static string ValidReadShellMappingJson(string schemaHash) =>
+        JsonSerializer.Serialize(new
+        {
+            schema_hash = schemaHash,
+            client_capabilities = new object[]
+            {
+                new
+                {
+                    client_tool = "Read",
+                    capability = "FILE_READ_RAW",
+                    risk = "low",
+                    supports = new { path = true, offset = false, limit = false, query = false }
+                },
+                new
+                {
+                    client_tool = "Shell",
+                    capability = "NON_FILE",
+                    risk = "high",
+                    supports = new { path = false, offset = false, limit = false, query = false }
+                }
+            },
+            bindings = new object[]
+            {
+                new
+                {
+                    comprexy_tool = "comprexy_read_file_range",
+                    primary_client_tool = "Read",
+                    strategy = "read_then_slice",
+                    arg_map = new { path = "path" }
+                },
+                new
+                {
+                    comprexy_tool = "comprexy_read_file_manifest",
+                    primary_client_tool = "Read",
+                    strategy = "direct",
+                    arg_map = new { path = "path" }
+                }
+            }
+        });
+
+    private void SetupMapperReturns(string mappingJson, int times = 1)
+    {
+        var setup = _chatCompletionClient
+            .Setup(c => c.CompleteAsync(
+                It.IsAny<ProviderEndpoint>(),
+                It.Is<UpstreamRequest>(r => r.Purpose == UpstreamRequestPurpose.Compression),
+                It.IsAny<CancellationToken>()));
+        if (times <= 0)
+        {
+            setup.ThrowsAsync(new InvalidOperationException("mapper should not be called"));
+            return;
+        }
+
+        setup.ReturnsAsync(new UpstreamChatResult(mappingJson, "stop", 40, 10));
+    }
+
+    private void SetupMapperEchoValidMapping()
+    {
+        _chatCompletionClient
+            .Setup(c => c.CompleteAsync(
+                It.IsAny<ProviderEndpoint>(),
+                It.Is<UpstreamRequest>(r => r.Purpose == UpstreamRequestPurpose.Compression),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync((ProviderEndpoint _, UpstreamRequest request, CancellationToken _) =>
+            {
+                var user = request.Messages.First(m => m.Role == MessageRole.User).Content ?? string.Empty;
+                var hash = user.Split('\n', StringSplitOptions.RemoveEmptyEntries)
+                    .First(line => line.StartsWith("schema_hash:", StringComparison.Ordinal))
+                    ["schema_hash:".Length..]
+                    .Trim();
+                return new UpstreamChatResult(ValidReadShellMappingJson(hash), "stop", 1, 1);
+            });
+    }
+
+    private static ProviderEndpoint ChatEndpoint() => new("http://upstream", "k", "m", 30);
+
+    private static UpstreamRequest ChatUpstream(JsonElement? rewritten, params ChatMessage[] messages) =>
+        new(
+            messages,
+            Stream: false,
+            OriginalClientRequest: rewritten,
+            ReplaceMessages: true,
+            Purpose: UpstreamRequestPurpose.Chat,
+            RewrittenClientRequest: rewritten);
 
     [Fact]
     public async Task TryPrepareRewriteAsync_ModeOff_ReturnsNull()
@@ -69,650 +244,1164 @@ public class ToolSchemaOrchestratorTests
         _options.Mode = ToolSchemaMode.Off;
         var orchestrator = CreateOrchestrator();
 
-        var result = await orchestrator.TryPrepareRewriteAsync(
+        var outcome = await orchestrator.TryPrepareRewriteAsync(
             Guid.NewGuid(),
             [new ChatMessage(MessageRole.User, "hello")],
-            ToolsRequest("lookup"),
-            [],
+            ReadAndShellToolsRequest(),
             CancellationToken.None);
 
-        Assert.Null(result);
+        Assert.Null(outcome.Result);
+        Assert.False(outcome.CatalogMutated);
     }
 
     [Fact]
-    public async Task TryPrepareRewriteAsync_BelowMinToolCount_ReturnsNull()
+    public async Task TryPrepareRewriteAsync_HashMiss_CallsMapperPersistsMap_SecondRequestSkipsMapper()
     {
-        _options.MinToolCountToActivate = 3;
+        var request = ReadAndShellToolsRequest();
+        var hash = CatalogHashFor(request);
+        var conversationId = Guid.NewGuid();
         var orchestrator = CreateOrchestrator();
+        SetupMapperReturns(ValidReadShellMappingJson(hash));
 
-        var result = await orchestrator.TryPrepareRewriteAsync(
-            Guid.NewGuid(),
+        var first = await orchestrator.TryPrepareRewriteAsync(
+            conversationId,
             [new ChatMessage(MessageRole.User, "hello")],
-            ToolsRequest("one", "two"),
-            [],
+            request,
             CancellationToken.None);
 
-        Assert.Null(result);
-    }
-
-    [Fact]
-    public async Task TryPrepareRewriteAsync_MetaToolCollision_ReturnsNull()
-    {
-        var orchestrator = CreateOrchestrator();
-
-        var result = await orchestrator.TryPrepareRewriteAsync(
-            Guid.NewGuid(),
-            [new ChatMessage(MessageRole.User, "hello")],
-            ToolsRequest(ToolSchemaConstants.MetaToolName, "lookup"),
-            [],
-            CancellationToken.None);
-
-        Assert.Null(result);
-    }
-
-    [Fact]
-    public async Task TryPrepareRewriteAsync_ActiveMode_RewritesToolsToMetaToolOnly()
-    {
-        _clock.Setup(c => c.UtcNow).Returns(DateTimeOffset.UtcNow);
-        _catalogRepository
-            .Setup(r => r.GetByConversationIdAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync((ConversationToolCatalog?)null);
-        _definitionRepository
-            .Setup(r => r.GetByConversationIdAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync([]);
-
-        var orchestrator = CreateOrchestrator();
-        var result = await orchestrator.TryPrepareRewriteAsync(
-            Guid.NewGuid(),
-            [new ChatMessage(MessageRole.User, "hello")],
-            ToolsRequest("lookup", "search"),
-            [],
-            CancellationToken.None);
-
-        Assert.NotNull(result);
-        Assert.True(result!.RewrittenClientRequest.TryGetProperty("tools", out var tools));
-        Assert.Equal(2, tools.GetArrayLength());
-        Assert.Equal(
-            ToolSchemaConstants.MetaToolName,
-            tools[0].GetProperty("function").GetProperty("name").GetString());
-        Assert.Equal(
-            ToolSchemaConstants.ConversationIdMetaToolName,
-            tools[1].GetProperty("function").GetProperty("name").GetString());
-        Assert.Contains(result.OutgoingMessages, m => m.Role == MessageRole.System && m.Content.Contains("tool schema rules"));
-        _catalogRepository.Verify(r => r.Add(It.IsAny<ConversationToolCatalog>()), Times.Once);
-    }
-
-    [Fact]
-    public async Task RunInternalLoopAsync_GetCurrentConversationId_ReturnsSessionId()
-    {
-        var conversationId = Guid.Parse("dcd03d1d-b473-41b2-ac74-b2e52121eeb4");
-        var session = new ToolSchemaSession
-        {
-            ConversationId = conversationId,
-            CatalogToolNames = new HashSet<string>(StringComparer.Ordinal) { "lookup" },
-            FullDefinitionsByName = new Dictionary<string, string>(StringComparer.Ordinal)
-        };
-
-        const string assistantJson = """
-            {"role":"assistant","content":"","tool_calls":[{"id":"call_cid","type":"function","function":{"name":"get_current_conversation_id","arguments":"{}"}}]}
-            """;
-        var initialResult = new UpstreamChatResult(
-            Content: string.Empty,
-            FinishReason: "tool_calls",
-            PromptTokens: 1,
-            CompletionTokens: 1,
-            AssistantMessageJson: assistantJson);
-
-        _chatCompletionClient
-            .Setup(c => c.CompleteAsync(It.IsAny<ProviderEndpoint>(), It.IsAny<UpstreamRequest>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new UpstreamChatResult("done", "stop", 1, 1));
-
-        var orchestrator = CreateOrchestrator();
-        await orchestrator.RunInternalLoopAsync(
-            session,
-            new ProviderEndpoint("http://upstream", "key", "model", 60),
-            new UpstreamRequest([new ChatMessage(MessageRole.User, "hello")], Stream: false),
-            initialResult,
-            CancellationToken.None);
-
-        Assert.Single(session.PendingPersistedTurns);
-        Assert.Contains("dcd03d1d-b473-41b2-ac74-b2e52121eeb4", session.PendingPersistedTurns[0].ToolMessage.Content);
-        Assert.Contains("conversation_id", session.PendingPersistedTurns[0].ToolMessage.Content);
-    }
-
-    [Fact]
-    public async Task RunInternalLoopAsync_MetaHydrate_ReturnsDefinitionPayload()
-    {
-        var conversationId = Guid.NewGuid();
-        const string definitionJson = """
-            {"type":"function","function":{"name":"lookup","parameters":{"type":"object","required":["query"]}}}
-            """;
-        var definitionHash = ComputeSha256Hex(definitionJson);
-
-        _definitionRepository
-            .Setup(r => r.FindAsync(conversationId, "lookup", It.IsAny<CancellationToken>()))
-            .ReturnsAsync((ConversationToolDefinition?)null);
-
-        var session = new ToolSchemaSession
-        {
-            ConversationId = conversationId,
-            CatalogToolNames = new HashSet<string>(StringComparer.Ordinal) { "lookup" },
-            FullDefinitionsByName = new Dictionary<string, string>(StringComparer.Ordinal)
-            {
-                ["lookup"] = definitionJson
-            }
-        };
-
-        const string assistantJson = """
-            {"role":"assistant","content":"","tool_calls":[{"id":"call_meta","type":"function","function":{"name":"get_tool_definition","arguments":"{\"tool_name\":\"lookup\"}"}}]}
-            """;
-        var initialResult = new UpstreamChatResult(
-            Content: string.Empty,
-            FinishReason: "tool_calls",
-            PromptTokens: 1,
-            CompletionTokens: 1,
-            AssistantMessageJson: assistantJson);
-
-        _chatCompletionClient
-            .Setup(c => c.CompleteAsync(It.IsAny<ProviderEndpoint>(), It.IsAny<UpstreamRequest>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new UpstreamChatResult("done", "stop", 1, 1));
-
-        var orchestrator = CreateOrchestrator();
-        var loopResult = await orchestrator.RunInternalLoopAsync(
-            session,
-            new ProviderEndpoint("http://upstream", "key", "model", 60),
-            new UpstreamRequest([new ChatMessage(MessageRole.User, "hello")], Stream: false),
-            initialResult,
-            CancellationToken.None);
-
-        Assert.NotNull(loopResult);
-        Assert.Single(session.PendingPersistedTurns);
-        Assert.Contains("lookup", session.PendingPersistedTurns[0].ToolMessage.Content);
-        Assert.Contains("definition", session.PendingPersistedTurns[0].ToolMessage.Content);
-        Assert.Contains("lookup", session.HydratedToolNames);
-        _definitionRepository.Verify(r => r.Add(It.IsAny<ConversationToolDefinition>()), Times.Once);
-    }
-
-    [Fact]
-    public async Task RunInternalLoopAsync_SkipRefetchIfHydrated_ReturnsDefinitionWithAlreadyHydratedAck()
-    {
-        var conversationId = Guid.NewGuid();
-        const string definitionJson = """
-            {"type":"function","function":{"name":"lookup","parameters":{"type":"object","required":["query"]}}}
-            """;
-        var definitionHash = ComputeSha256Hex(definitionJson);
-        var hydrated = ConversationToolDefinition.Create(conversationId, "lookup", definitionHash, definitionJson, DateTimeOffset.UtcNow);
-
-        _definitionRepository
-            .Setup(r => r.FindAsync(conversationId, "lookup", It.IsAny<CancellationToken>()))
-            .ReturnsAsync(hydrated);
-
-        var session = new ToolSchemaSession
-        {
-            ConversationId = conversationId,
-            CatalogToolNames = new HashSet<string>(StringComparer.Ordinal) { "lookup" },
-            FullDefinitionsByName = new Dictionary<string, string>(StringComparer.Ordinal)
-            {
-                ["lookup"] = definitionJson
-            }
-        };
-        session.HydratedToolNames.Add("lookup");
-
-        const string assistantJson = """
-            {"role":"assistant","content":"","tool_calls":[{"id":"call_meta","type":"function","function":{"name":"get_tool_definition","arguments":"{\"tool_name\":\"lookup\"}"}}]}
-            """;
-        var initialResult = new UpstreamChatResult(
-            Content: string.Empty,
-            FinishReason: "tool_calls",
-            PromptTokens: 1,
-            CompletionTokens: 1,
-            AssistantMessageJson: assistantJson);
-
-        _chatCompletionClient
-            .Setup(c => c.CompleteAsync(It.IsAny<ProviderEndpoint>(), It.IsAny<UpstreamRequest>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new UpstreamChatResult("done", "stop", 1, 1));
-
-        var orchestrator = CreateOrchestrator();
-        await orchestrator.RunInternalLoopAsync(
-            session,
-            new ProviderEndpoint("http://upstream", "key", "model", 60),
-            new UpstreamRequest([new ChatMessage(MessageRole.User, "hello")], Stream: false),
-            initialResult,
-            CancellationToken.None);
-
-        Assert.Single(session.PendingPersistedTurns);
-        var content = session.PendingPersistedTurns[0].ToolMessage.Content;
-        Assert.Contains("already_hydrated", content);
-        Assert.Contains("definition", content);
-        Assert.Contains("instruction", content);
-        Assert.Contains("function name is exactly", content);
-        Assert.Contains("CallMcpTool.toolName", content);
-        Assert.Contains("\"query\"", content);
-        Assert.Contains("lookup", session.LoopExposedToolNames);
-        _definitionRepository.Verify(r => r.Add(It.IsAny<ConversationToolDefinition>()), Times.Never);
-    }
-
-    [Fact]
-    public async Task RunInternalLoopAsync_AfterHydrate_ExposesToolInNextRoundToolsArray()
-    {
-        var conversationId = Guid.NewGuid();
-        const string definitionJson = """
-            {"type":"function","function":{"name":"lookup","parameters":{"type":"object","required":["query"]}}}
-            """;
-
-        _definitionRepository
-            .Setup(r => r.FindAsync(conversationId, "lookup", It.IsAny<CancellationToken>()))
-            .ReturnsAsync((ConversationToolDefinition?)null);
-
-        var session = new ToolSchemaSession
-        {
-            ConversationId = conversationId,
-            CatalogToolNames = new HashSet<string>(StringComparer.Ordinal) { "lookup" },
-            FullDefinitionsByName = new Dictionary<string, string>(StringComparer.Ordinal)
-            {
-                ["lookup"] = definitionJson
-            }
-        };
-
-        const string metaAssistantJson = """
-            {"role":"assistant","content":"","tool_calls":[{"id":"call_meta","type":"function","function":{"name":"get_tool_definition","arguments":"{\"tool_name\":\"lookup\"}"}}]}
-            """;
-        var initialResult = new UpstreamChatResult(
-            Content: string.Empty,
-            FinishReason: "tool_calls",
-            PromptTokens: 1,
-            CompletionTokens: 1,
-            AssistantMessageJson: metaAssistantJson);
-
-        UpstreamRequest? followUp = null;
-        _chatCompletionClient
-            .Setup(c => c.CompleteAsync(It.IsAny<ProviderEndpoint>(), It.IsAny<UpstreamRequest>(), It.IsAny<CancellationToken>()))
-            .Callback<ProviderEndpoint, UpstreamRequest, CancellationToken>((_, request, _) => followUp = request)
-            .ReturnsAsync(new UpstreamChatResult("done", "stop", 1, 1));
-
-        var originalRequest = ParseRequest("""
-            {"model":"m","messages":[{"role":"user","content":"hi"}],"tools":[{"type":"function","function":{"name":"lookup","parameters":{"type":"object"}}}]}
-            """);
-        var orchestrator = CreateOrchestrator();
-        await orchestrator.RunInternalLoopAsync(
-            session,
-            new ProviderEndpoint("http://upstream", "key", "model", 60),
-            new UpstreamRequest(
-                [new ChatMessage(MessageRole.User, "hello")],
-                Stream: false,
-                OriginalClientRequest: originalRequest),
-            initialResult,
-            CancellationToken.None);
-
-        Assert.NotNull(followUp);
-        Assert.True(followUp!.RewrittenClientRequest.HasValue);
-        using var doc = JsonDocument.Parse(followUp.RewrittenClientRequest!.Value.GetRawText());
-        var tools = doc.RootElement.GetProperty("tools");
-        Assert.Equal(JsonValueKind.Array, tools.ValueKind);
-        var names = tools.EnumerateArray()
-            .Select(t => t.GetProperty("function").GetProperty("name").GetString())
-            .ToList();
-        Assert.Equal(["get_tool_definition", "get_current_conversation_id", "lookup"], names);
-        Assert.Contains("lookup", session.LoopExposedToolNames);
-        Assert.Contains("instruction", session.PendingPersistedTurns[0].ToolMessage.Content);
-        Assert.Contains("CallMcpTool.toolName", session.PendingPersistedTurns[0].ToolMessage.Content);
-    }
-
-    [Fact]
-    public async Task RunInternalLoopAsync_RepeatedAlreadyHydratedOnly_StopsWithoutForwardingMetaTool()
-    {
-        var conversationId = Guid.NewGuid();
-        const string definitionJson = """
-            {"type":"function","function":{"name":"lookup","parameters":{"type":"object","required":["query"]}}}
-            """;
-        var definitionHash = ComputeSha256Hex(definitionJson);
-        var hydrated = ConversationToolDefinition.Create(conversationId, "lookup", definitionHash, definitionJson, DateTimeOffset.UtcNow);
-
-        _definitionRepository
-            .Setup(r => r.FindAsync(conversationId, "lookup", It.IsAny<CancellationToken>()))
-            .ReturnsAsync(hydrated);
-
-        var session = new ToolSchemaSession
-        {
-            ConversationId = conversationId,
-            CatalogToolNames = new HashSet<string>(StringComparer.Ordinal) { "lookup" },
-            FullDefinitionsByName = new Dictionary<string, string>(StringComparer.Ordinal)
-            {
-                ["lookup"] = definitionJson
-            }
-        };
-        session.HydratedToolNames.Add("lookup");
-
-        const string assistantJson = """
-            {"role":"assistant","content":"","tool_calls":[{"id":"call_meta","type":"function","function":{"name":"get_tool_definition","arguments":"{\"tool_name\":\"lookup\"}"}}]}
-            """;
-        var metaResult = new UpstreamChatResult(
-            Content: string.Empty,
-            FinishReason: "tool_calls",
-            PromptTokens: 1,
-            CompletionTokens: 1,
-            AssistantMessageJson: assistantJson);
-
-        UpstreamRequest? secondRequest = null;
-        _chatCompletionClient
-            .Setup(c => c.CompleteAsync(It.IsAny<ProviderEndpoint>(), It.IsAny<UpstreamRequest>(), It.IsAny<CancellationToken>()))
-            .Callback<ProviderEndpoint, UpstreamRequest, CancellationToken>((_, request, _) => secondRequest = request)
-            .ReturnsAsync(metaResult);
-
-        var orchestrator = CreateOrchestrator();
-        var loopResult = await orchestrator.RunInternalLoopAsync(
-            session,
-            new ProviderEndpoint("http://upstream", "key", "model", 60),
-            new UpstreamRequest([new ChatMessage(MessageRole.User, "hello")], Stream: false),
-            metaResult,
-            CancellationToken.None);
-
-        Assert.True(loopResult.RequiresInternalHandling);
-        Assert.Equal("stop", loopResult.FinalUpstreamResult.FinishReason);
-        Assert.Contains("already-hydrated", loopResult.FinalUpstreamResult.Content, StringComparison.OrdinalIgnoreCase);
-        Assert.DoesNotContain("\"tool_calls\"", loopResult.FinalUpstreamResult.AssistantMessageJson ?? string.Empty);
-        Assert.Empty(loopResult.AllowedRealToolCalls);
-        Assert.NotNull(secondRequest);
-        Assert.Contains(
-            secondRequest!.Messages,
-            m => m.Role == MessageRole.System &&
-                 m.Content.Contains("already hydrated", StringComparison.OrdinalIgnoreCase) &&
-                 m.Content.Contains("CallMcpTool.toolName", StringComparison.Ordinal) &&
-                 m.Content.Contains("\"lookup\"", StringComparison.Ordinal));
-        Assert.True(secondRequest.RewrittenClientRequest.HasValue);
-        using (var doc = JsonDocument.Parse(secondRequest.RewrittenClientRequest!.Value.GetRawText()))
-        {
-            var names = doc.RootElement.GetProperty("tools").EnumerateArray()
-                .Select(t => t.GetProperty("function").GetProperty("name").GetString())
-                .ToList();
-            Assert.Equal(["get_tool_definition", "get_current_conversation_id", "lookup"], names);
-        }
+        Assert.NotNull(first.Result);
+        Assert.True(first.CatalogMutated);
+        Assert.True(_catalogs.TryGetValue(conversationId, out var catalog));
+        Assert.False(catalog!.ToolIrDisabled);
+        Assert.False(string.IsNullOrWhiteSpace(catalog.MappingJson));
+        Assert.Equal(hash, catalog.CatalogHash);
         _chatCompletionClient.Verify(
-            c => c.CompleteAsync(It.IsAny<ProviderEndpoint>(), It.IsAny<UpstreamRequest>(), It.IsAny<CancellationToken>()),
+            c => c.CompleteAsync(
+                It.IsAny<ProviderEndpoint>(),
+                It.Is<UpstreamRequest>(r => r.Purpose == UpstreamRequestPurpose.Compression),
+                It.IsAny<CancellationToken>()),
+            Times.Once);
+
+        _chatCompletionClient.Reset();
+        SetupMapperReturns("should-not-be-used", times: 0);
+
+        var second = await orchestrator.TryPrepareRewriteAsync(
+            conversationId,
+            [new ChatMessage(MessageRole.User, "again")],
+            request,
+            CancellationToken.None);
+
+        Assert.NotNull(second.Result);
+        _chatCompletionClient.Verify(
+            c => c.CompleteAsync(
+                It.IsAny<ProviderEndpoint>(),
+                It.Is<UpstreamRequest>(r => r.Purpose == UpstreamRequestPurpose.Compression),
+                It.IsAny<CancellationToken>()),
+            Times.Never);
+    }
+
+    [Fact]
+    public async Task TryPrepareRewriteAsync_InvalidPersistedMap_RemapsInsteadOfDisable()
+    {
+        var request = ReadAndShellToolsRequest();
+        var hash = CatalogHashFor(request);
+        var conversationId = Guid.NewGuid();
+        var invalidMap = JsonSerializer.Serialize(new
+        {
+            schema_hash = hash,
+            client_capabilities = new object[]
+            {
+                new
+                {
+                    client_tool = "Read",
+                    capability = "FILE_READ_RAW",
+                    risk = "low",
+                    supports = new { path = true, offset = false, limit = false, query = false }
+                },
+                new
+                {
+                    client_tool = "Shell",
+                    capability = "NON_FILE",
+                    risk = "high",
+                    supports = new { path = false, offset = false, limit = false, query = false }
+                }
+            },
+            bindings = new object[]
+            {
+                new
+                {
+                    comprexy_tool = "comprexy_read_file_manifest",
+                    primary_client_tool = "Shell",
+                    strategy = "direct",
+                    arg_map = new { path = "command" }
+                }
+            }
+        });
+        _catalogs[conversationId] = ConversationToolCatalog.Create(
+            conversationId,
+            hash,
+            invalidMap,
+            DateTimeOffset.UtcNow);
+
+        var orchestrator = CreateOrchestrator();
+        SetupMapperReturns(ValidReadShellMappingJson(hash));
+
+        var outcome = await orchestrator.TryPrepareRewriteAsync(
+            conversationId,
+            [new ChatMessage(MessageRole.User, "hello")],
+            request,
+            CancellationToken.None);
+
+        Assert.NotNull(outcome.Result);
+        Assert.True(outcome.CatalogMutated);
+        Assert.True(_catalogs.TryGetValue(conversationId, out var catalog));
+        Assert.False(catalog!.ToolIrDisabled);
+        var expectedPersisted = JsonSerializer.Serialize(
+            JsonSerializer.Deserialize<ToolIrMappingDocument>(ValidReadShellMappingJson(hash)));
+        Assert.Equal(expectedPersisted, catalog.MappingJson);
+        _chatCompletionClient.Verify(
+            c => c.CompleteAsync(
+                It.IsAny<ProviderEndpoint>(),
+                It.Is<UpstreamRequest>(r => r.Purpose == UpstreamRequestPurpose.Compression),
+                It.IsAny<CancellationToken>()),
             Times.Once);
     }
 
     [Fact]
-    public async Task RunInternalLoopAsync_MaxHydrateRounds_StopsWithoutForwardingMetaTool()
+    public async Task TryPrepareRewriteAsync_HashMiss_RecordsMapperTokensAsCompressionOverhead()
     {
-        _options = new ToolSchemaOptions
-        {
-            Mode = ToolSchemaMode.CompactIndex,
-            MinToolCountToActivate = 1,
-            SkipRefetchIfHydrated = false,
-            MaxHydrateRoundsPerRequest = 2
-        };
-
+        var request = ReadAndShellToolsRequest();
+        var hash = CatalogHashFor(request);
         var conversationId = Guid.NewGuid();
+        var orchestrator = CreateOrchestrator();
+        SetupMapperReturns(ValidReadShellMappingJson(hash));
 
-        _definitionRepository
-            .Setup(r => r.FindAsync(conversationId, It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync((ConversationToolDefinition?)null);
+        await orchestrator.TryPrepareRewriteAsync(
+            conversationId,
+            [new ChatMessage(MessageRole.User, "hello")],
+            request,
+            CancellationToken.None);
 
-        var session = new ToolSchemaSession
-        {
-            ConversationId = conversationId,
-            CatalogToolNames = new HashSet<string>(StringComparer.Ordinal) { "alpha", "beta", "gamma" },
-            FullDefinitionsByName = new Dictionary<string, string>(StringComparer.Ordinal)
-            {
-                ["alpha"] = """{"type":"function","function":{"name":"alpha","parameters":{"type":"object"}}}""",
-                ["beta"] = """{"type":"function","function":{"name":"beta","parameters":{"type":"object"}}}""",
-                ["gamma"] = """{"type":"function","function":{"name":"gamma","parameters":{"type":"object"}}}"""
-            }
-        };
+        _metricsRecorder.Verify(
+            m => m.RecordCompressionOverheadAsync(conversationId, 50, It.IsAny<CancellationToken>()),
+            Times.Once);
+    }
 
-        UpstreamChatResult Meta(string toolName, string callId) =>
-            new(
-                Content: string.Empty,
-                FinishReason: "tool_calls",
-                PromptTokens: 1,
-                CompletionTokens: 1,
-                AssistantMessageJson:
-                "{\"role\":\"assistant\",\"content\":\"\",\"tool_calls\":[{\"id\":\"" + callId +
-                "\",\"type\":\"function\",\"function\":{\"name\":\"get_tool_definition\",\"arguments\":\"{\\\"tool_name\\\":\\\"" +
-                toolName + "\\\"}\"}}]}");
-
-        var queue = new Queue<UpstreamChatResult>([
-            Meta("beta", "call_2"),
-            Meta("gamma", "call_3")
-        ]);
+    [Fact]
+    public async Task TryPrepareRewriteAsync_InvalidMapRetries_RecordsOverheadPerAttempt()
+    {
+        _options.MappingMaxRetries = 2;
+        var request = ReadAndShellToolsRequest();
+        var conversationId = Guid.NewGuid();
+        var orchestrator = CreateOrchestrator();
         _chatCompletionClient
-            .Setup(c => c.CompleteAsync(It.IsAny<ProviderEndpoint>(), It.IsAny<UpstreamRequest>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(() => queue.Dequeue());
+            .Setup(c => c.CompleteAsync(
+                It.IsAny<ProviderEndpoint>(),
+                It.Is<UpstreamRequest>(r => r.Purpose == UpstreamRequestPurpose.Compression),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new UpstreamChatResult("""{"not":"a valid map"}""", "stop", 10, 5));
 
-        var orchestrator = CreateOrchestrator();
-        var loopResult = await orchestrator.RunInternalLoopAsync(
-            session,
-            new ProviderEndpoint("http://upstream", "key", "model", 60),
-            new UpstreamRequest([new ChatMessage(MessageRole.User, "hello")], Stream: false),
-            Meta("alpha", "call_1"),
+        await orchestrator.TryPrepareRewriteAsync(
+            conversationId,
+            [new ChatMessage(MessageRole.User, "hello")],
+            request,
             CancellationToken.None);
 
-        Assert.True(loopResult.RequiresInternalHandling);
-        Assert.Equal("stop", loopResult.FinalUpstreamResult.FinishReason);
-        Assert.Contains("MaxHydrateRoundsPerRequest", loopResult.FinalUpstreamResult.Content);
-        Assert.DoesNotContain("\"tool_calls\"", loopResult.FinalUpstreamResult.AssistantMessageJson ?? string.Empty);
-        Assert.Empty(loopResult.AllowedRealToolCalls);
+        _metricsRecorder.Verify(
+            m => m.RecordCompressionOverheadAsync(conversationId, 15, It.IsAny<CancellationToken>()),
+            Times.Exactly(3));
     }
 
     [Fact]
-    public async Task TryPrepareRewriteAsync_ReinsertsWhenPinnedDefinitionIsFolded()
+    public async Task TryPrepareRewriteAsync_ProviderAndCompressionModelUnset_UsesClientRequestModel()
     {
+        var request = ReadAndShellToolsRequest();
+        var hash = CatalogHashFor(request);
         var conversationId = Guid.NewGuid();
-        var now = DateTimeOffset.UtcNow;
-        const string definitionJson = """
-            {"type":"function","function":{"name":"lookup","parameters":{"type":"object","required":["query"]}}}
-            """;
-        var definitionHash = ComputeSha256Hex(definitionJson);
-        var hydrated = ConversationToolDefinition.Create(
-            conversationId,
-            "lookup",
-            definitionHash,
-            definitionJson,
-            now);
+        var orchestrator = CreateOrchestrator(providerModel: null, compressionModel: null);
+        SetupMapperReturns(ValidReadShellMappingJson(hash));
 
-        var foldedPin = ConversationMessage.Create(
-            conversationId,
-            0,
-            MessageRole.Tool,
-            $$"""{"tool_name":"lookup","definition":{{definitionJson}}}""",
-            10,
-            now);
-        foldedPin.MarkPinnedForToolSchema();
-        foldedPin.MarkFoldedInto(1);
-
-        _clock.Setup(c => c.UtcNow).Returns(now);
-        _catalogRepository
-            .Setup(r => r.GetByConversationIdAsync(conversationId, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(ConversationToolCatalog.Create(
-                conversationId,
-                "hash",
-                """[{"name":"lookup","description":"Tool lookup.","required":[]}]""",
-                now));
-        _definitionRepository
-            .Setup(r => r.GetByConversationIdAsync(conversationId, It.IsAny<CancellationToken>()))
-            .ReturnsAsync([hydrated]);
-
-        var orchestrator = CreateOrchestrator();
-        var result = await orchestrator.TryPrepareRewriteAsync(
+        var outcome = await orchestrator.TryPrepareRewriteAsync(
             conversationId,
             [new ChatMessage(MessageRole.User, "hello")],
-            ToolsRequest("lookup"),
-            [foldedPin],
+            request,
             CancellationToken.None);
 
-        Assert.NotNull(result);
-        Assert.Contains(
-            result!.OutgoingMessages,
-            m => m.Role == MessageRole.Tool &&
-                 m.Content.Contains("definition", StringComparison.Ordinal) &&
-                 m.Content.Contains("lookup", StringComparison.Ordinal));
+        Assert.NotNull(outcome.Result);
+        Assert.False(_catalogs[conversationId].ToolIrDisabled);
+        _chatCompletionClient.Verify(
+            c => c.CompleteAsync(
+                It.Is<ProviderEndpoint>(e => e.Model == "client-model"),
+                It.Is<UpstreamRequest>(r => r.Purpose == UpstreamRequestPurpose.Compression),
+                It.IsAny<CancellationToken>()),
+            Times.Once);
     }
 
     [Fact]
-    public async Task TryPrepareRewriteAsync_DoesNotReinsertWhenUnfoldedPinHasDefinition()
+    public async Task TryPrepareRewriteAsync_InvalidMapRetries_ThenDisableToolIr_NativeToolsUnchanged()
     {
+        _options.MappingMaxRetries = 2;
+        var request = ReadAndShellToolsRequest();
         var conversationId = Guid.NewGuid();
-        var now = DateTimeOffset.UtcNow;
-        const string definitionJson = """
-            {"type":"function","function":{"name":"lookup","parameters":{"type":"object","required":["query"]}}}
-            """;
-        var definitionHash = ComputeSha256Hex(definitionJson);
-        var hydrated = ConversationToolDefinition.Create(
-            conversationId,
-            "lookup",
-            definitionHash,
-            definitionJson,
-            now);
-
-        var livePin = ConversationMessage.Create(
-            conversationId,
-            0,
-            MessageRole.Tool,
-            $$"""{"tool_name":"lookup","definition":{{definitionJson}}}""",
-            10,
-            now);
-        livePin.MarkPinnedForToolSchema();
-
-        _clock.Setup(c => c.UtcNow).Returns(now);
-        _catalogRepository
-            .Setup(r => r.GetByConversationIdAsync(conversationId, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(ConversationToolCatalog.Create(
-                conversationId,
-                "hash",
-                """[{"name":"lookup","description":"Tool lookup.","required":[]}]""",
-                now));
-        _definitionRepository
-            .Setup(r => r.GetByConversationIdAsync(conversationId, It.IsAny<CancellationToken>()))
-            .ReturnsAsync([hydrated]);
-
         var orchestrator = CreateOrchestrator();
-        var result = await orchestrator.TryPrepareRewriteAsync(
+        _chatCompletionClient
+            .Setup(c => c.CompleteAsync(
+                It.IsAny<ProviderEndpoint>(),
+                It.Is<UpstreamRequest>(r => r.Purpose == UpstreamRequestPurpose.Compression),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new UpstreamChatResult("""{"not":"a valid map"}""", "stop", 1, 1));
+
+        var outcome = await orchestrator.TryPrepareRewriteAsync(
             conversationId,
             [new ChatMessage(MessageRole.User, "hello")],
-            ToolsRequest("lookup"),
-            [livePin],
+            request,
             CancellationToken.None);
 
-        Assert.NotNull(result);
+        Assert.Null(outcome.Result);
+        Assert.True(outcome.CatalogMutated);
+        Assert.True(_catalogs.TryGetValue(conversationId, out var catalog));
+        Assert.True(catalog!.ToolIrDisabled);
+        Assert.True(string.IsNullOrWhiteSpace(catalog.MappingJson));
+        _chatCompletionClient.Verify(
+            c => c.CompleteAsync(
+                It.IsAny<ProviderEndpoint>(),
+                It.Is<UpstreamRequest>(r => r.Purpose == UpstreamRequestPurpose.Compression),
+                It.IsAny<CancellationToken>()),
+            Times.Exactly(3));
+
+        // Second prepare with disabled catalog forwards native tools (null rewrite).
+        var again = await orchestrator.TryPrepareRewriteAsync(
+            conversationId,
+            [new ChatMessage(MessageRole.User, "hello")],
+            request,
+            CancellationToken.None);
+        Assert.Null(again.Result);
+        Assert.False(again.CatalogMutated);
+        Assert.True(catalog.ToolIrDisabled);
+    }
+
+    [Fact]
+    public async Task TryPrepareRewriteAsync_OutboundTools_BoundVirtualPlusMetaPlusPassthrough_NoHydrateOrCompactIndex()
+    {
+        var request = ReadAndShellToolsRequest();
+        var hash = CatalogHashFor(request);
+        var orchestrator = CreateOrchestrator();
+        SetupMapperReturns(ValidReadShellMappingJson(hash));
+
+        var outcome = await orchestrator.TryPrepareRewriteAsync(
+            Guid.NewGuid(),
+            [new ChatMessage(MessageRole.User, "hello")],
+            request,
+            CancellationToken.None);
+
+        Assert.NotNull(outcome.Result);
+        var result = outcome.Result!;
+        Assert.True(result.RewrittenClientRequest.TryGetProperty("tools", out var tools));
+        var names = tools.EnumerateArray()
+            .Select(t => t.GetProperty("function").GetProperty("name").GetString()!)
+            .ToList();
+
+        Assert.Contains(ToolSchemaConstants.FileRangeToolName, names);
+        Assert.Contains(ToolSchemaConstants.FileManifestToolName, names);
+        Assert.Contains(ToolSchemaConstants.ConversationIdMetaToolName, names);
+        Assert.Contains("Shell", names);
+        Assert.DoesNotContain("Read", names);
+        Assert.DoesNotContain("get_tool_definition", names);
+        Assert.DoesNotContain(ToolSchemaConstants.FileSearchToolName, names);
         Assert.DoesNotContain(
-            result!.OutgoingMessages,
-            m => m.Role == MessageRole.Assistant &&
-                 m.RawWireMessage is { ValueKind: JsonValueKind.Object } wire &&
-                 wire.GetRawText().Contains("reinsert_lookup", StringComparison.Ordinal));
+            result.OutgoingMessages,
+            m => m.Role == MessageRole.System &&
+                 (m.Content?.Contains("compact", StringComparison.OrdinalIgnoreCase) == true ||
+                  m.Content?.Contains("tool schema rules", StringComparison.Ordinal) == true));
     }
 
     [Fact]
-    public async Task RunInternalLoopAsync_UnhydratedRealToolCall_ReturnsStructuredErrorJson()
+    public async Task RunInternalLoopAsync_FileRangeCacheMiss_EmitsNativeRead_AndInboundDistillsBoundedRange()
     {
+        _options.MaxRangeLines = 3;
+        var request = ReadAndShellToolsRequest();
+        var hash = CatalogHashFor(request);
         var conversationId = Guid.NewGuid();
-        const string definitionJson = """
-            {"type":"function","function":{"name":"lookup","parameters":{"type":"object","required":["query"]}}}
-            """;
+        var orchestrator = CreateOrchestrator();
+        SetupMapperReturns(ValidReadShellMappingJson(hash));
 
-        var session = new ToolSchemaSession
-        {
-            ConversationId = conversationId,
-            CatalogToolNames = new HashSet<string>(StringComparer.Ordinal) { "lookup" },
-            FullDefinitionsByName = new Dictionary<string, string>(StringComparer.Ordinal)
-            {
-                ["lookup"] = definitionJson
-            }
-        };
+        var prepare = await orchestrator.TryPrepareRewriteAsync(
+            conversationId,
+            [new ChatMessage(MessageRole.User, "hello")],
+            request,
+            CancellationToken.None);
+        Assert.NotNull(prepare.Result);
 
-        const string assistantJson = """
-            {"role":"assistant","content":"","tool_calls":[{"id":"call_real","type":"function","function":{"name":"lookup","arguments":"{\"query\":\"x\"}"}}]}
-            """;
-        var initialResult = new UpstreamChatResult(
-            Content: string.Empty,
-            FinishReason: "tool_calls",
-            PromptTokens: 1,
-            CompletionTokens: 1,
+        const string irCallId = "ir_range_1";
+        var assistantJson = IrFileRangeAssistantJson(irCallId, "src/A.cs", 1, 10);
+        var initial = new UpstreamChatResult(
+            string.Empty,
+            "tool_calls",
+            1,
+            1,
+            RawResponseJson: """{"choices":[{"message":{"role":"assistant","tool_calls":[]},"finish_reason":"tool_calls"}]}""",
             AssistantMessageJson: assistantJson);
 
-        ChatMessage? errorToolMessage = null;
-        _chatCompletionClient
-            .Setup(c => c.CompleteAsync(It.IsAny<ProviderEndpoint>(), It.IsAny<UpstreamRequest>(), It.IsAny<CancellationToken>()))
-            .Callback<ProviderEndpoint, UpstreamRequest, CancellationToken>((_, request, _) =>
-            {
-                errorToolMessage = request.Messages.LastOrDefault(m => m.Role == MessageRole.Tool);
-            })
-            .ReturnsAsync(new UpstreamChatResult("done", "stop", 1, 1));
-
-        var orchestrator = CreateOrchestrator();
-        await orchestrator.RunInternalLoopAsync(
-            session,
-            new ProviderEndpoint("http://upstream", "key", "model", 60),
-            new UpstreamRequest([new ChatMessage(MessageRole.User, "hello")], Stream: false),
-            initialResult,
+        var loop = await orchestrator.RunInternalLoopAsync(
+            prepare.Result!.Session,
+            ChatEndpoint(),
+            ChatUpstream(prepare.Result!.RewrittenClientRequest, new ChatMessage(MessageRole.User, "hello")),
+            initial,
             CancellationToken.None);
 
-        Assert.NotNull(errorToolMessage);
-        using var errorDoc = JsonDocument.Parse(errorToolMessage!.Content);
-        var root = errorDoc.RootElement;
-        Assert.True(root.TryGetProperty("error", out _));
-        Assert.Equal("not_hydrated", root.GetProperty("code").GetString());
-        Assert.True(root.TryGetProperty("details", out var details));
-        Assert.Contains("hydrated", details.GetString(), StringComparison.OrdinalIgnoreCase);
+        Assert.False(loop.RequiresInternalHandling);
+        Assert.Single(loop.AllowedRealToolCalls);
+        Assert.Equal("Read", loop.AllowedRealToolCalls[0].Name);
+        var clientCallId = loop.AllowedRealToolCalls[0].Id;
+        AssertOpaqueClientCallId(clientCallId);
+        Assert.True(_callIdMap.TryGetByIrId(conversationId, irCallId, out var mapping));
+        Assert.Equal(clientCallId, mapping!.ClientCallId);
+        Assert.Contains("Read", loop.FinalUpstreamResult.RawResponseJson, StringComparison.Ordinal);
+        Assert.Contains(clientCallId, loop.FinalUpstreamResult.RawResponseJson, StringComparison.Ordinal);
+        Assert.DoesNotContain("comprexy_read_file_range", loop.FinalUpstreamResult.RawResponseJson, StringComparison.Ordinal);
+
+        var nativeBody = string.Join('\n', Enumerable.Range(1, 10).Select(i => $"line-{i}"));
+        var inbound = await ValidateInboundAndCompleteAsync(
+            orchestrator,
+            conversationId,
+            [ToolCallWireHelper.BuildToolResultMessage(clientCallId, nativeBody)]);
+
+        Assert.Single(inbound);
+        Assert.Equal(MessageRole.Tool, inbound[0].Role);
+        Assert.Equal(irCallId, ExtractToolCallId(inbound[0]));
+        using var observation = JsonDocument.Parse(inbound[0].Content!);
+        Assert.Equal("file_range", observation.RootElement.GetProperty("type").GetString());
+        Assert.True(observation.RootElement.GetProperty("truncated").GetBoolean());
+        var content = observation.RootElement.GetProperty("content").GetString()!;
+        Assert.Contains("line-1", content, StringComparison.Ordinal);
+        Assert.Contains("line-3", content, StringComparison.Ordinal);
+        Assert.DoesNotContain("line-4", content, StringComparison.Ordinal);
     }
 
     [Fact]
-    public void ValidateDownstreamToolResults_AcceptsOpenAnnouncedToolCallId()
+    public async Task RunInternalLoopAsync_FileRangeCacheHit_ReturnsLocalObservation_NoNativeRead()
     {
+        var request = ReadAndShellToolsRequest();
+        var hash = CatalogHashFor(request);
         var conversationId = Guid.NewGuid();
-        var now = DateTimeOffset.UtcNow;
-        var assistant = ConversationMessage.Create(
-            conversationId,
-            0,
-            MessageRole.Assistant,
-            string.Empty,
-            1,
-            now,
-            """{"role":"assistant","tool_calls":[{"id":"call_da0beee1","type":"function","function":{"name":"lookup","arguments":"{}"}}]}""");
-
-        using var toolDoc = JsonDocument.Parse(
-            """{"role":"tool","tool_call_id":"call_da0beee1","content":"ok"}""");
-        var toolMessage = new ChatMessage(MessageRole.Tool, "ok", toolDoc.RootElement.Clone());
-
         var orchestrator = CreateOrchestrator();
-        orchestrator.ValidateDownstreamToolResults([toolMessage], [assistant]);
+        SetupMapperReturns(ValidReadShellMappingJson(hash));
+        _fileCache.Set(conversationId, "src/A.cs", "alpha\nbeta\ngamma\n");
+
+        var prepare = await orchestrator.TryPrepareRewriteAsync(
+            conversationId,
+            [new ChatMessage(MessageRole.User, "hello")],
+            request,
+            CancellationToken.None);
+        Assert.NotNull(prepare.Result);
+
+        const string irCallId = "ir_cached";
+        var assistantJson = IrFileRangeAssistantJson(irCallId, "src/A.cs", 1, 2);
+        var chatRounds = 0;
+        _chatCompletionClient
+            .Setup(c => c.CompleteAsync(
+                It.IsAny<ProviderEndpoint>(),
+                It.Is<UpstreamRequest>(r => r.Purpose == UpstreamRequestPurpose.Chat),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(() =>
+            {
+                chatRounds++;
+                return new UpstreamChatResult(
+                    "done",
+                    "stop",
+                    1,
+                    1,
+                    AssistantMessageJson: """{"role":"assistant","content":"done"}""");
+            });
+
+        var initial = new UpstreamChatResult(
+            string.Empty,
+            "tool_calls",
+            1,
+            1,
+            AssistantMessageJson: assistantJson);
+
+        var loop = await orchestrator.RunInternalLoopAsync(
+            prepare.Result!.Session,
+            ChatEndpoint(),
+            ChatUpstream(prepare.Result!.RewrittenClientRequest, new ChatMessage(MessageRole.User, "hello")),
+            initial,
+            CancellationToken.None);
+
+        Assert.Empty(loop.AllowedRealToolCalls);
+        Assert.Equal("done", loop.FinalUpstreamResult.Content);
+        Assert.Equal(1, chatRounds);
+        Assert.DoesNotContain(_callIdMap.GetPendingClientIds(conversationId), id => true);
     }
 
     [Fact]
-    public void ValidateDownstreamToolResults_RejectsWhenToolResultAlreadyInHistory()
+    public async Task RunInternalLoopAsync_ParallelIrCalls_EmitParallelNativeIds_AndInboundClosesCorrectIrIds()
     {
+        var request = ReadAndShellToolsRequest();
+        var hash = CatalogHashFor(request);
         var conversationId = Guid.NewGuid();
-        var now = DateTimeOffset.UtcNow;
-        var assistant = ConversationMessage.Create(
+        var orchestrator = CreateOrchestrator();
+        SetupMapperReturns(ValidReadShellMappingJson(hash));
+
+        var prepare = await orchestrator.TryPrepareRewriteAsync(
+            conversationId,
+            [new ChatMessage(MessageRole.User, "hello")],
+            request,
+            CancellationToken.None);
+        Assert.NotNull(prepare.Result);
+
+        const string irA = "ir_a";
+        const string irB = "ir_b";
+        var assistantJson = IrParallelFileRangeAssistantJson(irA, "a.cs", irB, "b.cs");
+
+        var loop = await orchestrator.RunInternalLoopAsync(
+            prepare.Result!.Session,
+            ChatEndpoint(),
+            ChatUpstream(prepare.Result!.RewrittenClientRequest, new ChatMessage(MessageRole.User, "hello")),
+            new UpstreamChatResult(string.Empty, "tool_calls", 1, 1, AssistantMessageJson: assistantJson),
+            CancellationToken.None);
+
+        Assert.Equal(2, loop.AllowedRealToolCalls.Count);
+        Assert.All(loop.AllowedRealToolCalls, c =>
+        {
+            Assert.Equal("Read", c.Name);
+            AssertOpaqueClientCallId(c.Id);
+        });
+        Assert.True(_callIdMap.TryGetByIrId(conversationId, irA, out var mapA));
+        Assert.True(_callIdMap.TryGetByIrId(conversationId, irB, out var mapB));
+        Assert.Contains(loop.AllowedRealToolCalls, c => c.Id == mapA!.ClientCallId);
+        Assert.Contains(loop.AllowedRealToolCalls, c => c.Id == mapB!.ClientCallId);
+        Assert.False(string.Equals(mapA!.ClientCallId, mapB!.ClientCallId, StringComparison.Ordinal));
+
+        var rewritten = await ValidateInboundAndCompleteAsync(
+            orchestrator,
+            conversationId,
+            [
+                ToolCallWireHelper.BuildToolResultMessage(mapB!.ClientCallId, "body-b"),
+                ToolCallWireHelper.BuildToolResultMessage(mapA!.ClientCallId, "body-a")
+            ]);
+
+        Assert.Equal(2, rewritten.Count);
+        Assert.Equal(irB, ExtractToolCallId(rewritten[0]));
+        Assert.Equal(irA, ExtractToolCallId(rewritten[1]));
+        Assert.Contains("body-b", rewritten[0].Content, StringComparison.Ordinal);
+        Assert.Contains("body-a", rewritten[1].Content, StringComparison.Ordinal);
+        Assert.Empty(_callIdMap.GetPendingClientIds(conversationId));
+    }
+
+    [Fact]
+    public async Task RunInternalAndStreamingLoops_BothRemapToolCallsTowardClient()
+    {
+        var request = ReadAndShellToolsRequest();
+        var hash = CatalogHashFor(request);
+        var conversationId = Guid.NewGuid();
+        var orchestrator = CreateOrchestrator();
+        SetupMapperEchoValidMapping();
+
+        var prepare = await orchestrator.TryPrepareRewriteAsync(
+            conversationId,
+            [new ChatMessage(MessageRole.User, "hello")],
+            request,
+            CancellationToken.None);
+        Assert.NotNull(prepare.Result);
+
+        const string irCallId = "ir_stream";
+        var assistantJson = IrFileRangeAssistantJson(irCallId, "x.cs", 1, 2);
+        var initial = new UpstreamChatResult(
+            string.Empty,
+            "tool_calls",
+            1,
+            1,
+            RawResponseJson: """{"id":"chatcmpl-1","choices":[{"message":{"role":"assistant"},"finish_reason":null}]}""",
+            AssistantMessageJson: assistantJson);
+
+        var nonStream = await orchestrator.RunInternalLoopAsync(
+            prepare.Result!.Session,
+            ChatEndpoint(),
+            ChatUpstream(prepare.Result!.RewrittenClientRequest, new ChatMessage(MessageRole.User, "hello")),
+            initial,
+            CancellationToken.None);
+
+        Assert.Contains("Read", nonStream.FinalUpstreamResult.RawResponseJson, StringComparison.Ordinal);
+        var nonStreamClientId = Assert.Single(nonStream.AllowedRealToolCalls).Id;
+        AssertOpaqueClientCallId(nonStreamClientId);
+        Assert.Contains(nonStreamClientId, nonStream.FinalUpstreamResult.RawResponseJson, StringComparison.Ordinal);
+        Assert.DoesNotContain("comprexy_read_file_range", nonStream.FinalUpstreamResult.RawResponseJson, StringComparison.Ordinal);
+
+        _callIdMap.ClearConversation(conversationId);
+        var streamChunks = new List<string>();
+        _chatCompletionClient
+            .Setup(c => c.StreamAsync(
+                It.IsAny<ProviderEndpoint>(),
+                It.IsAny<UpstreamRequest>(),
+                It.IsAny<Func<string, CancellationToken, Task>>(),
+                It.IsAny<CancellationToken>()))
+            .Returns(
+                async (
+                    ProviderEndpoint _,
+                    UpstreamRequest _,
+                    Func<string, CancellationToken, Task> onChunk,
+                    CancellationToken token) =>
+                {
+                    await onChunk(
+                        """{"choices":[{"delta":{"tool_calls":[{"index":0,"id":"ir_stream2","type":"function","function":{"name":"comprexy_read_file_range","arguments":"{\"path\":\"y.cs\",\"start_line\":1,\"end_line\":1}"}}]},"finish_reason":"tool_calls"}]}""",
+                        token);
+                    await onChunk("[DONE]", token);
+                    return new UpstreamChatResult(
+                        string.Empty,
+                        "tool_calls",
+                        1,
+                        1,
+                        AssistantMessageJson:
+                        """{"role":"assistant","content":null,"tool_calls":[{"id":"ir_stream2","type":"function","function":{"name":"comprexy_read_file_range","arguments":"{\"path\":\"y.cs\",\"start_line\":1,\"end_line\":1}"}}]}""");
+                });
+
+        var stream = await orchestrator.RunStreamingLoopAsync(
+            prepare.Result!.Session,
+            ChatEndpoint(),
+            ChatUpstream(prepare.Result!.RewrittenClientRequest, new ChatMessage(MessageRole.User, "hello")) with { Stream = true },
+            (chunk, _) =>
+            {
+                streamChunks.Add(chunk);
+                return Task.CompletedTask;
+            },
+            CancellationToken.None);
+
+        var streamCall = Assert.Single(stream.AllowedRealToolCalls, c => c.Name == "Read");
+        AssertOpaqueClientCallId(streamCall.Id);
+        Assert.True(_callIdMap.TryGetByIrId(conversationId, "ir_stream2", out var streamMapping));
+        Assert.Equal(streamCall.Id, streamMapping!.ClientCallId);
+        Assert.Contains(streamChunks, c => c.Contains("Read", StringComparison.Ordinal));
+        Assert.Contains(streamChunks, c => c.Contains(streamCall.Id, StringComparison.Ordinal));
+        Assert.DoesNotContain(streamChunks, c => c.Contains("comprexy_read_file_range", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task RemappedIrTranscript_AfterInboundDistill_ClosedChainGateAcceptsPersistedMessages()
+    {
+        var request = ReadAndShellToolsRequest();
+        var hash = CatalogHashFor(request);
+        var conversationId = Guid.NewGuid();
+        var orchestrator = CreateOrchestrator();
+        SetupMapperReturns(ValidReadShellMappingJson(hash));
+
+        var prepare = await orchestrator.TryPrepareRewriteAsync(
+            conversationId,
+            [new ChatMessage(MessageRole.User, "hello")],
+            request,
+            CancellationToken.None);
+        Assert.NotNull(prepare.Result);
+
+        const string irCallId = "ir_closed_chain";
+        var loop = await orchestrator.RunInternalLoopAsync(
+            prepare.Result!.Session,
+            ChatEndpoint(),
+            ChatUpstream(prepare.Result!.RewrittenClientRequest, new ChatMessage(MessageRole.User, "hello")),
+            new UpstreamChatResult(
+                string.Empty,
+                "tool_calls",
+                1,
+                1,
+                AssistantMessageJson: IrFileRangeAssistantJson(irCallId, "closed.cs", 1, 1)),
+            CancellationToken.None);
+
+        var clientCallId = Assert.Single(loop.AllowedRealToolCalls).Id;
+        AssertOpaqueClientCallId(clientCallId);
+
+        var inbound = await ValidateInboundAndCompleteAsync(
+            orchestrator,
+            conversationId,
+            [ToolCallWireHelper.BuildToolResultMessage(clientCallId, "line-1")]);
+        Assert.Single(inbound);
+
+        // Persist/remapped transcript uses IR assistant ids + distilled IR tool results.
+        var assistantEntity = ConversationMessage.Create(
             conversationId,
             0,
             MessageRole.Assistant,
             string.Empty,
             1,
-            now,
-            """{"role":"assistant","tool_calls":[{"id":"call_1","type":"function","function":{"name":"lookup","arguments":"{}"}}]}""");
-        var priorTool = ConversationMessage.Create(
+            DateTimeOffset.UtcNow,
+            loop.FinalUpstreamResult.AssistantMessageJson);
+        var toolEntity = ConversationMessage.Create(
             conversationId,
             1,
             MessageRole.Tool,
-            "ok",
+            inbound[0].Content ?? string.Empty,
             1,
-            now,
-            """{"role":"tool","tool_call_id":"call_1","content":"ok"}""");
+            DateTimeOffset.UtcNow,
+            inbound[0].RawWireMessage?.GetRawText());
 
-        using var toolDoc = JsonDocument.Parse(
-            """{"role":"tool","tool_call_id":"call_1","content":"again"}""");
-        var toolMessage = new ChatMessage(MessageRole.Tool, "again", toolDoc.RootElement.Clone());
-
-        var orchestrator = CreateOrchestrator();
-        var ex = Assert.Throws<InvalidOperationException>(() =>
-            orchestrator.ValidateDownstreamToolResults([toolMessage], [assistant, priorTool]));
-        Assert.Contains("call_1", ex.Message, StringComparison.Ordinal);
+        Assert.Contains(irCallId, assistantEntity.RawWireJson!, StringComparison.Ordinal);
+        Assert.DoesNotContain(clientCallId, assistantEntity.RawWireJson!, StringComparison.Ordinal);
+        Assert.Equal(irCallId, ExtractToolCallId(inbound[0]));
+        Assert.False(ToolCallChainState.HasOpenToolCalls([assistantEntity, toolEntity]));
     }
 
-    private static string ComputeSha256Hex(string text)
+    [Fact]
+    public async Task ValidateAndRewriteInbound_AfterMemoryDrop_LoadsMappingFromEf()
     {
-        var bytes = SHA256.HashData(Encoding.UTF8.GetBytes(text));
-        return Convert.ToHexString(bytes).ToLowerInvariant();
+        var request = ReadAndShellToolsRequest();
+        var hash = CatalogHashFor(request);
+        var conversationId = Guid.NewGuid();
+        var orchestrator = CreateOrchestrator();
+        SetupMapperReturns(ValidReadShellMappingJson(hash));
+
+        var prepare = await orchestrator.TryPrepareRewriteAsync(
+            conversationId,
+            [new ChatMessage(MessageRole.User, "hello")],
+            request,
+            CancellationToken.None);
+        Assert.NotNull(prepare.Result);
+
+        const string irCallId = "ir_durable";
+        var loop = await orchestrator.RunInternalLoopAsync(
+            prepare.Result!.Session,
+            ChatEndpoint(),
+            ChatUpstream(prepare.Result!.RewrittenClientRequest, new ChatMessage(MessageRole.User, "hello")),
+            new UpstreamChatResult(
+                string.Empty,
+                "tool_calls",
+                1,
+                1,
+                AssistantMessageJson: IrFileRangeAssistantJson(irCallId, "a.cs", 1, 1)),
+            CancellationToken.None);
+
+        var clientCallId = Assert.Single(loop.AllowedRealToolCalls).Id;
+        Assert.Single(_callIdMapRepo.Rows);
+        _callIdMap.ClearConversation(conversationId);
+        Assert.False(_callIdMap.TryGetByClientId(conversationId, clientCallId, out _));
+
+        var inbound = await ValidateInboundAndCompleteAsync(
+            orchestrator,
+            conversationId,
+            [ToolCallWireHelper.BuildToolResultMessage(clientCallId, "line-1")]);
+
+        Assert.Single(inbound);
+        Assert.Equal(irCallId, ExtractToolCallId(inbound[0]));
+        Assert.Empty(_callIdMapRepo.Rows);
+    }
+
+    [Fact]
+    public async Task ValidateAndRewriteInbound_SameBatchAssistantAnnounces_AllowsOrphanedClientId()
+    {
+        const string clientCallId = "cur_e3d0419465704b7486f1283e9dc46c64";
+        var orchestrator = CreateOrchestrator();
+        using var assistantDoc = JsonDocument.Parse(
+            $$"""
+            {
+              "role": "assistant",
+              "content": "",
+              "tool_calls": [
+                {
+                  "id": "{{clientCallId}}",
+                  "type": "function",
+                  "function": {
+                    "name": "read",
+                    "arguments": "{\"filePath\":\"docs/b.md\"}"
+                  }
+                }
+              ]
+            }
+            """);
+        var assistant = new ChatMessage(MessageRole.Assistant, string.Empty, assistantDoc.RootElement.Clone());
+        var tool = ToolCallWireHelper.BuildToolResultMessage(clientCallId, "file body");
+
+        // Without replaced-file set: orphan passthrough (NON_FILE / pre-map) still allowed.
+        var inbound = await orchestrator.ValidateAndRewriteInboundToolResultsAsync(
+            Guid.NewGuid(),
+            [assistant, tool],
+            [],
+            [],
+            CancellationToken.None);
+
+        Assert.Equal(2, inbound.Messages.Count);
+        Assert.Equal(MessageRole.Assistant, inbound.Messages[0].Role);
+        Assert.Equal(MessageRole.Tool, inbound.Messages[1].Role);
+        Assert.Equal(clientCallId, ExtractToolCallId(inbound.Messages[1]));
+        Assert.Empty(inbound.CompletedClientCallIds);
+    }
+
+    [Fact]
+    public async Task ValidateAndRewriteInbound_ReplacedFileTools_DropsNativeAssistantAndOrphanResult()
+    {
+        const string clientCallId = "cur_replacedreadaaaaaaaaaaaaaaaaaa";
+        var orchestrator = CreateOrchestrator();
+        using var assistantDoc = JsonDocument.Parse(
+            $$"""
+            {
+              "role": "assistant",
+              "content": "",
+              "tool_calls": [
+                {
+                  "id": "{{clientCallId}}",
+                  "type": "function",
+                  "function": {
+                    "name": "read",
+                    "arguments": "{\"filePath\":\"docs/b.md\"}"
+                  }
+                }
+              ]
+            }
+            """);
+        var assistant = new ChatMessage(MessageRole.Assistant, string.Empty, assistantDoc.RootElement.Clone());
+        var tool = ToolCallWireHelper.BuildToolResultMessage(clientCallId, "file body");
+        var replaced = new HashSet<string>(StringComparer.Ordinal) { "read" };
+
+        var inbound = await orchestrator.ValidateAndRewriteInboundToolResultsAsync(
+            Guid.NewGuid(),
+            [assistant, tool],
+            [],
+            [],
+            CancellationToken.None,
+            replaced);
+
+        Assert.Empty(inbound.Messages);
+        Assert.Empty(inbound.CompletedClientCallIds);
+    }
+
+    [Fact]
+    public async Task ValidateAndRewriteInbound_ClientSyncedPrefixAnnounces_HealsSnapshotRewindToolTip()
+    {
+        const string clientCallId = "cur_snapshotrewindaaaaaaaaaaaaaaaa";
+        var orchestrator = CreateOrchestrator();
+        using var assistantDoc = JsonDocument.Parse(
+            $$"""
+            {
+              "role": "assistant",
+              "content": "",
+              "tool_calls": [
+                {
+                  "id": "{{clientCallId}}",
+                  "type": "function",
+                  "function": {
+                    "name": "read",
+                    "arguments": "{\"filePath\":\"docs/a.md\"}"
+                  }
+                }
+              ]
+            }
+            """);
+        var assistant = new ChatMessage(MessageRole.Assistant, string.Empty, assistantDoc.RootElement.Clone());
+        var tool = ToolCallWireHelper.BuildToolResultMessage(clientCallId, "result body");
+
+        // Rewind tip: only the tool result is "new"; announcing assistant lives in synced prefix.
+        var inbound = await orchestrator.ValidateAndRewriteInboundToolResultsAsync(
+            Guid.NewGuid(),
+            [tool],
+            [],
+            [assistant],
+            CancellationToken.None);
+
+        Assert.Single(inbound.Messages);
+        Assert.Equal(clientCallId, ExtractToolCallId(inbound.Messages[0]));
+        Assert.Empty(inbound.CompletedClientCallIds);
+    }
+
+    [Fact]
+    public async Task ValidateAndRewriteInbound_ReplacedFileTools_SwallowsOrphanTipFromSyncedPrefix()
+    {
+        const string clientCallId = "cur_snapshotreplacedaaaaaaaaaaaaaa";
+        var orchestrator = CreateOrchestrator();
+        using var assistantDoc = JsonDocument.Parse(
+            $$"""
+            {
+              "role": "assistant",
+              "content": "",
+              "tool_calls": [
+                {
+                  "id": "{{clientCallId}}",
+                  "type": "function",
+                  "function": {
+                    "name": "read",
+                    "arguments": "{\"filePath\":\"docs/a.md\"}"
+                  }
+                }
+              ]
+            }
+            """);
+        var assistant = new ChatMessage(MessageRole.Assistant, string.Empty, assistantDoc.RootElement.Clone());
+        var tool = ToolCallWireHelper.BuildToolResultMessage(clientCallId, "result body");
+        var replaced = new HashSet<string>(StringComparer.Ordinal) { "read" };
+
+        var inbound = await orchestrator.ValidateAndRewriteInboundToolResultsAsync(
+            Guid.NewGuid(),
+            [tool],
+            [],
+            [assistant],
+            CancellationToken.None,
+            replaced);
+
+        Assert.Empty(inbound.Messages);
+        Assert.Empty(inbound.CompletedClientCallIds);
+    }
+
+    [Fact]
+    public async Task ValidateAndRewriteInbound_SecondResultForCompletedId_IsRejected()
+    {
+        var request = ReadAndShellToolsRequest();
+        var hash = CatalogHashFor(request);
+        var conversationId = Guid.NewGuid();
+        var orchestrator = CreateOrchestrator();
+        SetupMapperReturns(ValidReadShellMappingJson(hash));
+
+        var prepare = await orchestrator.TryPrepareRewriteAsync(
+            conversationId,
+            [new ChatMessage(MessageRole.User, "hello")],
+            request,
+            CancellationToken.None);
+        Assert.NotNull(prepare.Result);
+
+        const string irCallId = "ir_once";
+        var loop = await orchestrator.RunInternalLoopAsync(
+            prepare.Result!.Session,
+            ChatEndpoint(),
+            ChatUpstream(prepare.Result!.RewrittenClientRequest, new ChatMessage(MessageRole.User, "hello")),
+            new UpstreamChatResult(
+                string.Empty,
+                "tool_calls",
+                1,
+                1,
+                AssistantMessageJson: IrFileRangeAssistantJson(irCallId, "a.cs", 1, 1)),
+            CancellationToken.None);
+
+        var clientCallId = Assert.Single(loop.AllowedRealToolCalls).Id;
+        await ValidateInboundAndCompleteAsync(
+            orchestrator,
+            conversationId,
+            [ToolCallWireHelper.BuildToolResultMessage(clientCallId, "line-1")]);
+
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            orchestrator.ValidateAndRewriteInboundToolResultsAsync(
+                conversationId,
+                [ToolCallWireHelper.BuildToolResultMessage(clientCallId, "again")],
+                [],
+                [],
+                CancellationToken.None));
+        Assert.Contains(clientCallId, ex.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task OnRequestCompletedAsync_FinalAssistantWithoutToolCalls_ClearsPendingRows()
+    {
+        var request = ReadAndShellToolsRequest();
+        var hash = CatalogHashFor(request);
+        var conversationId = Guid.NewGuid();
+        var orchestrator = CreateOrchestrator();
+        SetupMapperReturns(ValidReadShellMappingJson(hash));
+
+        var prepare = await orchestrator.TryPrepareRewriteAsync(
+            conversationId,
+            [new ChatMessage(MessageRole.User, "hello")],
+            request,
+            CancellationToken.None);
+        Assert.NotNull(prepare.Result);
+
+        await orchestrator.RunInternalLoopAsync(
+            prepare.Result!.Session,
+            ChatEndpoint(),
+            ChatUpstream(prepare.Result!.RewrittenClientRequest, new ChatMessage(MessageRole.User, "hello")),
+            new UpstreamChatResult(
+                string.Empty,
+                "tool_calls",
+                1,
+                1,
+                AssistantMessageJson: IrFileRangeAssistantJson("ir_abandon", "a.cs", 1, 1)),
+            CancellationToken.None);
+
+        Assert.NotEmpty(_callIdMapRepo.Rows);
+        Assert.NotEmpty(_callIdMap.GetPendingClientIds(conversationId));
+
+        await orchestrator.OnRequestCompletedAsync(
+            conversationId,
+            """{"role":"assistant","content":"done"}""",
+            CancellationToken.None);
+
+        Assert.Empty(_callIdMapRepo.Rows);
+        Assert.Empty(_callIdMap.GetPendingClientIds(conversationId));
+    }
+
+    [Fact]
+    public async Task ValidateAndRewriteInbound_WhenPendingTtlExpired_TreatsAsUnknown()
+    {
+        _options.CallIdMapPendingAbsoluteExpiration = TimeSpan.FromMinutes(5);
+        var request = ReadAndShellToolsRequest();
+        var hash = CatalogHashFor(request);
+        var conversationId = Guid.NewGuid();
+        var orchestrator = CreateOrchestrator();
+        SetupMapperReturns(ValidReadShellMappingJson(hash));
+
+        var prepare = await orchestrator.TryPrepareRewriteAsync(
+            conversationId,
+            [new ChatMessage(MessageRole.User, "hello")],
+            request,
+            CancellationToken.None);
+        Assert.NotNull(prepare.Result);
+
+        var loop = await orchestrator.RunInternalLoopAsync(
+            prepare.Result!.Session,
+            ChatEndpoint(),
+            ChatUpstream(prepare.Result!.RewrittenClientRequest, new ChatMessage(MessageRole.User, "hello")),
+            new UpstreamChatResult(
+                string.Empty,
+                "tool_calls",
+                1,
+                1,
+                AssistantMessageJson: IrFileRangeAssistantJson("ir_ttl", "a.cs", 1, 1)),
+            CancellationToken.None);
+
+        var clientCallId = Assert.Single(loop.AllowedRealToolCalls).Id;
+        _callIdMap.ClearConversation(conversationId);
+        _now = _now.AddMinutes(5);
+
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            orchestrator.ValidateAndRewriteInboundToolResultsAsync(
+                conversationId,
+                [ToolCallWireHelper.BuildToolResultMessage(clientCallId, "late")],
+                [],
+                [],
+                CancellationToken.None));
+        Assert.Contains(clientCallId, ex.Message, StringComparison.Ordinal);
+        Assert.Empty(_callIdMapRepo.Rows);
+    }
+
+    [Fact]
+    public async Task RunInternalLoopAsync_NativeArgsFailClientSchema_ReturnsLocalError_DoesNotRegister()
+    {
+        var request = ParseRequest(
+            """
+            {
+              "model": "client-model",
+              "tools": [
+                {
+                  "type": "function",
+                  "function": {
+                    "name": "glob",
+                    "description": "List files.",
+                    "parameters": {
+                      "type": "object",
+                      "properties": {
+                        "pattern": { "type": "string" },
+                        "path": { "type": "string" }
+                      },
+                      "required": ["pattern", "path"]
+                    }
+                  }
+                }
+              ]
+            }
+            """);
+        var hash = CatalogHashFor(request);
+        var conversationId = Guid.NewGuid();
+        var mappingJson = JsonSerializer.Serialize(new
+        {
+            schema_hash = hash,
+            client_capabilities = new object[]
+            {
+                new
+                {
+                    client_tool = "glob",
+                    capability = "DIRECTORY_LIST_BACKEND",
+                    risk = "low",
+                    supports = new { path = true, offset = false, limit = false, query = true }
+                }
+            },
+            bindings = new object[]
+            {
+                new
+                {
+                    comprexy_tool = "comprexy_dir_list",
+                    primary_client_tool = "glob",
+                    strategy = "direct",
+                    arg_map = new { path = "path" },
+                    // Covers required name for mapper validation, but wrong JSON type for outbound schema.
+                    defaults = new { pattern = 123 }
+                }
+            }
+        });
+        var orchestrator = CreateOrchestrator();
+        SetupMapperReturns(mappingJson);
+
+        var prepare = await orchestrator.TryPrepareRewriteAsync(
+            conversationId,
+            [new ChatMessage(MessageRole.User, "hello")],
+            request,
+            CancellationToken.None);
+        Assert.NotNull(prepare.Result);
+
+        var assistantJson = JsonSerializer.Serialize(new
+        {
+            role = "assistant",
+            content = (string?)null,
+            tool_calls = new[]
+            {
+                new
+                {
+                    id = "ir_dir",
+                    type = "function",
+                    function = new
+                    {
+                        name = "comprexy_dir_list",
+                        arguments = """{"path":"/tmp"}"""
+                    }
+                }
+            }
+        });
+
+        var chatRounds = 0;
+        _chatCompletionClient
+            .Setup(c => c.CompleteAsync(
+                It.IsAny<ProviderEndpoint>(),
+                It.Is<UpstreamRequest>(r => r.Purpose == UpstreamRequestPurpose.Chat),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(() =>
+            {
+                chatRounds++;
+                return new UpstreamChatResult(
+                    "ok",
+                    "stop",
+                    1,
+                    1,
+                    AssistantMessageJson: """{"role":"assistant","content":"ok"}""");
+            });
+
+        var loop = await orchestrator.RunInternalLoopAsync(
+            prepare.Result!.Session,
+            ChatEndpoint(),
+            ChatUpstream(prepare.Result!.RewrittenClientRequest, new ChatMessage(MessageRole.User, "hello")),
+            new UpstreamChatResult(string.Empty, "tool_calls", 1, 1, AssistantMessageJson: assistantJson),
+            CancellationToken.None);
+
+        Assert.Empty(loop.AllowedRealToolCalls);
+        Assert.Equal(1, chatRounds);
+        Assert.Empty(_callIdMapRepo.Rows);
+        Assert.Empty(_callIdMap.GetPendingClientIds(conversationId));
+        Assert.Equal("ok", loop.FinalUpstreamResult.Content);
+    }
+
+    [Fact]
+    public async Task ValidateInbound_SuccessfulEdit_InvalidatesFileCache_ForcesNextRangeNative()
+    {
+        var orchestrator = CreateOrchestrator();
+        var conversationId = Guid.NewGuid();
+        _fileCache.Set(conversationId, "docs/a.md", "stale body line-1\nstale body line-2");
+        Assert.True(_fileCache.TryGet(conversationId, "docs/a.md", out _));
+
+        const string editCallId = "call_edit_1";
+        var assistantWire = JsonSerializer.Serialize(new
+        {
+            role = "assistant",
+            content = (string?)null,
+            tool_calls = new[]
+            {
+                new
+                {
+                    id = editCallId,
+                    type = "function",
+                    function = new
+                    {
+                        name = "edit",
+                        arguments = JsonSerializer.Serialize(new
+                        {
+                            filePath = "docs/a.md",
+                            oldString = "stale",
+                            newString = "fresh"
+                        })
+                    }
+                }
+            }
+        });
+        using var assistantDoc = JsonDocument.Parse(assistantWire);
+        var assistant = new ChatMessage(
+            MessageRole.Assistant,
+            string.Empty,
+            assistantDoc.RootElement.Clone());
+        var tool = ToolCallWireHelper.BuildToolResultMessage(editCallId, "Edit applied successfully.");
+
+        await orchestrator.ValidateAndRewriteInboundToolResultsAsync(
+            conversationId,
+            [assistant, tool],
+            [],
+            [],
+            CancellationToken.None);
+
+        Assert.False(_fileCache.TryGet(conversationId, "docs/a.md", out _));
+    }
+
+    private async Task<IReadOnlyList<ChatMessage>> ValidateInboundAndCompleteAsync(
+        ToolSchemaOrchestrator orchestrator,
+        Guid conversationId,
+        IReadOnlyList<ChatMessage> newClientMessages,
+        IReadOnlyList<ConversationMessage>? history = null,
+        IReadOnlyList<ChatMessage>? clientSyncedPrefix = null)
+    {
+        var result = await orchestrator.ValidateAndRewriteInboundToolResultsAsync(
+            conversationId,
+            newClientMessages,
+            history ?? [],
+            clientSyncedPrefix ?? [],
+            CancellationToken.None);
+        foreach (var clientCallId in result.CompletedClientCallIds)
+        {
+            await orchestrator.CompleteInboundToolCallAsync(conversationId, clientCallId, CancellationToken.None);
+        }
+
+        return result.Messages;
+    }
+
+    private static string IrFileRangeAssistantJson(string callId, string path, int startLine, int endLine)
+    {
+        var args = JsonSerializer.Serialize(new { path, start_line = startLine, end_line = endLine });
+        return JsonSerializer.Serialize(new
+        {
+            role = "assistant",
+            content = (string?)null,
+            tool_calls = new[]
+            {
+                new
+                {
+                    id = callId,
+                    type = "function",
+                    function = new { name = "comprexy_read_file_range", arguments = args }
+                }
+            }
+        });
+    }
+
+    private static string IrParallelFileRangeAssistantJson(string callA, string pathA, string callB, string pathB)
+    {
+        static object Call(string id, string path) => new
+        {
+            id,
+            type = "function",
+            function = new
+            {
+                name = "comprexy_read_file_range",
+                arguments = JsonSerializer.Serialize(new { path, start_line = 1, end_line = 1 })
+            }
+        };
+
+        return JsonSerializer.Serialize(new
+        {
+            role = "assistant",
+            content = (string?)null,
+            tool_calls = new[] { Call(callA, pathA), Call(callB, pathB) }
+        });
+    }
+
+    private static string? ExtractToolCallId(ChatMessage message)
+    {
+        if (message.RawWireMessage is null)
+        {
+            return null;
+        }
+
+        var wire = message.RawWireMessage.Value;
+        if (wire.TryGetProperty("tool_call_id", out var id))
+        {
+            return id.GetString();
+        }
+
+        return null;
     }
 }

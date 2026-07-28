@@ -9,9 +9,9 @@ namespace Comprexy.Application.Services;
 
 /// <summary>
 /// Resolves conversation identity from an optional client header, falling back to a
-/// deterministic fingerprint of the system prompt and first two user messages so that clients
-/// which resend full history (the OpenAI-standard behavior) are still recognized as the same
-/// conversation across turns.
+/// deterministic fingerprint of the system prompt and the first two plain user turns so that
+/// clients which resend full history (the OpenAI-standard behavior) are still recognized as the
+/// same conversation across turns.
 /// </summary>
 public class ConversationIdentityResolver : IConversationIdentityResolver
 {
@@ -30,6 +30,14 @@ public class ConversationIdentityResolver : IConversationIdentityResolver
         @"<user_query>([\s\S]*?)</user_query>",
         RegexOptions.CultureInvariant | RegexOptions.Compiled);
 
+    /// <summary>
+    /// Kilo / Cursor-style synthetic user turns that echo tool invocations or tool bodies.
+    /// These change every round-trip and must not participate in the fingerprint.
+    /// </summary>
+    private static readonly Regex ToolEchoPattern = new(
+        @"^\s*Called the .+ tool with the following input:",
+        RegexOptions.CultureInvariant | RegexOptions.Compiled | RegexOptions.IgnoreCase | RegexOptions.Multiline);
+
     public string Resolve(string? conversationIdHeader, IReadOnlyList<ChatMessage> messages)
     {
         if (!string.IsNullOrWhiteSpace(conversationIdHeader))
@@ -41,6 +49,7 @@ public class ConversationIdentityResolver : IConversationIdentityResolver
         var userMessages = messages
             .Where(m => m.Role == MessageRole.User)
             .Select(m => NormalizeForFingerprint(m.Content ?? string.Empty))
+            .Where(static text => text.Length > 0 && !IsToolEcho(text))
             .Take(2)
             .ToList();
         var firstUserMessage = userMessages.ElementAtOrDefault(0) ?? string.Empty;
@@ -75,4 +84,7 @@ public class ConversationIdentityResolver : IConversationIdentityResolver
 
         return result.Trim();
     }
+
+    private static bool IsToolEcho(string normalizedContent) =>
+        ToolEchoPattern.IsMatch(normalizedContent);
 }
