@@ -2923,7 +2923,7 @@ public class ProxyChatCompletionServiceTests
             .Returns<ProviderEndpoint, UpstreamRequest, CancellationToken>((_, request, _) =>
             {
                 Assert.True(IsWrapUpRequest(request));
-                Assert.Empty(WrittenSse(ledger).Where(ToolCallWireHelper.StreamChunkHasToolCalls));
+                Assert.DoesNotContain(WrittenSse(ledger), ToolCallWireHelper.StreamChunkHasToolCalls);
                 Assert.DoesNotContain("[DONE]", WrittenSse(ledger));
                 ledger.Add("wrapup:returned");
                 return Task.FromResult(new UpstreamChatResult(ValidWorkingMemory, "stop", 30, 8));
@@ -2990,7 +2990,7 @@ public class ProxyChatCompletionServiceTests
             .Returns<ProviderEndpoint, UpstreamRequest, CancellationToken>((_, request, _) =>
             {
                 Assert.True(IsWrapUpRequest(request));
-                Assert.Empty(WrittenSse(ledger).Where(ToolCallWireHelper.StreamChunkHasToolCalls));
+                Assert.DoesNotContain(WrittenSse(ledger), ToolCallWireHelper.StreamChunkHasToolCalls);
                 ledger.Add("wrapup:returned");
                 return Task.FromResult(new UpstreamChatResult(
                     Content: string.Empty,

@@ -22,7 +22,7 @@ Or `dotnet build` / `dotnet test`. Local hosts: `proxy`, `control-api`, or `dev`
 ```text
 apps/
   proxy/                     # Data-plane host (Comprexy.Api), chat endpoints, prompts
-  control-api/               # Control-plane host: metrics query APIs
+  control-api/               # Control-plane host: metrics REST + telemetry MCP (`/mcp`)
 
 src/
   Comprexy.Domain/           Entities & enums
@@ -31,9 +31,11 @@ src/
 
 tests/
   Comprexy.Application.Tests/
+  Comprexy.ControlApi.Tests/
 
 docs/
   ARCHITECTURE.md            System map for contributors / agents
+  SETTINGS.md                Operator config reference
   TODO.md                    Public backlog / deferred work
 ```
 

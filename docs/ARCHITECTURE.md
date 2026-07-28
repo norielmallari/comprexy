@@ -21,6 +21,7 @@ src/
 
 tests/
   Comprexy.Application.Tests/
+  Comprexy.ControlApi.Tests/
 ```
 
 | Layer | Responsibility |
@@ -28,7 +29,7 @@ tests/
 | **Proxy (`apps/proxy`)** | Parse OpenAI-shaped JSON, map errors/status codes, stream SSE, optional API-key gate, composition root for chat |
 | **Control API (`apps/control-api`)** | Operator REST metrics and remote telemetry MCP (Streamable HTTP at `/mcp`); shares Application/Infrastructure and SQLite with the proxy |
 | **Application** | Conversation identity, prepare/complete chat, budget decisions, context rebuild, compression orchestration, token metrics / telemetry query facade, conversation retrieval (RAG) query facade |
-| **Domain** | `EntityBase`, `Conversation`, `ConversationMessage`, `WorkingMemory`, `CompressionEvent`, `ConversationTurnMetric`, `ConversationMetricsSummary`, `ConversationToolCatalog`, `ConversationToolDefinition` and related enums |
+| **Domain** | `EntityBase`, `Conversation`, `ConversationMessage`, `WorkingMemory`, `CompressionEvent`, `ConversationTurnMetric`, `ConversationMetricsSummary`, `ConversationToolCatalog`, `ConversationToolDefinition`, `ConversationToolCallMap` and related enums |
 | **Infrastructure** | Persistence, OpenAI-compatible HTTP client, tiktoken estimates, in-process compression queue + hosted worker (proxy only), shared API-key middleware |
 
 Dependency rule: hosts → Application → Domain; Infrastructure implements Application ports. Prefer constructor injection; register app services in `AddComprexyApplication` (pass `enableProxyServices: false` on control-api), adapters in `AddComprexyInfrastructure` (pass `enableCompressionWorker: false` on control-api).
@@ -86,10 +87,10 @@ Working memory is omitted until the first successful compression; the rebuild pa
 | Under soft | Forward; no compression enqueue |
 | Above soft (after reply), Fixed/Smart | Enqueue soft job (`Background` / `HighPriorityBackground`) |
 | Above soft (eligible turn), Inline | After visible answer, blocking follow-up wrap-up produces WM; accept on complete (no queue) |
-| At/above hard, `EmergencyCompression: Off` (default) | Send-time retain trim → forward if under budget, else HTTP 413 |
+| At/above hard, `EmergencyCompression: Off` | Send-time retain trim → forward if under budget, else HTTP 413 |
 | At/above hard, `EmergencyCompression: Sync` (Fixed/Smart only) | Sync emergency compact when tool chains are closed → trim if needed → forward or 413 |
 | At/above hard, Inline | Emergency Sync ignored; trim → forward or 413 |
-| `HardLimitTokens` / `CompressionMaxInputTokens` null | Hard-budget and compression-input-cap checks disabled |
+| `HardLimitTokens` / `CompressionMaxInputTokens` null | Hard-budget and compression-input-cap checks disabled (stock proxy appsettings use `null` for both) |
 
 Soft vs emergency vs Inline:
 
@@ -107,7 +108,7 @@ Compression (soft and emergency) requires every assistant `tool_call` id in **un
 `ConversationRequestGate` is process-local:
 
 - Chat takes an **exclusive** lease.
-- Soft compression takes a **preemptible** lease.
+- Soft compression lease kind follows `CancelBackgroundCompressionOnChat`: **exclusive** when `false` (default — chat waits behind soft work), **preemptible** when `true` (arriving chat cancels in-flight soft compression).
 - `CancelBackgroundCompressionOnChat: false` (default): chat waits for soft work.
 - `true`: arriving chat cancels in-flight soft compression and continues with last known-good memory (or stored rebuild without WM if none).
 
@@ -216,6 +217,7 @@ Loaded as: `appsettings.json` → environment-specific → host defaults → opt
 | `Auth` | Optional required API key |
 | `AllowedHosts` / `Cors` | control-api host filtering (loopback default) and optional CORS origins (empty = deny browser CORS) |
 | `Trace` | Console payload categories / request audit files |
+| `Comprexy:TokenEstimateCache` | In-memory tiktoken estimate cache TTL / size |
 | `ConnectionStrings:Comprexy` | SQLite path (hosts rewrite to shared `data/comprexy.db` under the repo by default) |
 
 ## Boundaries and constraints

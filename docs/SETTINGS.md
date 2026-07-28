@@ -8,9 +8,13 @@ Settings load in order (later sources override earlier ones):
 
 1. `apps/proxy/appsettings.json` (proxy) or `apps/control-api/appsettings.json` (control-api)
 2. `apps/*/appsettings.{Environment}.json`
-3. Shared default: hosts rewrite `ConnectionStrings:Comprexy` to `data/comprexy.db` under the repo root
-4. Optional `apps/*/appsettings.Local.json` (gitignored) — may override connection string and other settings
-5. User secrets, environment variables, command-line arguments (host defaults)
+3. User secrets, environment variables, command-line arguments (from `WebApplication.CreateBuilder`)
+4. Shared default: hosts rewrite `ConnectionStrings:Comprexy` to `data/comprexy.db` under the repo root (`SharedSqliteConfiguration.UseRepoSharedDatabase`)
+5. Optional `apps/*/appsettings.Local.json` (gitignored) — may override connection string and other settings
+
+Because SharedSqlite and Local.json are added after env/cmdline, an env override of `ConnectionStrings:Comprexy` does not stick; use Local.json (or another source registered after the rewrite) to point at a different database.
+
+Defaults in the tables below match stock `apps/proxy/appsettings.json` (and control-api where noted). C# `*Options` property initializers may differ when a key is omitted entirely.
 
 Copy `appsettings.Local.json.example` → `appsettings.Local.json` for machine-local upstream URL, API keys, and audit logging.
 
@@ -32,7 +36,7 @@ Upstream OpenAI-compatible chat endpoint.
 | `BaseUrl` | `http://localhost:11434/v1` | Upstream `/v1` base URL. |
 | `ApiKey` | `null` | Optional Bearer token. When null/empty, no `Authorization` header is sent. |
 | `Model` | `null` | When set, replaces the client `model` on outbound chat/compression calls. When null, the client's `model` is forwarded. |
-| `TimeoutSeconds` | `120` | Per-request timeout for chat completion calls. |
+| `TimeoutSeconds` | `600` | Per-request timeout for chat completion calls. |
 
 ---
 
@@ -45,8 +49,8 @@ Optional separate endpoint/model for LLM-based context compression. Unset fields
 | `BaseUrl` | `null` | Compression endpoint. Falls back to `Provider:BaseUrl`. |
 | `ApiKey` | `null` | Compression API key. Falls back to `Provider:ApiKey`. |
 | `Model` | `null` | Compression model. Falls back to `Provider:Model`, then the client chat model from the triggering turn. |
-| `TimeoutSeconds` | `null` | Compression timeout. Falls back to `Provider:TimeoutSeconds`. Prefer a generous value for local models (default in appsettings is 600). |
-| `Temperature` | `0.2` | Sampling temperature for compression calls. |
+| `TimeoutSeconds` | `600` | Compression timeout. When null/omitted, falls back to `Provider:TimeoutSeconds`. |
+| `Temperature` | `0.6` | Sampling temperature for compression calls. |
 | `EnableThinking` | `false` | When false, sends `chat_template_kwargs.enable_thinking=false` on compression calls. |
 | `InstructionFile` | `Prompts/compression-fixed.md` | Fixed compression system prompt (relative to API content root). |
 | `SmartInstructionFile` | `Prompts/compression-smart.md` | Smart compression trailing user instruction. |
@@ -61,10 +65,10 @@ Token budgets, compression retain windows, and emergency behavior.
 
 | Key | Default | Description |
 | --- | --- | --- |
-| `SoftLimitTokens` | `40000` | Above this, background compression is enqueued after a successful reply. |
-| `HardLimitTokens` | `64000` | At/above this, send-time retain trim runs; still over → HTTP 413 (unless sync emergency compacts first). Set to `null` to disable hard-limit checking (no emergency trim / 413). |
-| `CompressionMaxInputTokens` | `65536` | Max tokens in a compression prompt body. Soft jobs prefer full-raw rebuild when stored messages fit; otherwise merge fold. Set to `null` to disable the compression input cap (soft compression then always prefers full-raw rebuild; compression still runs). |
-| `EmergencyCompression` | `Off` | `Off` (default): trim then 413. `Sync`: blocking emergency compression when tool chains are closed. Ignored when `RetainSelection=Inline` (hard path is trim then 413). |
+| `SoftLimitTokens` | `32000` | Above this after a successful reply: Inline follow-up wrap-up on eligible turns (`RetainSelection=Inline`), or enqueue Fixed/Smart soft compression. |
+| `HardLimitTokens` | `null` | At/above this, send-time retain trim runs; still over → HTTP 413 (unless sync emergency compacts first). Stock config is `null` (hard-limit checking off — no emergency trim / 413). Set an integer to enable. |
+| `CompressionMaxInputTokens` | `null` | Max tokens in a compression prompt body. Soft jobs prefer full-raw rebuild when stored messages fit; otherwise merge fold. Stock config is `null` (input cap off — soft compression always prefers full-raw rebuild; compression still runs). Set an integer to enable the cap. |
+| `EmergencyCompression` | `Sync` | `Off`: trim then 413. `Sync`: blocking emergency compression when tool chains are closed. Ignored when `RetainSelection=Inline` (hard path is trim then 413 when a hard limit is set). With stock `HardLimitTokens: null`, the hard path does not run. |
 | `CancelBackgroundCompressionOnChat` | `false` | When `false`, chat waits for in-flight soft compression. When `true`, arriving chat cancels soft compression and continues with last known-good memory. |
 | `RetainSelection` | `Inline` | `Inline` (default), `Fixed`, or `Smart` (soft only). Inline disables background soft jobs and emergency sync; after an eligible soft-pressure visible answer, a blocking proxy-internal wrap-up produces working memory (including mid-chain tool hops that open a new chain after a closed stored prefix). Wrap-up reuses live sampling / `chat_template_*` but omits tool-calling fields (`tools`, `tool_choice`, `functions`, and related `function_call` / `parallel_tool_calls` when present); a wrap-up that still returns `tool_calls` soft-fails as `wrapup_tool_calls`. Soft-pressure eligible turns hold the streaming tail until wrap-up finishes (success or soft-fail): `[DONE]` on stop turns, and the whole real `tool_calls` tail on mid-chain turns so the client starts tools only after the checkpoint attempt resolves. Tool-marathon hops can therefore add wrap-up latency under soft pressure + cooldown. Smart reuses live chat prefix + retain-index instruction. Fixed uses trailing retain window. Emergency Sync still uses Fixed-style compact when `RetainSelection` is Fixed/Smart (see TODO-013 for Inline emergency). |
 | `MinTurnsBetweenGenerations` | `6` | Inline only: assistant turns after a successful Inline generation before another follow-up wrap-up. Ignored by Fixed/Smart. |
@@ -114,7 +118,7 @@ See [`ARCHITECTURE.md`](ARCHITECTURE.md#tool-schema-virtual-tools) for the runti
 
 When unset, those routes accept any (or no) credential. For non-loopback deployments, set a key and prefer HTTPS.
 
-control-api secure host defaults (override via environment / `appsettings.Local.json` for remote hostnames):
+Proxy stock `AllowedHosts` is `*` (`apps/proxy/appsettings.json`). control-api secure host defaults (override via environment / `appsettings.Local.json` for remote hostnames):
 
 | Key | Default | Description |
 | --- | --- | --- |
@@ -210,7 +214,7 @@ In-memory cache for tiktoken estimates.
 
 | Key | Default | Description |
 | --- | --- | --- |
-| `Comprexy` | rewritten to `data/comprexy.db` under repo root | SQLite database path. Hosts call `SharedSqliteConfiguration.UseRepoSharedDatabase`; override via Local.json / env. WAL and 5s busy timeout are applied on connect. |
+| `Comprexy` | rewritten to `data/comprexy.db` under repo root | SQLite database path. Hosts call `SharedSqliteConfiguration.UseRepoSharedDatabase` after env/cmdline; override via `appsettings.Local.json` (env alone does not win). WAL and 5s busy timeout are applied on connect. |
 
 Migrations run at startup. Pass `--clear-db` to rebuild from migrations.
 
