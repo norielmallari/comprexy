@@ -5,6 +5,7 @@
 
 # dotenv files
 .env
+.env*.local
 
 # Comprexy-specific
 *.db
@@ -20,8 +21,11 @@ internal/
 .cursor/agent-state/**
 !.cursor/agent-state/README.md
 
-# Next.js dashboard build output
+# Next.js dashboard
 apps/dashboard/.next/
+apps/dashboard/out/
+apps/dashboard/.vercel/
+*.tsbuildinfo
 
 # User-specific files
 *.rsuser
