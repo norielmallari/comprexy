@@ -146,6 +146,61 @@ public class ToolSchemaOrchestratorTests
             }
             """);
 
+    private static JsonElement ReadWriteReadLintsToolsRequest() =>
+        ParseRequest(
+            """
+            {
+              "model": "client-model",
+              "tools": [
+                {
+                  "type": "function",
+                  "function": {
+                    "name": "Read",
+                    "description": "Read a file.",
+                    "parameters": {
+                      "type": "object",
+                      "properties": {
+                        "path": { "type": "string" }
+                      },
+                      "required": ["path"]
+                    }
+                  }
+                },
+                {
+                  "type": "function",
+                  "function": {
+                    "name": "Write",
+                    "description": "Write a file.",
+                    "parameters": {
+                      "type": "object",
+                      "properties": {
+                        "path": { "type": "string" },
+                        "contents": { "type": "string" }
+                      },
+                      "required": ["path", "contents"]
+                    }
+                  }
+                },
+                {
+                  "type": "function",
+                  "function": {
+                    "name": "ReadLints",
+                    "description": "Read linter errors.",
+                    "parameters": {
+                      "type": "object",
+                      "properties": {
+                        "paths": {
+                          "type": "array",
+                          "items": { "type": "string" }
+                        }
+                      }
+                    }
+                  }
+                }
+              ]
+            }
+            """);
+
     private static string CatalogHashFor(JsonElement request)
     {
         var parsed = new ToolCatalogParser().TryParse(request);
@@ -242,6 +297,53 @@ public class ToolSchemaOrchestratorTests
                         block_until_ms = "block_until_ms",
                         description = "description"
                     }
+                }
+            }
+        });
+
+    private static string ValidReadWriteReadLintsMappingJson(string schemaHash) =>
+        JsonSerializer.Serialize(new
+        {
+            schema_hash = schemaHash,
+            client_capabilities = new object[]
+            {
+                new
+                {
+                    client_tool = "Read",
+                    capability = "FILE_READ_RAW",
+                    risk = "low",
+                    supports = new { path = true, offset = false, limit = false, query = false }
+                },
+                new
+                {
+                    client_tool = "Write",
+                    capability = "NON_FILE",
+                    risk = "medium",
+                    supports = new { path = true, offset = false, limit = false, query = false }
+                },
+                new
+                {
+                    client_tool = "ReadLints",
+                    capability = "NON_FILE",
+                    risk = "low",
+                    supports = new { path = false, offset = false, limit = false, query = false }
+                }
+            },
+            bindings = new object[]
+            {
+                new
+                {
+                    comprexy_tool = "comprexy_read_file_range",
+                    primary_client_tool = "Read",
+                    strategy = "read_then_slice",
+                    arg_map = new { path = "path" }
+                },
+                new
+                {
+                    comprexy_tool = "comprexy_read_file_manifest",
+                    primary_client_tool = "Read",
+                    strategy = "direct",
+                    arg_map = new { path = "path" }
                 }
             }
         });
@@ -600,6 +702,142 @@ public class ToolSchemaOrchestratorTests
         var description = shellTool.GetProperty("function").GetProperty("description").GetString()!;
         Assert.DoesNotContain("Git Safety Protocol", description, StringComparison.Ordinal);
         Assert.True(description.Length < 800);
+    }
+
+    [Fact]
+    public async Task TryPrepareRewriteAsync_ExcludeFromModelTools_HidesListedTools_KeepsWrite()
+    {
+        _options.ExcludeFromModelTools = ["ReadLints", "TodoWrite"];
+        var request = ReadWriteReadLintsToolsRequest();
+        var hash = CatalogHashFor(request);
+        var orchestrator = CreateOrchestrator();
+        SetupMapperReturns(ValidReadWriteReadLintsMappingJson(hash));
+
+        var outcome = await orchestrator.TryPrepareRewriteAsync(
+            Guid.NewGuid(),
+            [new ChatMessage(MessageRole.User, "hello")],
+            request,
+            CancellationToken.None);
+
+        Assert.NotNull(outcome.Result);
+        Assert.Contains("ReadLints", outcome.Result!.Session.ExcludedFromModelToolNames);
+        Assert.True(outcome.Result.RewrittenClientRequest.TryGetProperty("tools", out var tools));
+        var names = tools.EnumerateArray()
+            .Select(t => t.GetProperty("function").GetProperty("name").GetString()!)
+            .ToList();
+
+        Assert.Contains(ToolSchemaConstants.FileRangeToolName, names);
+        Assert.Contains("Write", names);
+        Assert.DoesNotContain("ReadLints", names);
+        Assert.DoesNotContain("Read", names);
+    }
+
+    [Fact]
+    public async Task RunInternalLoopAsync_ExcludedTool_LocalReject_NoClientFacingCall()
+    {
+        _options.ExcludeFromModelTools = ["ReadLints"];
+        var request = ReadWriteReadLintsToolsRequest();
+        var hash = CatalogHashFor(request);
+        var conversationId = Guid.NewGuid();
+        var orchestrator = CreateOrchestrator();
+        SetupMapperReturns(ValidReadWriteReadLintsMappingJson(hash));
+
+        var prepare = await orchestrator.TryPrepareRewriteAsync(
+            conversationId,
+            [new ChatMessage(MessageRole.User, "hello")],
+            request,
+            CancellationToken.None);
+        Assert.NotNull(prepare.Result);
+
+        var assistantJson = """
+            {"role":"assistant","content":null,"tool_calls":[{"id":"ir_lint_1","type":"function","function":{"name":"ReadLints","arguments":"{\"paths\":[\"apps/dashboard/src/lib/utils.ts\"]}"}}]}
+            """;
+        _chatCompletionClient
+            .Setup(c => c.CompleteAsync(
+                It.IsAny<ProviderEndpoint>(),
+                It.Is<UpstreamRequest>(r => r.Purpose == UpstreamRequestPurpose.Chat),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new UpstreamChatResult("done", "stop", 1, 1, AssistantMessageJson:
+                """{"role":"assistant","content":"done"}"""));
+
+        var loop = await orchestrator.RunInternalLoopAsync(
+            prepare.Result!.Session,
+            ChatEndpoint(),
+            ChatUpstream(prepare.Result.RewrittenClientRequest, new ChatMessage(MessageRole.User, "hello")),
+            new UpstreamChatResult(
+                string.Empty,
+                "tool_calls",
+                1,
+                1,
+                RawResponseJson: """{"choices":[{"message":{"role":"assistant","tool_calls":[]},"finish_reason":"tool_calls"}]}""",
+                AssistantMessageJson: assistantJson),
+            CancellationToken.None);
+
+        Assert.Empty(loop.AllowedRealToolCalls);
+        Assert.Equal("done", loop.FinalUpstreamResult.Content);
+        Assert.False(_callIdMap.TryGetByIrId(conversationId, "ir_lint_1", out _));
+        _chatCompletionClient.Verify(
+            c => c.CompleteAsync(
+                It.IsAny<ProviderEndpoint>(),
+                It.Is<UpstreamRequest>(r => r.Purpose == UpstreamRequestPurpose.Chat),
+                It.IsAny<CancellationToken>()),
+            Times.AtLeastOnce);
+    }
+
+    [Fact]
+    public async Task ValidateAndRewriteInbound_ExcludedTool_DropsNativeAssistantAndOrphanResult()
+    {
+        _options.ExcludeFromModelTools = ["ReadLints"];
+        const string clientCallId = "cur_excludedreadlintaaaaaaaaaaaaa";
+        var orchestrator = CreateOrchestrator();
+        using var assistantDoc = JsonDocument.Parse(
+            $$"""
+            {
+              "role": "assistant",
+              "content": "",
+              "tool_calls": [
+                {
+                  "id": "{{clientCallId}}",
+                  "type": "function",
+                  "function": {
+                    "name": "ReadLints",
+                    "arguments": "{\"paths\":[\"apps/dashboard/src/lib/utils.ts\"]}"
+                  }
+                }
+              ]
+            }
+            """);
+        var assistant = new ChatMessage(MessageRole.Assistant, string.Empty, assistantDoc.RootElement.Clone());
+        var tool = ToolCallWireHelper.BuildToolResultMessage(clientCallId, "No linter errors found.");
+        var hidden = new HashSet<string>(StringComparer.Ordinal) { "ReadLints" };
+
+        var inbound = await orchestrator.ValidateAndRewriteInboundToolResultsAsync(
+            Guid.NewGuid(),
+            [assistant, tool],
+            [],
+            [],
+            CancellationToken.None,
+            hidden);
+
+        Assert.Empty(inbound.Messages);
+        Assert.Empty(inbound.CompletedClientCallIds);
+    }
+
+    [Fact]
+    public async Task TryPrepareRewriteAsync_ModeOff_IgnoresExcludeFromModelTools()
+    {
+        _options.Mode = ToolSchemaMode.Off;
+        _options.ExcludeFromModelTools = ["ReadLints"];
+        var orchestrator = CreateOrchestrator();
+
+        var outcome = await orchestrator.TryPrepareRewriteAsync(
+            Guid.NewGuid(),
+            [new ChatMessage(MessageRole.User, "hello")],
+            ReadWriteReadLintsToolsRequest(),
+            CancellationToken.None);
+
+        Assert.Null(outcome.Result);
+        Assert.False(outcome.CatalogMutated);
     }
 
     [Fact]

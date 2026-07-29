@@ -25,8 +25,8 @@ apps/
   control-api/               # Control-plane host: metrics REST + telemetry MCP (`/mcp`)
 
 src/
-  Comprexy.Domain/           Entities & enums
-  Comprexy.Application/      Use cases, ports, orchestration
+  Comprexy.Domain/           Entities & enums (including tool catalog / dual-id map)
+  Comprexy.Application/      Use cases, ports, orchestration (chat, Inline, ToolSchema / ToolIr)
   Comprexy.Infrastructure/   EF Core, HTTP client, tokenizer, background jobs, shared hosting
 
 tests/
@@ -34,8 +34,8 @@ tests/
   Comprexy.ControlApi.Tests/
 
 docs/
-  ARCHITECTURE.md            System map for contributors / agents
-  SETTINGS.md                Operator config reference
+  ARCHITECTURE.md            System map (chat lifecycle, Virtual Tools, persistence)
+  SETTINGS.md                Operator config reference (including ToolSchema)
   TODO.md                    Public backlog / deferred work
 ```
 

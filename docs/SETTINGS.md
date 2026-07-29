@@ -76,7 +76,7 @@ Inline wrap-up reuses live sampling / `chat_template_*` but omits tool-calling f
 
 ## ToolSchema
 
-Virtual Tools (Tool IR) for OpenAI-compatible `tools` / `functions` catalogs. Enabled by default (`Mode: Virtual`); set `Mode` to `Off` to disable. Ignored when `Proxy:PassThrough` is true.
+Virtual Tools (Tool IR) is a primary Comprexy capability for OpenAI-compatible `tools` / `functions` catalogs. It is enabled by default (`Mode: Virtual`); set `Mode` to `Off` to disable. Ignored when `Proxy:PassThrough` is true. Structural runtime path: [`ARCHITECTURE.md`](ARCHITECTURE.md#tool-schema-virtual-tools).
 
 | Key | Default | Description |
 | --- | --- | --- |
@@ -86,6 +86,7 @@ Virtual Tools (Tool IR) for OpenAI-compatible `tools` / `functions` catalogs. En
 | `MaxSearchMatches` | `40` | Cap for `comprexy_read_file_search` hits. |
 | `MaxDirListEntries` | `200` | Cap for `comprexy_dir_list` entries. |
 | `MaxShellObservationChars` | `4000` | Cap for distilled `comprexy_shell` observation content (`truncated: true` when capped). |
+| `ExcludeFromModelTools` | `ReadLints`, `TodoWrite`, `AwaitShell`, `UpdateCurrentStep`, `EditNotebook`, `SwitchMode` | Exact client tool names omitted from the model-facing `tools[]` when Virtual is active. Still hashed/mapped as part of the inbound catalog; model calls are rejected locally; inbound orphans are swallowed like Virtual-replaced tools. Empty list disables. Ignored when `Mode=Off` or `Proxy:PassThrough`. |
 | `FileCacheAbsoluteExpiration` | `00:20:00` | TTL for in-memory file-body cache entries. |
 | `FileCacheSizeLimit` | `256` | Max cached file bodies (each entry size 1). |
 | `CallIdMapPendingAbsoluteExpiration` | `00:30:00` | TTL for abandoned pending IR↔client call-id map rows (EF + in-memory hot cache). |
@@ -94,12 +95,10 @@ Virtual Tools (Tool IR) for OpenAI-compatible `tools` / `functions` catalogs. En
 When `Virtual` is active:
 
 - On catalog hash miss, Comprexy calls the **Compression** endpoint to produce validated **MappingJson** (blocking), using `Compression:Model` → `Provider:Model` → the client chat `model` from the request. Bindings must cover every client-schema `required` property via `arg_map` or `defaults`. Mapper prompt+completion tokens are added to conversation `TotalCompressionOverheadTokens`. Failures after retries set `ToolIrDisabled` for that hash and forward client tools unchanged; compression/budgets stay on.
-- Outbound `tools` = bound Virtual registry tools (`comprexy_read_file_*` / `comprexy_dir_list` / `comprexy_shell`) + `comprexy_get_current_conversation_id` + full-schema client tools that are not replaced (`write`/`edit`, MCP/browser/`NON_FILE`, unbound `OTHER_FILE`/`FILE_METADATA`).
+- Outbound `tools` = bound Virtual registry tools (`comprexy_read_file_*` / `comprexy_dir_list` / `comprexy_shell`) + `comprexy_get_current_conversation_id` + full-schema client tools that are not replaced and not listed in `ExcludeFromModelTools`.
 - The deterministic planner remaps IR calls to native client tool names/args via `arg_map` + `defaults` (or satisfies from the file-body cache). Stream and non-stream responses both rewrite `tool_calls` toward the client. Pending dual-id mappings are persisted in `ConversationToolCallMaps` (committed before emit) with an in-memory hot cache; TTL still applies to abandoned pending rows.
 - Inbound native tool results are distilled into IR observations for the model-facing transcript (map lookup: memory, else SQLite).
-- If the client catalog already defines a reserved name (`comprexy_get_current_conversation_id` or any MVP `comprexy_read_file_*` / `comprexy_dir_list` tool), Virtual is disabled for that conversation (logged).
-
-See [`ARCHITECTURE.md`](ARCHITECTURE.md#tool-schema-virtual-tools) for the runtime path.
+- If the client catalog already defines a reserved name (`comprexy_get_current_conversation_id` or any Virtual `comprexy_*` IR tool name), Virtual is disabled for that conversation (logged).
 
 ---
 

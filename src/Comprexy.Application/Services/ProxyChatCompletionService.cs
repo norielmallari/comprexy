@@ -317,8 +317,8 @@ public class ProxyChatCompletionService
                 .OrderBy(m => m.Sequence)
                 .ToList();
 
-            // Ensure MappingJson before staging so replaced native file tools are known on the
-            // first Virtual turn (client may dump read/glob history before any IR emit).
+            // Ensure MappingJson before staging so replaced/excluded native tools are known on the
+            // first Virtual turn (client may dump read/glob/excluded history before any IR emit).
             var (replacedClientToolNames, catalogMutatedForInbound) =
                 await _toolSchemaOrchestrator.ResolveReplacedClientToolNamesAsync(
                     conversation.Id,
@@ -332,7 +332,7 @@ public class ProxyChatCompletionService
             // Rewrite Virtual Tools inbound results before persist so DB/model see IR observations.
             // Complete dual-id rows only after PersistMessage so a crash mid-batch can still retry.
             // clientSyncedPrefix heals snapshot rewind: announcing assistants often sit before the tip.
-            // Replaced native file-tool assistants/results are dropped (never staged into IR transcript).
+            // Replaced/excluded native tool assistants/results are dropped (never staged into IR transcript).
             var inboundRewrite = await _toolSchemaOrchestrator.ValidateAndRewriteInboundToolResultsAsync(
                 conversation.Id,
                 nonSystemNewMessages,

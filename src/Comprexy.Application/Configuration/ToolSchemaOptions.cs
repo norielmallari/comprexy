@@ -34,4 +34,27 @@ public class ToolSchemaOptions
 
     /// <summary>Max conversations retained in the process-local call-id map.</summary>
     public int CallIdMapMaxConversations { get; set; } = 1024;
+
+    /// <summary>
+    /// Client tool names excluded from the model-facing catalog when Virtual Tools is active.
+    /// Exact ordinal match after trim. Still present in inbound catalog hash / mapper input / stored defs.
+    /// </summary>
+    public List<string> ExcludeFromModelTools { get; set; } = [];
+
+    /// <summary>Normalized exclude names (trimmed, non-empty, de-duped, ordinal).</summary>
+    public IReadOnlySet<string> GetNormalizedExcludedToolNames()
+    {
+        var names = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var entry in ExcludeFromModelTools)
+        {
+            if (string.IsNullOrWhiteSpace(entry))
+            {
+                continue;
+            }
+
+            names.Add(entry.Trim());
+        }
+
+        return names;
+    }
 }

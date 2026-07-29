@@ -4,9 +4,11 @@ OpenAI-compatible context compression proxy for long-running chats and coding ag
 
 **Comprexy™** sits between your client (Cursor, CLI agents, custom apps) and any OpenAI-compatible upstream. It persists completed turns, rebuilds a bounded upstream prompt from versioned **working memory** plus still-unfolded messages, and folds older context via **Inline** wrap-up when soft budget pressure applies — without summarizing on every reply.
 
+Under **Virtual Tools** (default), Comprexy also owns the **model-facing tool catalog**: large IDE schemas (file read, shell, and similar) are replaced with compact `comprexy_*` IR tools, remapped to native client calls, and distilled on the way back — so tool definitions and results stop dominating the prompt. Optional `ExcludeFromModelTools` hides selected client tools from the model entirely.
+
 Soft budget pressure triggers a blocking Inline follow-up wrap-up on eligible turns (closed stored tool chain + cooldown). Local-first by default: point `Provider` at Ollama, LM Studio, vLLM, or a cloud OpenAI-compatible endpoint.
 
-[Quick start](#quick-start) · [Why Comprexy?](#why-comprexy) · [Design principles](#design-principles) · [What Comprexy is not](#what-comprexy-is-not) · [Source of truth](#source-of-truth) · [Agentic workflow](#agentic-workflow) · [MCP setup](#mcp-setup) · [Features](#features) · [How it works](#how-it-works) · [Configuration](#configuration) · [Limitations](#limitations) · [Architecture](#architecture) · [Contributing](#contributing)
+[Quick start](#quick-start) · [Why Comprexy?](#why-comprexy) · [Design principles](#design-principles) · [What Comprexy is not](#what-comprexy-is-not) · [Source of truth](#source-of-truth) · [Agentic workflow](#agentic-workflow) · [MCP setup](#mcp-setup) · [Features](#features) · [How it works](#how-it-works) · [Virtual Tools](#virtual-tools) · [Configuration](#configuration) · [Limitations](#limitations) · [Architecture](#architecture) · [Contributing](#contributing)
 
 ![.NET](https://img.shields.io/badge/.NET-10-512BD4?logo=dotnet&logoColor=white)
 ![Platform](https://img.shields.io/badge/platform-cross--platform-informational)
@@ -81,7 +83,7 @@ On the normal path, when `Provider:Model` is set Comprexy replaces `model` with 
 
 Comprexy was built from a real local LLM limitation: long-running planning workflows in Cursor became impractical as context accumulated. History, tool output, and corrections pile up until each turn is noisy, expensive, or past the model’s useful window. On local runtimes, once the prompt crosses a size threshold, tokens-per-second often drops sharply — prefill gets heavier, streaming feels sticky, and the developer loop slows down even when the model could still answer. Restarting and re-explaining kills flow; summarizing on every turn adds latency; blind truncation drops decisions you still need.
 
-Comprexy keeps the **sent** context manageable — stable information in versioned working memory, older context folded on soft budget pressure — so the model does not need the full accumulated history every turn. Smaller upstream prompts do not guarantee faster inference, but they help keep long sessions in a size range where local tok/s stays usable. The goal is simple: make long-running local LLM workflows practical.
+Comprexy keeps the **sent** context manageable — stable information in versioned working memory, older context folded on soft budget pressure — so the model does not need the full accumulated history every turn. Coding agents also ship large `tools[]` catalogs (a single Shell definition can be thousands of tokens); Virtual Tools shrinks what the model sees without changing what the IDE executes. Smaller upstream prompts do not guarantee faster inference, but they help keep long sessions in a size range where local tok/s stays usable. The goal is simple: make long-running local LLM workflows practical.
 
 ### Dogfood validation
 
@@ -99,18 +101,20 @@ Comprexy’s approach:
 | --- | --- |
 | Stay in flow | Answer first; fold via Inline wrap-up on eligible soft-pressure turns so prompts stay smaller and local sessions stay responsive longer |
 | Preserve what matters | Persist completed turns; use versioned working memory for the active prompt, not blind truncation |
+| Keep tool catalogs usable | Virtual Tools replace heavy file/shell schemas with short IR tools; optional `ExcludeFromModelTools` drops IDE UX tools the model should not see |
 | Stay compatible | OpenAI-compatible `/v1` base URL: chat completions are compressed; other `/v1/*` routes proxy upstream |
-| Stay focused | Context compression only — not a multi-provider gateway or agent framework |
+| Stay focused | Context compression and tool-surface management for chat completions — not a multi-provider gateway or agent framework |
 
-If you need routing, spend tracking, or broad agent wrappers, tools like LiteLLM or Headroom may fit better. Comprexy is intentionally narrower: chat-completion context management only.
+If you need routing, spend tracking, or broad agent wrappers, tools like LiteLLM or Headroom may fit better. Comprexy is intentionally narrower: chat-completion context management (including Virtual Tools) only.
 
 ## Design principles
 
 - Answer first; fold on soft pressure when the stored tool chain is closed and cooldown allows.
 - Persist the durable transcript; treat working memory as a derived, versioned prompt aid.
 - Rebuild outgoing context from stored turns — do not forward an unmanaged client history as the model transcript.
+- When Virtual Tools is on, own the model-facing tool contract: compact IR outbound, native remap to the client, distilled IR observations in the stored transcript.
 - Prefer inspectable, deterministic behavior over opaque truncation.
-- Stay local-first and OpenAI-compatible; stay narrow (context compression, not a gateway or agent framework).
+- Stay local-first and OpenAI-compatible; stay narrow (context compression and tool-surface management, not a gateway or agent framework).
 
 ## What Comprexy is not
 
@@ -189,6 +193,8 @@ Telemetry MCP tools are named `comprexy_*` and require `conversationId` from the
 | Rolling working memory | Versioned compressed representation of older context for prompt reconstruction. Derived from persisted messages via Inline wrap-up |
 | Soft budget | Soft (`> soft`) → Inline follow-up wrap-up on eligible turns (closed stored tool chain + `MinTurnsBetweenGenerations` cooldown). Token estimates use tiktoken for text and OpenAI-style vision tiles for `image_url` (base64 is not BPE-counted) |
 | Context rebuild | Outgoing context is always rebuilt from stored turns (IR-side under Virtual Tools). Working memory is omitted until the first successful compression; `Proxy:PassThrough` is the only full bypass |
+| Virtual Tools | Default `ToolSchema:Mode=Virtual`. Maps the client catalog once per hash; model sees bound `comprexy_read_file_*` / `comprexy_dir_list` / `comprexy_shell` + meta + remaining passthrough; planner remaps to native tools; results distill to IR. Set `Off` (or use `Proxy:PassThrough`) to disable |
+| Tool denylist | `ToolSchema:ExcludeFromModelTools` hides listed client tools from the model (stock defaults include ReadLints, TodoWrite, AwaitShell, UpdateCurrentStep, EditNotebook, SwitchMode), rejects calls locally, and swallows inbound orphans |
 | Conversation identity | Prefer a unique `X-Comprexy-Conversation-Id` per session; otherwise fingerprint from system + first two **plain** user turns (Cursor `<user_query>` when present; tool-echo user turns skipped) |
 | Local-first, cloud-ready | Point `Provider` at Ollama, LM Studio, vLLM, OpenAI, Azure OpenAI–compatible APIs, and similar |
 | Optional separate compression model | Use a cheaper/faster model for compression via `Compression` settings |
@@ -213,7 +219,7 @@ flowchart LR
   Upstream --> Client
 ```
 
-**Normal path:** rebuild prompt → forward → return (or stream) → if above soft limit and eligible (closed stored tool chain + cooldown), run blocking Inline wrap-up under the exclusive conversation gate. Mid-chain turns may checkpoint the closed stored prefix while leaving an open assistant unfolded. Soft failure never overwrites last known-good working memory.
+**Normal path:** rebuild prompt (and, when Virtual is active, rewrite `tools[]`) → forward → return (or stream; remap/distill tool rounds as needed) → if above soft limit and eligible (closed stored tool chain + cooldown), run blocking Inline wrap-up under the exclusive conversation gate. Mid-chain turns may checkpoint the closed stored prefix while leaving an open assistant unfolded. Soft failure never overwrites last known-good working memory.
 
 **After working memory exists:** outgoing context is roughly `system + working memory + still-unfolded messages + current tip`. The retain window is applied at Inline fold time.
 
@@ -228,6 +234,26 @@ Compression in Comprexy:
 
 Compression does not delete persisted turns, replace the durable transcript, or wait for summarization on every reply.
 
+## Virtual Tools
+
+Coding agents often attach large OpenAI-compatible `tools[]` / `functions` catalogs. Under Virtual Tools, Comprexy owns the **model-facing** contract while the IDE still executes **native** tools:
+
+```text
+Client tools[] → catalog hash + mapper → model IR tools
+  → planner remap → native tool_calls → client executes
+  → distill → IR observation in stored / model transcript
+```
+
+| Piece | Behavior |
+| --- | --- |
+| File family | Bound `comprexy_read_file_manifest` / `range` / `search` and `comprexy_dir_list` replace native Read/Grep/list backends |
+| Shell family | Bound `comprexy_shell` replaces native Shell/bash backends |
+| Denylist | `ExcludeFromModelTools` omits listed client tools from the model catalog |
+| Meta | `comprexy_get_current_conversation_id` runs proxy-locally |
+| Failure | Mapper exhaustion sets `ToolIrDisabled` for that catalog hash and forwards client tools unchanged; compression/budgets stay on |
+
+Runtime detail: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md#tool-schema-virtual-tools). Options: [`docs/SETTINGS.md`](docs/SETTINGS.md#toolschema).
+
 ## Configuration
 
 Settings load from `appsettings.json`, environment overlays, and optional gitignored `appsettings.Local.json`. See **[`docs/SETTINGS.md`](docs/SETTINGS.md)** for the full reference (Provider, Compression, ContextPolicy, **ToolSchema**, Auth, Proxy, Trace, token cache, SQLite).
@@ -237,7 +263,7 @@ Settings load from `appsettings.json`, environment overlays, and optional gitign
 | `Provider` | Upstream OpenAI-compatible chat endpoint |
 | `Compression` | Optional separate Compression endpoint for ToolSchema mapper; Inline wrap-up prompts |
 | `ContextPolicy` | Soft token limit, Inline cooldown / retain tip |
-| `ToolSchema` | Virtual Tools (`Mode: Virtual` default; set `Off` to disable) |
+| `ToolSchema` | Virtual Tools (`Mode: Virtual` default), file/shell IR, `ExcludeFromModelTools`, observation/cache TTLs |
 | `McpTelemetry` | Control-api MCP row limits and query timeout |
 | `Auth` | Optional API key gate on `/v1/*` and control-api `/mcp` |
 | `Proxy` | Pass-through and reasoning strip |
@@ -253,12 +279,14 @@ Settings load from `appsettings.json`, environment overlays, and optional gitign
 - After working memory exists, the system prompt captured on the first turn is reused when rebuilding context.
 - `Proxy:PassThrough` disables context management entirely.
 - Soft Inline wrap-up and the conversation gate are process-local; they are not shared across multiple API instances.
+- Virtual Tools mapping is best-effort per catalog hash; on mapper exhaustion Comprexy sets `ToolIrDisabled` and forwards native tools for that hash (compression stays on).
+- `ExcludeFromModelTools` hides tools from the model only; they remain in the client catalog. Already-persisted transcript turns are not scrubbed.
 
 Deferred work is tracked in [`docs/TODO.md`](docs/TODO.md).
 
 ## Architecture
 
-Layering, request lifecycle, compression ownership, and persistence are documented in [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
+Layering, request lifecycle, Virtual Tools, compression ownership, and persistence are documented in [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
 
 ## Security
 

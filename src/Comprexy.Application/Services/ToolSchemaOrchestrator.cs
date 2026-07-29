@@ -26,6 +26,12 @@ public sealed class ToolSchemaSession
     /// </summary>
     public HashSet<string> ReplacedClientToolNames { get; init; } = new(StringComparer.Ordinal);
 
+    /// <summary>
+    /// Operator denylist (<c>ToolSchema:ExcludeFromModelTools</c>) — hidden from model catalog,
+    /// locally rejected if called, swallowed on inbound like replaced tools.
+    /// </summary>
+    public HashSet<string> ExcludedFromModelToolNames { get; init; } = new(StringComparer.Ordinal);
+
     /// <summary>Obsolete alias — use <see cref="ReplacedClientToolNames"/>.</summary>
     public HashSet<string> FileClientToolNames
     {
@@ -34,6 +40,10 @@ public sealed class ToolSchemaSession
     }
 
     public HashSet<string> BoundVirtualToolNames { get; init; } = new(StringComparer.Ordinal);
+
+    public bool IsHiddenFromModelClientTool(string? name) =>
+        !string.IsNullOrWhiteSpace(name) &&
+        (ReplacedClientToolNames.Contains(name) || ExcludedFromModelToolNames.Contains(name));
 
     public List<ToolSchemaPersistedTurn> PendingPersistedTurns { get; } = [];
 
@@ -133,8 +143,8 @@ public class ToolSchemaOrchestrator
     /// even when those assistants are not in <paramref name="newClientMessages"/>.
     /// </param>
     /// <param name="replacedClientToolNames">
-    /// Native client tools replaced by Virtual <c>comprexy_*</c> backends (see
-    /// <see cref="ToolIrMappingValidator.GetReplacedClientToolNames"/>). Assistants/results for these
+    /// Native client tools hidden from the model (Virtual-replaced backends and/or
+    /// <c>ToolSchema:ExcludeFromModelTools</c>). Assistants/results for these
     /// names are never persisted into the IR transcript — client wire only.
     /// </param>
     public async Task<ToolInboundRewriteResult> ValidateAndRewriteInboundToolResultsAsync(
@@ -357,9 +367,10 @@ public class ToolSchemaOrchestrator
     }
 
     /// <summary>
-    /// Resolves native client tools replaced by Virtual <c>comprexy_*</c> backends for inbound
-    /// ingest filtering. Ensures MappingJson when the catalog hash needs a map so the first
-    /// Virtual turn can drop client-native remapped history before it is staged.
+    /// Resolves native client tools hidden from the model for inbound ingest filtering:
+    /// Virtual-replaced backends plus operator <c>ExcludeFromModelTools</c>.
+    /// Ensures MappingJson when the catalog hash needs a map so the first
+    /// Virtual turn can drop client-native remapped / excluded history before it is staged.
     /// </summary>
     public async Task<(IReadOnlySet<string> ReplacedClientToolNames, bool CatalogMutated)> ResolveReplacedClientToolNamesAsync(
         Guid conversationId,
@@ -371,6 +382,7 @@ public class ToolSchemaOrchestrator
             return (new HashSet<string>(StringComparer.Ordinal), CatalogMutated: false);
         }
 
+        var excluded = _options.GetNormalizedExcludedToolNames();
         var parsed = _catalogParser.TryParse(rawRequest);
         if (parsed is null || parsed.HasMetaToolNameCollision)
         {
@@ -398,7 +410,9 @@ public class ToolSchemaOrchestrator
                 parsed.FullDefinitionsByName);
             if (cached.IsValid && cached.Document is not null)
             {
-                return (ToolIrMappingValidator.GetReplacedClientToolNames(cached.Document), CatalogMutated: false);
+                return (
+                    ToHiddenSet(ToolIrMappingValidator.GetReplacedClientToolNames(cached.Document), excluded),
+                    CatalogMutated: false);
             }
         }
 
@@ -411,10 +425,13 @@ public class ToolSchemaOrchestrator
 
         if (outcome.Result is null)
         {
+            // Prepare may have DisableToolIr — do not apply exclude when Virtual is off for this hash.
             return (new HashSet<string>(StringComparer.Ordinal), outcome.CatalogMutated);
         }
 
-        return (outcome.Result.Session.ReplacedClientToolNames, outcome.CatalogMutated);
+        return (
+            ToHiddenSet(outcome.Result.Session.ReplacedClientToolNames, outcome.Result.Session.ExcludedFromModelToolNames),
+            outcome.CatalogMutated);
     }
 
     public async Task<ToolSchemaPrepareOutcome> TryPrepareRewriteAsync(
@@ -554,6 +571,8 @@ public class ToolSchemaOrchestrator
 
         var replacedClientTools = ToolIrMappingValidator.GetReplacedClientToolNames(mapping)
             .ToHashSet(StringComparer.Ordinal);
+        var excludedFromModel = _options.GetNormalizedExcludedToolNames()
+            .ToHashSet(StringComparer.Ordinal);
         var boundVirtual = mapping.Bindings
             .Select(b => b.ComprexyTool)
             .Where(ToolSchemaConstants.IsVirtualTool)
@@ -566,6 +585,7 @@ public class ToolSchemaOrchestrator
             Mapping = mapping,
             FullDefinitionsByName = definitionsByName,
             ReplacedClientToolNames = replacedClientTools,
+            ExcludedFromModelToolNames = excludedFromModel,
             BoundVirtualToolNames = boundVirtual
         };
 
@@ -822,13 +842,17 @@ public class ToolSchemaOrchestrator
                 continue;
             }
 
-            // Passthrough (or unexpected name).
+            // Passthrough (or unexpected / excluded / replaced name).
             if (!session.CatalogToolNames.Contains(call.Name) ||
-                session.ReplacedClientToolNames.Contains(call.Name))
+                session.IsHiddenFromModelClientTool(call.Name))
             {
-                var error = BuildToolErrorJson(
-                    "unknown_tool",
-                    $"Tool '{call.Name}' is not available on the Virtual Tools surface.");
+                var code = session.ExcludedFromModelToolNames.Contains(call.Name)
+                    ? "tool_excluded"
+                    : "unknown_tool";
+                var details = session.ExcludedFromModelToolNames.Contains(call.Name)
+                    ? BuildExcludedToolMessage(call.Name, session)
+                    : $"Tool '{call.Name}' is not available on the Virtual Tools surface.";
+                var error = BuildToolErrorJson(code, details);
                 loopMessages.Add(ToolCallWireHelper.BuildToolResultMessage(call.Id, error));
                 metaHandled = true;
                 continue;
@@ -1099,7 +1123,7 @@ public class ToolSchemaOrchestrator
         foreach (var (toolName, definitionJson) in session.FullDefinitionsByName
                      .OrderBy(kv => kv.Key, StringComparer.Ordinal))
         {
-            if (session.ReplacedClientToolNames.Contains(toolName))
+            if (session.IsHiddenFromModelClientTool(toolName))
             {
                 continue;
             }
@@ -1171,6 +1195,52 @@ public class ToolSchemaOrchestrator
         }
 
         return "{}";
+    }
+
+    private static HashSet<string> ToHiddenSet(
+        IEnumerable<string>? replaced,
+        IEnumerable<string>? excluded)
+    {
+        var set = new HashSet<string>(StringComparer.Ordinal);
+        if (replaced is not null)
+        {
+            foreach (var name in replaced)
+            {
+                if (!string.IsNullOrWhiteSpace(name))
+                {
+                    set.Add(name);
+                }
+            }
+        }
+
+        if (excluded is not null)
+        {
+            foreach (var name in excluded)
+            {
+                if (!string.IsNullOrWhiteSpace(name))
+                {
+                    set.Add(name);
+                }
+            }
+        }
+
+        return set;
+    }
+
+    private static string BuildExcludedToolMessage(string toolName, ToolSchemaSession session)
+    {
+        var hasFileIr = session.BoundVirtualToolNames.Overlaps(ToolSchemaConstants.VirtualFileToolNames);
+        if (hasFileIr &&
+            (string.Equals(toolName, "ReadLints", StringComparison.Ordinal) ||
+             toolName.Contains("Lint", StringComparison.OrdinalIgnoreCase)))
+        {
+            return $"Tool '{toolName}' is excluded from the model catalog (ToolSchema:ExcludeFromModelTools). " +
+                   "It returns diagnostics only, not file contents. " +
+                   "Use comprexy_read_file_range / comprexy_read_file_search / comprexy_dir_list for reading files.";
+        }
+
+        return $"Tool '{toolName}' is excluded from the model catalog (ToolSchema:ExcludeFromModelTools) " +
+               "and is not available on the Virtual Tools surface.";
     }
 
     private static string BuildToolErrorJson(string code, string details) =>
