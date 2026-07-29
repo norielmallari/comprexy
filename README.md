@@ -113,6 +113,12 @@ Top 3 evidences — end-to-end Cursor workflows on a local LLM (Qwen-35B behind 
 
 These are dogfood workflows, not universal benchmarks — and they do not claim measured tok/s gains. Agent pipeline used for this work: [Agentic workflow](#agentic-workflow).
 
+### Token and cost intelligence
+
+Comprexy Core includes conversation-level token and cost intelligence for long-running workflows.
+
+For each conversation, Comprexy tracks estimated baseline token volume, sent-equivalent token volume, compression overhead, net tokens saved, savings ratios, working-memory versions, budget events, and per-turn prompt growth. That makes it easier to inspect what would have been sent without context management, what was actually sent upstream, and how compression behaved over time. Cost figures are estimate-based: apply a USD-per-1M-token rate to those token totals when you want a cost-equivalent signal. These signals support workflow inspection and tuning; they do not guarantee savings or ROI.
+
 Comprexy’s approach:
 
 | Goal | Approach |
@@ -141,6 +147,7 @@ If you need routing, spend tracking, or broad agent wrappers, tools like LiteLLM
 - Not a vector database or retrieval framework.
 - Not a static prompt minifier or offline context packer.
 - Not a guarantee of better answers or higher tok/s; it manages prompt size and structure so long sessions stay usable.
+- Not a guarantee of agent quality, model correctness, code correctness, workflow success, or actual cloud bill reduction.
 
 ## Source of truth
 
@@ -208,6 +215,7 @@ Telemetry MCP tools are named `comprexy_*` and require `conversationId` from the
 | OpenAI-compatible `/v1` | `POST /v1/chat/completions` is compressed (roles: `system` / `user` / `assistant` / `tool`). Other `/v1/*` routes reverse-proxy to `Provider` unchanged |
 | Token metrics API | Control API `GET /v1/comprexy/conversations` (+ `/metrics`, `/metrics/turns`) on `:8130` reports raw vs compressed token savings per conversation |
 | Telemetry MCP | Control API `/mcp` exposes read-only summaries, turns, compression phases, budget events, prompt growth, comparisons, evidence markdown, and conversation retrieval (search / message window / working memory / open tool chains) to MCP clients |
+| Token and cost intelligence | Conversation-level telemetry for estimated baseline tokens, sent-equivalent tokens, compression overhead, net savings, prompt growth, and final-turn snapshots; optional USD-at-rate cost-equivalent estimates from those token totals |
 | Rolling working memory | Versioned compressed representation of older context for prompt reconstruction. Derived from persisted messages via Inline wrap-up |
 | Soft budget | Soft (`> soft`) → Inline follow-up wrap-up on eligible turns (closed stored tool chain + `MinTurnsBetweenGenerations` cooldown). Token estimates use tiktoken for text and OpenAI-style vision tiles for `image_url` (base64 is not BPE-counted) |
 | Context rebuild | Outgoing context is always rebuilt from stored turns (IR-side under Virtual Tools). Working memory is omitted until the first successful compression; `Proxy:PassThrough` is the only full bypass |
@@ -299,6 +307,7 @@ Settings load from `appsettings.json`, environment overlays, and optional gitign
 - Soft Inline wrap-up and the conversation gate are process-local; they are not shared across multiple API instances.
 - Virtual Tools mapping is best-effort per catalog hash; on mapper exhaustion Comprexy sets `ToolIrDisabled` and forwards native tools for that hash (compression stays on).
 - `ExcludeFromModelTools` hides tools from the model only; they remain in the client catalog. Already-persisted transcript turns are not scrubbed.
+- Token and cost intelligence is estimate-based. Actual provider billing may differ because of model-specific tokenization, prompt caching, output volume, provider pricing, local hardware utilization, and workflow shape.
 
 Deferred work is tracked in [`docs/TODO.md`](docs/TODO.md).
 
