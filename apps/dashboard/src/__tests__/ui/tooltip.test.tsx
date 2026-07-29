@@ -4,9 +4,9 @@ import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip
 import { describe, expect, it, vi } from 'vitest';
 
 describe('Tooltip', () => {
-  function renderTooltip({ defaultOpen = false, open: controlledOpen, delayDuration = 0 } = {}) {
+  function renderTooltip(props: Partial<{ defaultOpen: boolean; open: boolean | undefined; delayDuration: number }> = {}) {
     return render(
-      <Tooltip defaultOpen={defaultOpen} open={controlledOpen} delayDuration={delayDuration}>
+      <Tooltip defaultOpen={props.defaultOpen ?? false} open={props.open} delayDuration={props.delayDuration ?? 0}>
         <TooltipTrigger>
           <span data-testid="trigger">Hover me</span>
         </TooltipTrigger>

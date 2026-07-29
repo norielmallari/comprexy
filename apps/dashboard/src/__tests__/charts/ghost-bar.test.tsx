@@ -3,6 +3,15 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { GhostBar } from '@/components/charts/ghost-bar';
 
+// Custom JSX element for the Bar mock in tests
+declare module 'react' {
+  namespace JSX {
+    interface IntrinsicElements {
+      'mock-bar': React.HTMLAttributes<HTMLElement> & Record<string, string | number | string[]>;
+    }
+  }
+}
+
 vi.mock('recharts', () => ({
   Bar: vi.fn((props: any) => {
     const attrs: Record<string, string | number | string[]> = {

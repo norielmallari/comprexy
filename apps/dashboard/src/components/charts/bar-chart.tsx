@@ -291,7 +291,7 @@ export function BarChart({ data, isLoading = false }: BarChartProps) {
           {/* X axis label */}
           <Label
             value="Turn Index"
-            position="outsideBottom"
+            position="outside"
             offset={60}
             style={{
               fill: isDark ? '#9ca3af' : '#6b7280',

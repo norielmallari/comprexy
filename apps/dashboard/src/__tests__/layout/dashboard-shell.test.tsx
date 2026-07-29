@@ -49,7 +49,7 @@ describe('DashboardShell', () => {
   });
 
   it('renders without children (null children)', () => {
-    render(<DashboardShell />);
+    render(<DashboardShell children={undefined} />);
     expect(screen.getByText('Comprexy Metrics')).toBeInTheDocument();
   });
 

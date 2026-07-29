@@ -1,5 +1,8 @@
 export { MetricCard } from "./metric-card";
 export { HeroCard } from "./hero-card";
+export { BaselineActualCard } from "./baseline-actual-card";
+export { CompressionRatioCard } from "./compression-ratio-card";
+export { CompressionHealthCard } from "./compression-health-card";
 export { AverageCompressionCard } from "./average-compression-card";
 export { BestCompressionCard } from "./best-compression-card";
 export { OverheadCard } from "./overhead-card";

@@ -1,4 +1,5 @@
 import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
+import { MockedFunction, vi } from 'vitest';
 import { TopBar } from '@/components/layout/top-bar';
 import { useTheme } from '@/hooks/use-theme';
 import { useConversations } from '@/lib/queries/use-conversations';
@@ -20,12 +21,12 @@ vi.mock('@/lib/constants', () => ({
   API_BASE_URL: 'http://localhost:8130',
 }));
 
-const mockUseTheme = useTheme as vi.MockedFunction<typeof useTheme>;
-const mockUseConversations = useConversations as vi.MockedFunction<typeof useConversations>;
-const mockUseConversationUrl = useConversationUrl as vi.MockedFunction<typeof useConversationUrl>;
+const mockUseTheme = useTheme as MockedFunction<typeof useTheme>;
+const mockUseConversations = useConversations as MockedFunction<typeof useConversations>;
+const mockUseConversationUrl = useConversationUrl as MockedFunction<typeof useConversationUrl>;
 
-const defaultThemeMock = { theme: 'light', toggleTheme: vi.fn() };
-const defaultConversationsMock = { data: [], isLoading: false };
+const defaultThemeMock = { theme: 'light' as const, toggleTheme: vi.fn() };
+const defaultConversationsMock = { data: [], isLoading: false, isSuccess: true } as unknown as ReturnType<typeof useConversations>;
 const defaultUrlMock = { conversationId: null, navigateToConversation: vi.fn() };
 
 beforeEach(() => {
@@ -53,7 +54,7 @@ describe('TopBar', () => {
     const conversations = [
       { conversationId: 'abc12345-def6-7890-abcd-ef1234567890', title: 'Test Conversation' },
     ];
-    mockUseConversations.mockReturnValue({ data: conversations, isLoading: false });
+    mockUseConversations.mockReturnValue({ data: conversations, isLoading: false } as any);
 
     render(<TopBar />);
     expect(screen.getByText('abc12345')).toBeInTheDocument();
@@ -107,7 +108,7 @@ describe('TopBar', () => {
       { conversationId: 'conv-001', title: 'First' },
       { conversationId: 'conv-002', title: 'Second' },
     ];
-    mockUseConversations.mockReturnValue({ data: conversations, isLoading: false });
+    mockUseConversations.mockReturnValue({ data: conversations, isLoading: false } as any);
 
     render(<TopBar />);
     expect(screen.getByText('conv-001')).toBeInTheDocument();
@@ -124,7 +125,7 @@ describe('TopBar', () => {
     const conversations = [
       { conversationId: 'conv-001', title: 'Test' },
     ];
-    mockUseConversations.mockReturnValue({ data: conversations, isLoading: false });
+    mockUseConversations.mockReturnValue({ data: conversations, isLoading: false } as any);
 
     render(<TopBar />);
 
@@ -144,7 +145,7 @@ describe('TopBar', () => {
     const conversations = [
       { conversationId: 'conv-001', title: 'Test' },
     ];
-    mockUseConversations.mockReturnValue({ data: conversations, isLoading: false });
+    mockUseConversations.mockReturnValue({ data: conversations, isLoading: false } as any);
 
     render(<TopBar />);
 
@@ -157,7 +158,7 @@ describe('TopBar', () => {
   });
 
   it('handles empty conversations list', () => {
-    mockUseConversations.mockReturnValue({ data: [], isLoading: false });
+    mockUseConversations.mockReturnValue({ data: [], isLoading: false, isSuccess: true } as unknown as ReturnType<typeof useConversations>);
     mockUseConversationUrl.mockReturnValue({ conversationId: null, navigateToConversation: vi.fn() });
 
     render(<TopBar />);
@@ -165,14 +166,14 @@ describe('TopBar', () => {
   });
 
   it('shows loading state while conversations are loading', () => {
-    mockUseConversations.mockReturnValue({ data: undefined, isLoading: true });
+    mockUseConversations.mockReturnValue({ data: undefined, isLoading: true } as any);
 
     render(<TopBar />);
     expect(screen.getByText('Loading...')).toBeInTheDocument();
   });
 
   it('disables select while conversations are loading', () => {
-    mockUseConversations.mockReturnValue({ data: undefined, isLoading: true });
+    mockUseConversations.mockReturnValue({ data: undefined, isLoading: true } as any);
 
     render(<TopBar />);
     const select = screen.getByRole('combobox');

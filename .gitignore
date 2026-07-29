@@ -27,6 +27,19 @@ apps/dashboard/out/
 apps/dashboard/.vercel/
 *.tsbuildinfo
 
+# Playwright (dashboard) — reports, traces, auth dumps; keep e2e/fixtures JSON
+apps/dashboard/playwright-report/
+apps/dashboard/test-results/
+apps/dashboard/blob-report/
+apps/dashboard/playwright/.cache/
+apps/dashboard/e2e/.auth/
+apps/dashboard/e2e/**/*.webm
+apps/dashboard/e2e/**/trace.zip
+apps/dashboard/e2e/**/*-trace.zip
+apps/dashboard/e2e/**/traces/
+apps/dashboard/e2e/**/videos/
+apps/dashboard/e2e/**/screenshots/
+
 # User-specific files
 *.rsuser
 *.suo

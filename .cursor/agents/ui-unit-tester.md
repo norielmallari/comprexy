@@ -13,7 +13,7 @@ If launched under `backend-unit-tester` / `unit-tester` with **track: ui**, foll
 ## Chat brevity (required)
 
 Under orchestration, write the full Unit-test result/failure to `.cursor/agent-state/<run-folder>/unit-test-result.md`:
-- In chat: **Status** pass/fail, tests added count, Playwright fixtures/specs touched, command summary, **Result file:** path, failing names if any
+- In chat: **Status** pass/fail, **Typecheck:** pass/fail, tests added count, Playwright fixtures/specs touched, command summary, **Result file:** path, failing names if any
 - Do **not** paste full result tables in chat
 
 The result file path is **required** when orchestrated.
@@ -25,7 +25,7 @@ Before writing tests, confirm a **Unit-test handoff** path (typically `.cursor/a
 1. **Implemented** — what production change was made
 2. **Files changed** — paths that were added/modified/deleted
 3. **Suggested test coverage** — Vitest/RTL behaviors **and** Playwright smoke flows / endpoints to mock
-4. **Build: pass** — ui-implementer’s build gate succeeded (if missing/failed, stop and return to orchestrator)
+4. **Typecheck: pass** and **Build: pass** — ui-implementer’s `npx tsc --noEmit` and build gates both succeeded (if either is missing or failed, stop and return to orchestrator)
 
 If the handoff path/file is missing or lacks suggested coverage / changed files, **stop**. Report what is missing. Do not invent coverage from a vague feature request alone.
 
@@ -60,7 +60,11 @@ Prefer also using **Plan-step completion** and plan Test contract when present �
    - Run the app **unit** suite (Vitest or equivalent) and iterate on **test code only** until green
    - If Playwright scaffold exists (`playwright.config.ts` + `test:e2e`), run **mocked** smoke for specs you added/updated and fix **fixture/spec** code only until green
    - If scaffold is missing and the handoff/plan requires e2e, **fail** with Status **fail** and note scaffold gap — do not fake e2e as unit pass
-8. Finish with the result block below
+8. **Typecheck gate (required, non-negotiable):**
+   - Run `npx tsc --noEmit` from the app package root (e.g. `apps/dashboard`) after your last test/fixture edit — your specs, fixtures, and helpers are typechecked too
+   - **Zero type errors.** Do not use `any`, `as unknown as`, `@ts-ignore`, or `@ts-expect-error` in tests, fixtures, or mock payloads to clear output; type mocks against the app’s real API client / contract types
+   - If a type error can only be fixed in production code, **stop** and return **Unit-test failure** — never edit production UI, and never mark **pass** while `tsc` is non-zero
+9. Finish with the result block below
 
 ## Constraints
 
@@ -69,6 +73,7 @@ Prefer also using **Plan-step completion** and plan Test contract when present �
 - **Author mocks here**: do **not** defer Playwright fixture authorship to `ui-simulator`. Simulator runs committed suites; it must not invent payloads to green.
 - **No live-API-as-default**: mocks by default; optional live project is out of band.
 - **Honor blockers** from the handoff.
+- **Typecheck clean**: `npx tsc --noEmit` must report zero errors with no suppressions added by you.
 - **No false confidence**: refuse to mark pass when unit tests only prove wiring, or when required smokes are listed but fixtures/specs were skipped without an explicit deferral reason.
 
 ## Success result (all required suites pass)
@@ -95,6 +100,7 @@ Prefer also using **Plan-step completion** and plan Test contract when present �
 ### Commands run
 - <vitest … → pass>
 - <npm run test:e2e … → pass | N/A scaffold missing deferred>
+- `npx tsc --noEmit` (cwd: <app package root>) → pass, 0 errors, no suppressions added
 
 ### Deferred from handoff
 - <items not covered, with reason — not “left for ui-simulator to invent”>
@@ -115,12 +121,17 @@ Prefer also using **Plan-step completion** and plan Test contract when present �
 - ui
 
 ### Commands run
-- <vitest / playwright … → fail>
+- <vitest / playwright / npx tsc --noEmit … → fail>
 
 ### Failing tests
 | Test | File | Error summary |
 |------|------|---------------|
 | ... | ... | ... |
+
+### Type errors (if `npx tsc --noEmit` failed)
+| File:line | TS code | Message | Fixable in test code? |
+|-----------|---------|---------|-----------------------|
+| ... | TS#### | ... | yes / no — needs production types |
 
 ### Suspected production gaps
 - <what production behavior appears wrong or missing — for ui-implementer>
@@ -134,4 +145,4 @@ Prefer also using **Plan-step completion** and plan Test contract when present �
 - <why ui-unit-tester cannot proceed further without production edits>
 ```
 
-Do not mark **pass** until suggested unit-testable coverage is implemented or explicitly deferred, required mocked smokes are authored (or scaffold gap reported as **fail**), and **all** required suites you ran pass. On failure, the orchestrator owns the next step (typically re-invoke ui-implementer with this failure payload).
+Do not mark **pass** until suggested unit-testable coverage is implemented or explicitly deferred, required mocked smokes are authored (or scaffold gap reported as **fail**), `npx tsc --noEmit` reports zero errors, and **all** required suites you ran pass. On failure, the orchestrator owns the next step (typically re-invoke ui-implementer with this failure payload).

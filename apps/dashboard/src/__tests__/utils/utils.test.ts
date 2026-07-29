@@ -364,7 +364,7 @@ describe('transformTurnsToChartData()', () => {
   it('handles null/undefined token fields (uses ?? 0)', () => {
     const turn = makeTurn({
       actualPromptTokens: null,
-      compressedInputTokensEstimated: null,
+      compressedInputTokensEstimated: undefined,
     });
     const result = transformTurnsToChartData([turn]);
 

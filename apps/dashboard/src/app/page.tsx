@@ -9,10 +9,9 @@ import { useConversationUrl } from '@/hooks/use-conversation-url';
 import { DashboardShell, DashboardSkeleton } from '@/components/layout';
 import {
   HeroCard,
-  AverageCompressionCard,
-  BestCompressionCard,
-  OverheadCard,
-  WorkingMemoryCard,
+  BaselineActualCard,
+  CompressionRatioCard,
+  CompressionHealthCard,
 } from '@/components/metrics';
 import { BarChart } from '@/components/charts';
 import {
@@ -34,44 +33,39 @@ function DashboardContent() {
 
   return (
     <DashboardShell>
-        {isLoading ? (
-          <DashboardSkeleton />
-        ) : (
-          <div className="space-y-3">
-            {/* Hero Section */}
-            {metrics && (
-              <HeroCard
-                tokensSaved={metrics.totalNetTokensSaved}
-                weightedCompressionRatio={metrics.averageTokenSavingsRatio}
+      {isLoading ? (
+        <DashboardSkeleton />
+      ) : (
+        <div className="space-y-3">
+          {/* Hero + Metric Cards Grid */}
+          {metrics && (
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <HeroCard tokensSaved={metrics.totalNetTokensSaved} />
+              <CompressionRatioCard averageTokenSavingsRatio={metrics.averageTokenSavingsRatio} />
+              <BaselineActualCard
+                totalBaselineTokensEstimated={metrics.totalBaselineTokensEstimated}
+                totalActualTokensEstimated={metrics.totalActualTokensEstimated}
               />
-            )}
-
-            {/* Metric Cards Grid */}
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
-              {metrics && (
-                <>
-                  <BestCompressionCard bestCompressionRatio={bestCompressionRatio} />
-                  <AverageCompressionCard averageTokenSavingsRatio={metrics.averageTokenSavingsRatio} />
-                  <OverheadCard
-                    totalCompressionOverheadTokens={metrics.totalCompressionOverheadTokens}
-                    totalBaselineTokensEstimated={metrics.totalBaselineTokensEstimated}
-                  />
-                  <WorkingMemoryCard maxWorkingMemoryVersion={maxWorkingMemoryVersion} />
-                </>
-              )}
+              <CompressionHealthCard
+                bestCompressionRatio={bestCompressionRatio}
+                totalCompressionOverheadTokens={metrics.totalCompressionOverheadTokens}
+                totalBaselineTokensEstimated={metrics.totalBaselineTokensEstimated}
+                maxWorkingMemoryVersion={maxWorkingMemoryVersion}
+              />
             </div>
+          )}
 
-            {/* Chart Section */}
-            {turns && turns.length > 0 && (
-              <div className="space-y-3">
-                <BarChart
-                  data={transformTurnsToChartData(turns)}
-                />
-              </div>
-            )}
-          </div>
-        )}
-      </DashboardShell>
+          {/* Chart Section */}
+          {turns && turns.length > 0 && (
+            <div className="space-y-3">
+              <BarChart
+                data={transformTurnsToChartData(turns)}
+              />
+            </div>
+          )}
+        </div>
+      )}
+    </DashboardShell>
   );
 }
 

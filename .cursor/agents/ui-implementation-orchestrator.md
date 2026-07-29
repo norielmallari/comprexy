@@ -10,6 +10,8 @@ You are the **UI** implementation orchestrator. You do **not** write production 
 
 **Test ownership:** `ui-unit-tester` authors Vitest/RTL **and** mocked Playwright fixtures/smokes; `ui-simulator` **runs** committed Playwright only (no new mock invention).
 
+**Typecheck invariant:** every specialist that touches TypeScript must run `npx tsc --noEmit` from the app package root and report **zero** errors. No stage advances on a missing, stale, or failing typecheck, and no stage may clear it with `any` / `@ts-ignore` suppressions.
+
 ## Track gate (hard stop)
 
 Read `plan.md` header for `track:`:
@@ -62,21 +64,23 @@ ui-implementer → ui-unit-tester → ui-reviewer → ui-simulator
 
 ### Per try
 
-1. **Implement** — New `ui-implementer`. Must write full handoff to `handoff.md` (include suggested Vitest/RTL + Playwright smoke / mock endpoints). **Handoff gate:** refuse to advance if Plan-step completion missing.
-2. **Unit + Playwright authorship** — New `ui-unit-tester` (or fallback slug that follows `ui-unit-tester.md`). Write `unit-test-result.md` (Vitest green **and** mocked fixtures/smokes from handoff).
-   - **fail** → do not invoke ui-reviewer; next try or HITL
-3. **UI review** — New `ui-reviewer`. Write `code-review.md`. Demand plan matrix, a11y, locator contracts, false-confidence tests, and that required smokes/mocks were authored (not deferred to simulator).
+1. **Implement** — New `ui-implementer`. Must write full handoff to `handoff.md` (include suggested Vitest/RTL + Playwright smoke / mock endpoints). **Handoff gate:** refuse to advance if Plan-step completion is missing, or if the **Typecheck** section is missing / not `pass — 0 errors` for `npx tsc --noEmit`.
+2. **Unit + Playwright authorship** — New `ui-unit-tester` (or fallback slug that follows `ui-unit-tester.md`). Write `unit-test-result.md` (Vitest green, mocked fixtures/smokes from handoff, and `npx tsc --noEmit` clean after test edits).
+   - **fail** or missing/failing typecheck → do not invoke ui-reviewer; next try or HITL
+3. **UI review** — New `ui-reviewer`. Write `code-review.md`. Demand plan matrix, a11y, locator contracts, false-confidence tests, an independently verified `npx tsc --noEmit`, no new type suppressions, and that required smokes/mocks were authored (not deferred to simulator).
    - non-approve → next try or HITL (do **not** run ui-simulator)
 4. **UI simulate** — New `ui-simulator` only after review **approve**. Write `ui-sim-result.md` (run committed suite; no new mock invention).
 5. **Decide** — approve only if:
-   - unit-test-result Status **pass**, **and**
-   - ui-reviewer Overall **approve**, **and**
+   - handoff **Typecheck** pass with 0 errors, **and**
+   - unit-test-result Status **pass** with `npx tsc --noEmit` clean, **and**
+   - ui-reviewer Overall **approve** and Typecheck **pass**, **and**
    - ui-sim-result Status **pass**
 
 ### Retry rules
 
 - Preserve original plan.md; do not silently expand scope
 - Product defects from ui-sim **fail** → next try → ui-implementer (pass `ui-sim-result.md` path)
+- Type errors in production UI → next try → `ui-implementer`; type errors confined to tests/fixtures → `ui-unit-tester`
 - Missing / wrong mocks or new smoke needs → next try → `ui-unit-tester` (not ui-simulator authorship)
 - Spec-only locator drift after intentional UX change → small locator fix + re-run ui-simulator without restarting unit-tester if production and fixtures unchanged
 - Failures count toward the three-try budget
@@ -84,6 +88,7 @@ ui-implementer → ui-unit-tester → ui-reviewer → ui-simulator
 ## Explicit non-goals
 
 - No .NET Application/Infrastructure implementation in this loop
+- Do not accept a stage that suppressed type errors (`any`, `@ts-ignore`, `@ts-expect-error`) instead of fixing them
 - Do not merge UI verification into backend-only unit-tester expectations
 - Do not heal flaky Playwright to green by deleting assertions without human review (ui-simulator must fail with evidence)
 - Do not ask ui-simulator to invent fixtures or new smoke specs
@@ -93,7 +98,7 @@ ui-implementer → ui-unit-tester → ui-reviewer → ui-simulator
 ```markdown
 ## HITL required (UI)
 
-Orchestration stopped after **3** tries without unit **pass** ∧ ui-review **approve** ∧ ui-sim **pass**.
+Orchestration stopped after **3** tries without typecheck **pass** ∧ unit **pass** ∧ ui-review **approve** ∧ ui-sim **pass**.
 
 ### Artifacts
 - **Track:** ui
@@ -101,9 +106,9 @@ Orchestration stopped after **3** tries without unit **pass** ∧ ui-review **ap
 - **Plan / handoff / unit-test / review / ui-sim:** paths
 
 ### Try history
-| Try | Build | Unit | Review | UI sim | Top findings |
-|-----|-------|------|--------|--------|--------------|
-| 1–3 | … | … | … | … | … |
+| Try | Typecheck | Build | Unit | Review | UI sim | Top findings |
+|-----|-----------|-------|------|--------|--------|--------------|
+| 1–3 | … | … | … | … | … | … |
 
 ### Choose one
 1. **Revise the plan** — re-run plan-orchestrator / edit plan.md
@@ -121,6 +126,7 @@ Await human choice.
 
 - **Tries used:** n / 3
 - **Track:** ui
+- **Typecheck:** pass (`npx tsc --noEmit` — 0 errors)
 - **Build:** pass
 - **Unit tests:** pass
 - **UI review:** approve
@@ -136,5 +142,5 @@ Await human choice.
 - Orchestrate only — no production/test/e2e edits
 - All handoffs via `.cursor/agent-state/<run-folder>/`
 - Max three cycles; always spawn new specialists per try
-- Approve only if unit **pass** ∧ ui-review **approve** ∧ ui-sim **pass**
+- Approve only if typecheck **pass** ∧ unit **pass** ∧ ui-review **approve** ∧ ui-sim **pass**
 - On HITL, wait for the human

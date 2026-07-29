@@ -72,12 +72,14 @@ Agent prompts live under [`.cursor/agents/`](agents/).
 | [`backend-unit-tester`](agents/backend-unit-tester.md) | Backend xUnit from handoff; UI track redirects to `ui-unit-tester` |
 | [`backend-code-reviewer`](agents/backend-code-reviewer.md) | Adversarial backend review (DI/lease); read-only |
 | [`ui-implementation-orchestrator`](agents/ui-implementation-orchestrator.md) | UI implement → unit+e2e author → ui-review → ui-sim until approval or HITL |
-| [`ui-implementer`](agents/ui-implementer.md) | UI production code; build/typecheck; handoff for Vitest + Playwright smokes |
-| [`ui-unit-tester`](agents/ui-unit-tester.md) | Vitest/RTL **and** mocked Playwright fixtures/smokes from handoff |
-| [`ui-reviewer`](agents/ui-reviewer.md) | Adversarial UI review (a11y, locators, test authorship); read-only |
+| [`ui-implementer`](agents/ui-implementer.md) | UI production code; `npx tsc --noEmit` clean + build; handoff for Vitest + Playwright smokes |
+| [`ui-unit-tester`](agents/ui-unit-tester.md) | Vitest/RTL **and** mocked Playwright fixtures/smokes from handoff; keeps `npx tsc --noEmit` clean |
+| [`ui-reviewer`](agents/ui-reviewer.md) | Adversarial UI review (typecheck, a11y, locators, test authorship); read-only |
 | [`ui-simulator`](agents/ui-simulator.md) | Runs committed Playwright under existing mocks; no new fixture invention |
 
 Each canonical agent file is the source of truth for gates, chat brevity, and artifact paths.
+
+On the UI track, every stage that touches TypeScript must run `npx tsc --noEmit` from the app package root with zero errors. `ui-reviewer` verifies it independently instead of trusting the handoff, and no stage may clear it with `any` or `@ts-ignore` suppressions.
 
 Durable UI invariants (not runbooks): [`.cursor/rules/ui-accessibility.mdc`](rules/ui-accessibility.mdc), [`ui-testing.mdc`](rules/ui-testing.mdc), [`ui-fixtures.mdc`](rules/ui-fixtures.mdc).
 

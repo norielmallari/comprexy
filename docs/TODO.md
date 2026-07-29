@@ -270,3 +270,28 @@ Deferred and planned work for Comprexy. Prefer [GitHub Issues](https://github.co
 - [ ] Tests for subset accept/reject behavior vs full-validator mode.
 
 **Notes:** Only pursue if production catalogs prove noisy.
+
+---
+
+## TODO-013 — Metrics rollup for subagent conversations
+
+| Field | Value |
+| --- | --- |
+| **Status** | `open` |
+| **Priority** | Medium |
+| **Area** | Conversation metadata, metrics query (control-api REST / MCP), dashboard |
+
+**Summary:** Parent-session metrics exclude spawned subagent conversations (Task / cloud runners and similar). Those sessions are separate `Conversation` rows with their own turn metrics, so workflow-level baselines and savings undercount. Linking must not merge transcripts; rollup is a query concern over linked conversations.
+
+**Workaround:** Collect child conversation ids manually (response header / `comprexy_get_current_conversation_id`) and use `comprexy_compare_conversations` or external summation. See evidence coverage note in [`docs/evidence/5ca87ca.md`](evidence/5ca87ca.md).
+
+**Acceptance criteria:**
+
+- [ ] Optional parent link persisted on child `Conversation` from an explicit client signal (header and/or operator attach).
+- [ ] Query API returns parent + children + summed token/savings rollup without merging transcripts.
+- [ ] REST and MCP expose the tree/rollup; single-conversation tools keep current semantics.
+- [ ] Dashboard can show workflow rollup for a parent with linked children (or document deferred UI if API-first).
+- [ ] Architecture / SETTINGS / evidence guidance updated; tests for link ingest + rollup math.
+- [ ] Documented limitation: unproxied / pass-through children remain invisible to Comprexy metrics.
+
+**Notes:** Research and plan: [`docs/plans/metrics-subagents.md`](plans/metrics-subagents.md). Prefer `X-Comprexy-Parent-Conversation-Id` + `ParentConversationId` FK; keep compression per conversation. Depends on clients (or a wrapper) setting the parent header for automatic linking.

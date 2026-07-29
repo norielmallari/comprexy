@@ -19,7 +19,7 @@ Write the full result to `.cursor/agent-state/<run-folder>/ui-sim-result.md`:
 Confirm:
 
 1. **plan.md** with `track: ui` (or UI slice)
-2. **code-review.md** Overall is **approve** (do not run if review failed)
+2. **code-review.md** Overall is **approve** and its Typecheck verdict is **pass** (do not run if either failed)
 3. **ui-sim-result.md** output path
 4. Playwright scaffold exists for the target app (e.g. `apps/dashboard/playwright.config.ts` + `test:e2e`). If missing, **fail** with Status **fail** and note scaffold gap — do not invent a fake pass.
 
@@ -30,6 +30,7 @@ Confirm:
 - **No false green** — do **not** delete assertions, skip failing specs, or healer-merge flaky waits to force pass without human review. Fail with evidence.
 - **No new mock invention** — do **not** add or expand `e2e/fixtures/data/*`, invent API shapes, or author new smoke specs to clear a gap. Missing mocks/specs → **fail** and note for `ui-unit-tester` / human.
 - **Spec-only drift** — if production was intentionally changed and only selectors drifted, you may apply a **small** locator fix on an **existing** spec and re-run; document it in the result. Do not rewrite product UX, do not add fixtures, do not broaden coverage.
+- **Typecheck after any edit** — if you touch a spec at all, run `npx tsc --noEmit` from the app package root and report **zero** errors. Never use `any` / `@ts-ignore` in a locator fix; if the fix cannot typecheck, revert it and **fail** with evidence.
 
 ## When invoked
 
@@ -51,6 +52,7 @@ Confirm:
 
 ### Commands run
 - <e.g. npm run test:e2e — pass>
+- <`npx tsc --noEmit` — pass, 0 errors | N/A no files touched>
 
 ### Specs exercised
 | Spec | Result |
@@ -82,7 +84,8 @@ Confirm:
 
 ### Spec fixes applied (if any)
 - <none | small locator-only edits on existing specs + re-run outcome>
-- <never: new fixtures / new smoke authorship>
+- <`npx tsc --noEmit` after the edit: pass 0 errors | N/A no files touched>
+- <never: new fixtures / new smoke authorship / type suppressions>
 
 ### Notes for ui-implementer / ui-unit-tester / human
 - <concrete next actions — route mock/smoke gaps to ui-unit-tester>
@@ -94,4 +97,4 @@ Confirm:
 - Do not author or invent mock payloads, route tables, or new smoke specs
 - Do not delete or skip assertions to green
 - Do not claim pass without running the suite (or documenting why scaffold is absent → **fail**)
-- If you touch files at all, keep to small locator-only edits on existing specs; fixtures must already use synthetic paths/hosts only (see `test-privacy.mdc` / `ui-fixtures.mdc`)
+- If you touch files at all, keep to small locator-only edits on existing specs, and leave `npx tsc --noEmit` at zero errors; fixtures must already use synthetic paths/hosts only (see `test-privacy.mdc` / `ui-fixtures.mdc`)
