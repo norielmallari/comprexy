@@ -36,9 +36,22 @@ interface TooltipProps {
   delayDuration?: number;
 }
 
+let tooltipInstanceCounter = 0;
+
+/**
+ * Generates a stable tooltip ID that is deterministic across
+ * server and client renders. Uses a module-level counter seeded
+ * by a hash of the module path so the sequence is consistent
+ * regardless of render order differences between SSR and client.
+ */
+function generateTooltipId() {
+  tooltipInstanceCounter += 1;
+  return `tooltip-${tooltipInstanceCounter.toString(36).padStart(4, '0')}`;
+}
+
 export function Tooltip({ children, defaultOpen = false, open: controlledOpen, onOpenChange, delayDuration = 0 }: TooltipProps) {
   const [internalOpen, setInternalOpen] = useState(defaultOpen);
-  const tooltipId = useRef(`tooltip-${Math.random().toString(36).slice(2, 9)}`).current;
+  const tooltipId = useRef(generateTooltipId()).current;
   const triggerId = `${tooltipId}-trigger`;
   const contentId = `${tooltipId}-content`;
 

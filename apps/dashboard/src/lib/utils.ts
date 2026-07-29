@@ -20,6 +20,51 @@ export function cn(...inputs: ClassValue[]): string {
 }
 
 /**
+ * Max working-memory version used across turn metrics.
+ * Per dashboard plan: derived from turns (`WorkingMemoryVersionUsed`); null → 0.
+ * Returns null when there are no turns (card shows "No data").
+ */
+export function getMaxWorkingMemoryVersion(
+  turns: ConversationTurnMetricDto[] | null | undefined,
+): number | null {
+  if (!turns || turns.length === 0) {
+    return null;
+  }
+
+  let max = 0;
+  for (const turn of turns) {
+    const version = turn.workingMemoryVersionUsed ?? 0;
+    if (version > max) {
+      max = version;
+    }
+  }
+
+  return max;
+}
+
+/**
+ * Best (peak) per-turn net token savings ratio across turn metrics.
+ * Matches telemetry PeakSavingsRatio: max of NetTokenSavingsRatio.
+ * Returns null when there are no turns.
+ */
+export function getBestCompressionRatio(
+  turns: ConversationTurnMetricDto[] | null | undefined,
+): number | null {
+  if (!turns || turns.length === 0) {
+    return null;
+  }
+
+  let peak = Number.NEGATIVE_INFINITY;
+  for (const turn of turns) {
+    if (turn.netTokenSavingsRatio > peak) {
+      peak = turn.netTokenSavingsRatio;
+    }
+  }
+
+  return peak;
+}
+
+/**
  * Format a number with thousand separators.
  *
  * @param value - The number to format

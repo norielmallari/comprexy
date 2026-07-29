@@ -1,6 +1,6 @@
 /**
  * Working Memory card showing the max working memory version used.
- * Derived from MetricsSummary.MaxWorkingMemoryVersionUsed.
+ * Derived from turn metrics (`WorkingMemoryVersionUsed`); see getMaxWorkingMemoryVersion.
  *
  * Displays the version as a color-coded badge.
  */
@@ -19,7 +19,7 @@ export function WorkingMemoryCard({
   const { theme } = useTheme();
   const isDark = theme === "dark";
 
-  if (maxWorkingMemoryVersion === null) {
+  if (maxWorkingMemoryVersion == null) {
     return (
       <div className="rounded-lg border bg-white px-6 py-5 dark:border-slate-700 dark:bg-slate-800">
         <p className="mb-1 text-sm font-medium text-slate-500 dark:text-slate-400">
