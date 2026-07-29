@@ -4,40 +4,47 @@
  * Reads from localStorage and syncs with the system preference.
  */
 
-import { useEffect, useState } from 'react';
+import { useEffect, useLayoutEffect, useState } from 'react';
 
 import { THEME } from '@/lib/constants';
 
 /**
  * Hook to manage theme state with localStorage persistence.
  *
+ * Uses deferred initial state to avoid hydration mismatches:
+ * initial value is always 'default' (matches server), then useLayoutEffect
+ * detects the real theme synchronously before paint.
+ *
  * @returns Object containing theme value and toggle function
  */
 export function useTheme() {
-  const [theme, setThemeState] = useState<'light' | 'dark'>(() => {
-    // Check localStorage first
-    if (typeof window !== 'undefined') {
-      const stored = localStorage.getItem(THEME.STORAGE_KEY);
-      if (stored === 'light' || stored === 'dark') {
-        return stored;
-      }
-    }
-    // Fall back to system preference
-    if (typeof window !== 'undefined') {
-      return window.matchMedia('(prefers-color-scheme: dark)').matches
-        ? 'dark'
-        : 'light';
-    }
-    return 'light';
-  });
+  const [theme, setThemeState] = useState<'light' | 'dark' | 'default'>('default');
 
-  // Apply theme to document class
+  // Detect and apply theme synchronously before paint to avoid flash
+  useLayoutEffect(() => {
+    const stored = localStorage.getItem(THEME.STORAGE_KEY);
+    const detected =
+      stored === 'light' || stored === 'dark'
+        ? stored
+        : window.matchMedia('(prefers-color-scheme: dark)').matches
+          ? 'dark'
+          : 'light';
+
+    setThemeState(detected);
+
+    const root = document.documentElement;
+    root.classList.remove('light', 'dark');
+    root.classList.add(detected);
+    localStorage.setItem(THEME.STORAGE_KEY, detected);
+  }, []);
+
+  // Apply theme class and persist on explicit changes (toggle)
   useEffect(() => {
+    if (theme === 'default') return;
+
     const root = document.documentElement;
     root.classList.remove('light', 'dark');
     root.classList.add(theme);
-
-    // Persist to localStorage
     localStorage.setItem(THEME.STORAGE_KEY, theme);
   }, [theme]);
 
@@ -60,7 +67,10 @@ export function useTheme() {
    * Toggle between light and dark themes.
    */
   const toggleTheme = () => {
-    setThemeState((prev) => (prev === 'light' ? 'dark' : 'light'));
+    setThemeState((prev) => {
+      if (prev === 'default' || prev === 'light') return 'dark';
+      return 'light';
+    });
   };
 
   return { theme, toggleTheme };

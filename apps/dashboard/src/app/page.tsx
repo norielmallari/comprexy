@@ -5,41 +5,39 @@ import { Suspense } from 'react';
 import { useConversations } from '@/lib/queries/use-conversations';
 import { useMetricsSummary } from '@/lib/queries/use-metrics';
 import { useTurnMetrics } from '@/lib/queries/use-turns';
-import { useDashboardStore } from '@/lib/store/dashboard-store';
 import { useConversationUrl } from '@/hooks/use-conversation-url';
-import { DashboardShell, TopBar, DashboardSkeleton } from '@/components/layout';
+import { DashboardShell, DashboardSkeleton } from '@/components/layout';
 import {
   HeroCard,
-  MetricCard,
   AverageCompressionCard,
+  BestCompressionCard,
   OverheadCard,
-  BudgetTriggersCard,
   WorkingMemoryCard,
 } from '@/components/metrics';
 import { BarChart } from '@/components/charts';
-import { Skeleton } from '@/components/ui/skeleton';
-import { formatCompactNumber, formatPercentage, transformTurnsToChartData } from '@/lib/utils';
-import { CHART_HEIGHT, CHART_WIDTH } from '@/lib/constants';
+import {
+  getBestCompressionRatio,
+  getMaxWorkingMemoryVersion,
+  transformTurnsToChartData,
+} from '@/lib/utils';
 
 function DashboardContent() {
-  const { conversationId, navigateToConversation } = useConversationUrl();
-  const { theme } = useDashboardStore();
+  const { conversationId } = useConversationUrl();
 
-  const { data: conversations, isLoading: conversationsLoading } = useConversations();
+  const { isLoading: conversationsLoading } = useConversations();
   const { data: metrics, isLoading: metricsLoading } = useMetricsSummary(conversationId);
   const { data: turns, isLoading: turnsLoading } = useTurnMetrics(conversationId);
 
   const isLoading = conversationsLoading || metricsLoading || turnsLoading;
+  const maxWorkingMemoryVersion = getMaxWorkingMemoryVersion(turns);
+  const bestCompressionRatio = getBestCompressionRatio(turns);
 
   return (
-    <div className="min-h-screen bg-background text-foreground">
-      <TopBar />
-
-      <DashboardShell>
+    <DashboardShell>
         {isLoading ? (
           <DashboardSkeleton />
         ) : (
-          <div className="space-y-6">
+          <div className="space-y-3">
             {/* Hero Section */}
             {metrics && (
               <HeroCard
@@ -49,29 +47,23 @@ function DashboardContent() {
             )}
 
             {/* Metric Cards Grid */}
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
               {metrics && (
                 <>
-                  <MetricCard
-                    title="Average Token Savings"
-                    value={formatCompactNumber(metrics.averageTokenSavingsRatio)}
-                    unit="tokens"
-                    variant="default"
-                  />
+                  <BestCompressionCard bestCompressionRatio={bestCompressionRatio} />
                   <AverageCompressionCard averageTokenSavingsRatio={metrics.averageTokenSavingsRatio} />
                   <OverheadCard
                     totalCompressionOverheadTokens={metrics.totalCompressionOverheadTokens}
                     totalBaselineTokensEstimated={metrics.totalBaselineTokensEstimated}
                   />
-                  <BudgetTriggersCard budgetTriggerCount={0} />
-                  <WorkingMemoryCard maxWorkingMemoryVersion={null} />
+                  <WorkingMemoryCard maxWorkingMemoryVersion={maxWorkingMemoryVersion} />
                 </>
               )}
             </div>
 
             {/* Chart Section */}
             {turns && turns.length > 0 && (
-              <div className="space-y-4">
+              <div className="space-y-3">
                 <BarChart
                   data={transformTurnsToChartData(turns)}
                 />
@@ -80,7 +72,6 @@ function DashboardContent() {
           </div>
         )}
       </DashboardShell>
-    </div>
   );
 }
 

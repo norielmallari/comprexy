@@ -84,7 +84,7 @@ export const CHART_Y_AXIS_MIN = 0;
 export const CHART_Y_AXIS_MAX_DEFAULT = 1000000;
 
 /** Chart height in pixels */
-export const CHART_HEIGHT = 400;
+export const CHART_HEIGHT = 300;
 
 /** Chart width (desktop) */
 export const CHART_WIDTH = 1200;

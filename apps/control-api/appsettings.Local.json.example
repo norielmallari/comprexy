@@ -1,5 +1,10 @@
 {
   "Auth": {
     "RequiredApiKey": null
+  },
+  "Cors": {
+    "AllowedOrigins": [
+      "http://localhost:3000"
+    ]
   }
 }

@@ -22,7 +22,7 @@ export function DashboardShell({ children }: DashboardShellProps) {
   return (
     <div className="flex h-screen w-full flex-col bg-background">
       <TopBar />
-      <main className="flex-1 overflow-auto p-6">
+      <main className="flex-1 overflow-auto p-4">
         <div className="mx-auto max-w-[1920px]">{children}</div>
       </main>
     </div>

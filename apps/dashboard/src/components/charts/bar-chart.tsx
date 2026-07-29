@@ -16,6 +16,7 @@ import {
   CartesianGrid,
   ResponsiveContainer,
   Tooltip as RechartsTooltip,
+  Label,
 } from 'recharts';
 import { ChartDataPoint } from '@/types/chart';
 import { CHART_HEIGHT, CHART_WIDTH, CHART_Y_AXIS_MIN, CHART_Y_AXIS_MAX_DEFAULT, WM_COLORS_LIGHT, WM_COLORS_DARK, OVERHEAD_COLOR, GHOST_BAR_COLOR } from '@/lib/constants';
@@ -203,6 +204,13 @@ export function BarChart({ data, isLoading = false }: BarChartProps) {
   // Recharts needs data in a specific format
   const chartData = useMemo(() => transformChartData(data), [data]);
 
+  // Compute dynamic Y-axis max: highest of baseline or total tokens across all turns
+  const yMax = useMemo(() => {
+    if (data.length === 0) return CHART_Y_AXIS_MAX_DEFAULT;
+    const maxVal = Math.max(...data.map((d) => Math.max(d.baselineTokens, d.totalCompressed)));
+    return Math.ceil(maxVal * 1.1); // 10% headroom
+  }, [data]);
+
   // Get legend items based on theme
   const legendItems = useMemo(() => getLegendItems(isDark), [isDark]);
 
@@ -266,7 +274,7 @@ export function BarChart({ data, isLoading = false }: BarChartProps) {
       <ResponsiveContainer width="100%" height={CHART_HEIGHT}>
         <RechartsBarChart
           data={chartData}
-          margin={{ top: 10, right: 30, left: 20, bottom: 5 }}
+          margin={{ top: 10, right: 30, left: 20, bottom: 20 }}
         >
           {/* Grid */}
           <CartesianGrid
@@ -277,16 +285,18 @@ export function BarChart({ data, isLoading = false }: BarChartProps) {
           {/* X axis */}
           <XAxis
             dataKey="turnIndex"
-            label={{
-              value: 'Turn Index',
-              position: 'insideBottomRight',
-              offset: -10,
-              style: {
-                fill: isDark ? '#9ca3af' : '#6b7280',
-                fontSize: 12,
-              },
-            }}
             stroke={isDark ? '#4b5563' : '#d1d5db'}
+          />
+
+          {/* X axis label */}
+          <Label
+            value="Turn Index"
+            position="outsideBottom"
+            offset={60}
+            style={{
+              fill: isDark ? '#9ca3af' : '#6b7280',
+              fontSize: 12,
+            }}
           />
 
           {/* Y axis */}
@@ -305,7 +315,7 @@ export function BarChart({ data, isLoading = false }: BarChartProps) {
             tickFormatter={(value: number) => formatCompactNumber(value)}
             domain={[
               CHART_Y_AXIS_MIN,
-              CHART_Y_AXIS_MAX_DEFAULT,
+              yMax,
             ]}
           />
 

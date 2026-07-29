@@ -6,6 +6,17 @@
 
 import { useEffect, useState } from 'react';
 
+/**
+ * Detects whether we're on the client (post-hydration).
+ * Returns false during SSR so that TooltipContent doesn't
+ * render with mismatched random IDs.
+ */
+function useIsClient() {
+  const [isClient, setIsClient] = useState(false);
+  useEffect(() => setIsClient(true), []);
+  return isClient;
+}
+
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Select } from '@/components/ui/select';
@@ -24,6 +35,7 @@ export function TopBar() {
   const { data: conversations, isLoading: conversationsLoading } = useConversations();
   const { conversationId, navigateToConversation } = useConversationUrl();
   const [apiHealthy, setApiHealthy] = useState<boolean | null>(null);
+  const isClient = useIsClient();
 
   // Check API health
   useEffect(() => {
@@ -81,31 +93,33 @@ export function TopBar() {
       {/* Right: Status + Theme Toggle */}
       <div className="flex items-center gap-4">
         {/* API Health Indicator */}
-        <Tooltip delayDuration={200}>
-          <TooltipTrigger asChild>
-            <div className="flex items-center gap-2">
-              <div
-                className={`h-2 w-2 rounded-full ${
-                  apiHealthy === true
-                    ? 'bg-green-500'
+        {isClient && (
+          <Tooltip delayDuration={200}>
+            <TooltipTrigger asChild>
+              <div className="flex items-center gap-2">
+                <div
+                  className={`h-2 w-2 rounded-full ${
+                    apiHealthy === true
+                      ? 'bg-green-500'
+                      : apiHealthy === false
+                        ? 'bg-red-500'
+                        : 'bg-yellow-500 animate-pulse'
+                  }`}
+                />
+                <span className="text-xs text-muted-foreground">
+                  {apiHealthy === true
+                    ? 'Connected'
                     : apiHealthy === false
-                      ? 'bg-red-500'
-                      : 'bg-yellow-500 animate-pulse'
-                }`}
-              />
-              <span className="text-xs text-muted-foreground">
-                {apiHealthy === true
-                  ? 'Connected'
-                  : apiHealthy === false
-                    ? 'Disconnected'
-                    : 'Connecting'}
-              </span>
-            </div>
-          </TooltipTrigger>
-          <TooltipContent side="bottom">
-            <p>API Status: {apiHealthy === true ? 'Healthy' : apiHealthy === false ? 'Unreachable' : 'Checking...'}</p>
-          </TooltipContent>
-        </Tooltip>
+                      ? 'Disconnected'
+                      : 'Connecting'}
+                </span>
+              </div>
+            </TooltipTrigger>
+            <TooltipContent side="bottom">
+              <p>API Status: {apiHealthy === true ? 'Healthy' : apiHealthy === false ? 'Unreachable' : 'Checking...'}</p>
+            </TooltipContent>
+          </Tooltip>
+        )}
 
         {/* Conversation ID Display */}
         {conversationId && (
@@ -115,9 +129,10 @@ export function TopBar() {
         )}
 
         {/* Theme Toggle */}
-        <Tooltip delayDuration={200}>
-          <TooltipTrigger asChild>
-            <Button variant="ghost" size="icon" onClick={toggleTheme} aria-label="Toggle theme">
+        {isClient && (
+          <Tooltip delayDuration={200}>
+            <TooltipTrigger asChild>
+              <Button variant="ghost" size="icon" onClick={toggleTheme} aria-label="Toggle theme">
               {theme === 'dark' ? (
                 <svg
                   xmlns="http://www.w3.org/2000/svg"
@@ -155,10 +170,11 @@ export function TopBar() {
               )}
             </Button>
           </TooltipTrigger>
-          <TooltipContent>
-            <p>Switch to {theme === 'dark' ? 'light' : 'dark'} mode</p>
-          </TooltipContent>
-        </Tooltip>
+            <TooltipContent>
+              <p>Switch to {theme === 'dark' ? 'light' : 'dark'} mode</p>
+            </TooltipContent>
+          </Tooltip>
+        )}
       </div>
     </header>
   );
