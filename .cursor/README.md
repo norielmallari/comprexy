@@ -110,12 +110,15 @@ Without compression, baseline history in long orchestrated runs climbs well past
 
 ## Dogfood evidence
 
+Top 3 evidences:
+
 | Run | What | Evidence |
 | --- | --- | --- |
+| Dashboard implementation + tests | 125-turn dashboard continuation on Qwen-35B (commit `5ca87ca`) | [`docs/evidence/5ca87ca.md`](../docs/evidence/5ca87ca.md) |
+| Earlier implementation | 331-turn dashboard build on Qwen-35B (commit `721ea29`) | [`docs/evidence/721ea29.md`](../docs/evidence/721ea29.md) |
 | Planning | 29-turn plan for the metrics dashboard | [`docs/evidence/d2e0faa.md`](../docs/evidence/d2e0faa.md) |
-| Implementation | 331-turn dashboard build on Qwen-35B (commit `721ea29`) | [`docs/evidence/721ea29.md`](../docs/evidence/721ea29.md) |
 
-The implementation run kept actual prompt tokens mostly in the ~20–50k range after the first working-memory fold while baseline history grew past 250k. That is the practical claim: **agentic workflows on a local LLM that would otherwise stall**.
+These runs kept actual prompt tokens under the ~64k local comfort ceiling after working-memory folds while baseline history grew much larger. That is the practical claim: **agentic workflows on a local LLM that would otherwise stall**.
 
 ## How to use
 

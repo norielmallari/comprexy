@@ -17,7 +17,7 @@ Soft budget pressure triggers a blocking Inline follow-up wrap-up on eligible tu
 
 ## Quick start
 
-**Requirements:** [.NET 10 SDK](https://dotnet.microsoft.com/download)
+**Requirements:** [.NET 10 SDK](https://dotnet.microsoft.com/download). Metrics dashboard also needs [Node.js](https://nodejs.org/) (LTS).
 
 ```bash
 git clone https://github.com/norielmallari/comprexy.git
@@ -40,8 +40,8 @@ Omit `Model` (or set it `null`) to forward the client's `model` field instead. I
 
 ```bash
 ./comprexy.sh proxy          # data plane :8129
-./comprexy.sh control-api    # metrics    :8130
-./comprexy.sh dev            # both (Ctrl-C stops both)
+./comprexy.sh control-api    # metrics + MCP :8130
+./comprexy.sh dev            # proxy + control-api (Ctrl-C stops both)
 ```
 
 Windows (PowerShell or cmd):
@@ -52,9 +52,25 @@ Windows (PowerShell or cmd):
 .\comprexy.cmd dev
 ```
 
+Metrics dashboard (optional UI over control-api; run in a second terminal after control-api is up):
+
+```bash
+cd apps/dashboard
+npm install
+npm run dev                  # http://localhost:3000
+```
+
+Override the API base with `NEXT_PUBLIC_API_BASE_URL` if control-api is not on `http://localhost:8130`. Development CORS already allows `http://localhost:3000` in `apps/control-api/appsettings.Development.json` (and the Local example); for other hosts, set `Cors:AllowedOrigins` on control-api.
+
 If .NET 10 is missing, the script prompts to install the SDK into `~/.dotnet` (or `%USERPROFILE%\.dotnet` on Windows) via the official Microsoft install script. Use `install-dotnet` or `COMPREXY_AUTO_INSTALL_DOTNET=1` for non-interactive installs.
 
-On first run, Comprexy applies EF Core migrations and creates `data/comprexy.db` under the repo root (shared with control-api). Proxy listen URL: `http://localhost:8129`. Control-api: `http://localhost:8130` (e.g. `GET http://localhost:8130/v1/comprexy/conversations`).
+On first run, Comprexy applies EF Core migrations and creates `data/comprexy.db` under the repo root (shared with control-api). Listen URLs:
+
+| Process | URL |
+| --- | --- |
+| Proxy | `http://localhost:8129` (`/v1/chat/completions`, …) |
+| Control-api | `http://localhost:8130` (e.g. `GET /v1/comprexy/conversations`, MCP at `/mcp`) |
+| Dashboard | `http://localhost:3000` (browser UI; talks to control-api) |
 
 Equivalent `dotnet run --project apps/proxy` / `apps/control-api` commands still work; `./comprexy.sh help` / `.\comprexy.cmd help` lists shortcuts (`test`, `build`, `clear-db`).
 
@@ -87,11 +103,13 @@ Comprexy keeps the **sent** context manageable — stable information in version
 
 ### Dogfood validation
 
-Two end-to-end Cursor workflows on a local LLM (Qwen-35B behind Comprexy):
+Top 3 evidences — end-to-end Cursor workflows on a local LLM (Qwen-35B behind Comprexy):
 
-1. **Planning (29 turns)** — produced the [Comprexy Metrics Dashboard implementation plan](docs/plans/comprexy-dashboard-implementation-plan.md). About 2.00M baseline tokens across the run → ~1.08M sent-equivalent (~800k saved). Final turn ~94k → ~37k estimated tokens (77 raw → 31 sent); effective prompts stayed roughly 21–58k. Evidence: [`docs/evidence/d2e0faa.md`](docs/evidence/d2e0faa.md).
+1. **Dashboard implementation + tests (125 turns)** — continued `apps/dashboard/` (layout, chart polish; commit `5ca87ca`). About 10.35M baseline tokens → 5.19M sent-equivalent; after ~175k compression overhead, rollup net savings ~4.99M (48.24%). After working-memory folds, actual prompts stayed roughly 15–60k (under the ~64k comfort ceiling). Final turn ~124k → ~55k estimated tokens (247 raw → 76 sent; WM v3). Parent-session telemetry only (subagents not included). Evidence: [`docs/evidence/5ca87ca.md`](docs/evidence/5ca87ca.md) ([dashboard snapshot](docs/evidence/5ca87ca.png)).
 
-2. **Implementation (331 turns)** — built `apps/dashboard/` in one conversation (commit `721ea29`). About 66.05M baseline tokens → 10.21M sent-equivalent; after 7.47M compression overhead, rollup net savings ~48.37M (73.23%). After the first working-memory fold, actual prompts stayed mostly ~20–50k (under the ~64k comfort ceiling for this local setup). Final analysis (last turn under 256k baseline): ~256k → ~35k estimated tokens. Evidence: [`docs/evidence/721ea29.md`](docs/evidence/721ea29.md).
+2. **Earlier implementation (331 turns)** — built `apps/dashboard/` in one conversation (commit `721ea29`). About 66.05M baseline tokens → 10.21M sent-equivalent; after 7.47M compression overhead, rollup net savings ~48.37M (73.23%). After the first working-memory fold, actual prompts stayed mostly ~20–50k. Final analysis (last turn under 256k baseline): ~256k → ~35k estimated tokens. Evidence: [`docs/evidence/721ea29.md`](docs/evidence/721ea29.md).
+
+3. **Planning (29 turns)** — produced the [Comprexy Metrics Dashboard implementation plan](docs/plans/comprexy-dashboard-implementation-plan.md). About 2.00M baseline tokens across the run → ~1.08M sent-equivalent (~800k saved). Final turn ~94k → ~37k estimated tokens (77 raw → 31 sent); effective prompts stayed roughly 21–58k. Evidence: [`docs/evidence/d2e0faa.md`](docs/evidence/d2e0faa.md).
 
 These are dogfood workflows, not universal benchmarks — and they do not claim measured tok/s gains. Agent pipeline used for this work: [Agentic workflow](#agentic-workflow).
 
@@ -134,7 +152,7 @@ Soft pressure above `SoftLimitTokens` triggers a blocking Inline wrap-up on elig
 
 Comprexy is developed with a Cursor subagent pipeline (plan → adversarial plan review → track-specific implement → unit test → adversarial review; UI adds mocked Playwright authorship then simulate), coordinated by orchestrators and handed off through files under `.cursor/agent-state/`. Every approved plan declares `track: backend | ui | mixed`. The same local-LLM setup that struggles past ~64k prompt tokens stays usable because Comprexy bounds what the model actually sees.
 
-That loop produced the metrics dashboard plan and implementation dogfood runs ([`docs/evidence/d2e0faa.md`](docs/evidence/d2e0faa.md), [`docs/evidence/721ea29.md`](docs/evidence/721ea29.md)). Agents, gates, and handoff rules: [`.cursor/README.md`](.cursor/README.md).
+That loop produced the top 3 dogfood evidences ([`docs/evidence/5ca87ca.md`](docs/evidence/5ca87ca.md), [`docs/evidence/721ea29.md`](docs/evidence/721ea29.md), [`docs/evidence/d2e0faa.md`](docs/evidence/d2e0faa.md)). Agents, gates, and handoff rules: [`.cursor/README.md`](.cursor/README.md).
 
 ## MCP setup
 
