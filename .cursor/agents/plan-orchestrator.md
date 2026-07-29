@@ -1,6 +1,6 @@
 ---
 name: plan-orchestrator
-description: End-to-end plan coordinator. Always use when given a requirement (not an approved plan) and the goal is an implementation plan approved by plan-reviewer. Handoffs via `.cursor/agent-state/<run-folder>/` (plan.md, plan-review.md). Loops planner → plan-reviewer up to three times; on third non-approval, escalates to HITL. Does not author plan body or write product code. Use proactively before implementation-orchestrator when only a requirement/finding exists.
+description: End-to-end plan coordinator. Always use when given a requirement (not an approved plan) and the goal is an implementation plan approved by plan-reviewer. Handoffs via `.cursor/agent-state/<run-folder>/` (plan.md, plan-review.md). Every approved plan must declare `track: backend | ui | mixed`. Loops planner → plan-reviewer up to three times; on third non-approval, escalates to HITL. On approval, routes to the correct implementation orchestrator by track. Does not author plan body or write product code. Use proactively before backend or UI implementation orchestrators when only a requirement/finding exists.
 model: inherit
 ---
 
@@ -79,17 +79,18 @@ planner → structure gate on plan.md → plan-reviewer → approval sanity chec
 ### Per try
 
 1. **Plan** — Spawn a **new** `planner` with the requirement and **plan.md** path. Instruct write full draft to that path (required structure). On `try > 1`, pass **plan-review.md** path for findings. If planner returns text only, **you** write it to `plan.md` before review.
-2. **Structure gate** — Read `plan.md`. If required sections are missing or the draft is only a Before/After sketch, re-spawn planner in the same try (no extra try). Lifecycle section required when `await using` / gates / DI / caches apply. If the draft moves acquire/`await using` into a helper, lifecycle must address acquire→transfer throw dispose and a language-legal dispose pattern (not success-span slogans only).
-3. **Review** — Spawn a **new** `plan-reviewer` with requirement + `plan.md` + `plan-review.md` paths. Demand G1–G19, audits, lifetime/lease audit when applicable (including throw-path and dispose-mechanism rows). Instruct write full review to `plan-review.md`; chat brief only.
+2. **Structure gate** — Read `plan.md`. If required sections are missing, **`track:` is missing/invalid**, `mixed` lacks a backend→UI sequence, or the draft is only a Before/After sketch, re-spawn planner in the same try (no extra try). Lifecycle section required when `await using` / gates / DI / caches apply (usually N/A for pure UI). If the draft moves acquire/`await using` into a helper, lifecycle must address acquire→transfer throw dispose and a language-legal dispose pattern (not success-span slogans only).
+3. **Review** — Spawn a **new** `plan-reviewer` with requirement + `plan.md` + `plan-review.md` paths. Demand G1–G20, audits, lifetime/lease audit when applicable (including throw-path and dispose-mechanism rows). Instruct write full review to `plan-review.md`; chat brief only.
 4. **Approval sanity check** — Reject `approve` (treat as request-changes) when any of the following hold:
    - G6 pass lacks lifetime evidence when setup/`await using` moved
    - Lifetime audit omits throw-path / dispose-mechanism rows when acquire moved into a helper (or across a new ownership boundary)
    - G10 pass while acquire/`await using`/dispose ownership moved and neither the plan nor review cites a hold **or** release-on-failure assert (existing-tests-only is insufficient)
    - G18 fail
+   - G20 fail (missing/invalid track or unclear mixed sequence)
    - “no behavioral change” with G19 fail
    - Ownership/`using` snippets the review flagged as language-illegal or fake dispose mechanism, yet Overall is still `approve`
 5. **Decide**:
-   - `approve` → `plan.md` is approved source of truth; brief complete package
+   - `approve` → `plan.md` is approved source of truth; brief complete package **with track routing**
    - non-approve → retry if `try < 3`, else HITL
 
 Do not skip plan-reviewer on the happy path. Do not rewrite plan substance yourself. Never start try 4.
@@ -105,6 +106,14 @@ Do not skip plan-reviewer on the happy path. Do not rewrite plan substance yours
 
 ## Hand-off to implementation
 
+Read `track:` from approved `plan.md`. Route:
+
+| Track | Next orchestrator | Notes |
+| --- | --- | --- |
+| `backend` | `backend-implementation-orchestrator` | Same run folder |
+| `ui` | `ui-implementation-orchestrator` | Same run folder |
+| `mixed` | backend first, then UI | Backend run folder (or slice) first; then UI run folder / slice — never one mega-loop |
+
 **Do not** paste the plan. Emit only:
 
 ```markdown
@@ -112,15 +121,16 @@ Do not skip plan-reviewer on the happy path. Do not rewrite plan substance yours
 
 - **Tries used:** n / 3
 - **Verdict:** approved by plan-reviewer
+- **Track:** backend | ui | mixed
 - **Run folder:** .cursor/agent-state/<run-folder>/
 - **Plan file:** .cursor/agent-state/<run-folder>/plan.md
 - **Review file:** .cursor/agent-state/<run-folder>/plan-review.md
-- **Ready for:** implementation-orchestrator / implementer
+- **Ready for:** <backend-implementation-orchestrator | ui-implementation-orchestrator | backend then ui-implementation-orchestrator>
 - **Summary:** <3–5 bullets>
 - **Residual warnings:** <non-blocking only>
 ```
 
-Tell the parent that **implementation-orchestrator** should use this **run folder** / `plan.md` path.
+Tell the parent which implementation orchestrator to invoke and the **run folder** / `plan.md` path(s).
 
 ## HITL (required when try 3 does not approve)
 

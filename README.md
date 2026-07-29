@@ -128,9 +128,9 @@ Soft pressure above `SoftLimitTokens` triggers a blocking Inline wrap-up on elig
 
 ## Agentic workflow
 
-Comprexy is developed with a Cursor subagent pipeline (plan → adversarial plan review → implement → unit test → adversarial code review), coordinated by orchestrators and handed off through files under `.cursor/agent-state/`. The same local-LLM setup that struggles past ~64k prompt tokens stays usable because Comprexy bounds what the model actually sees.
+Comprexy is developed with a Cursor subagent pipeline (plan → adversarial plan review → track-specific implement → unit test → adversarial review; UI adds mocked Playwright authorship then simulate), coordinated by orchestrators and handed off through files under `.cursor/agent-state/`. Every approved plan declares `track: backend | ui | mixed`. The same local-LLM setup that struggles past ~64k prompt tokens stays usable because Comprexy bounds what the model actually sees.
 
-That loop produced the metrics dashboard plan and implementation dogfood runs ([`docs/evidence/d2e0faa.md`](docs/evidence/d2e0faa.md), [`docs/evidence/721ea29.md`](docs/evidence/721ea29.md)). Agents, gates, and handoff rules: [`.cursor/agents/README.md`](.cursor/agents/README.md).
+That loop produced the metrics dashboard plan and implementation dogfood runs ([`docs/evidence/d2e0faa.md`](docs/evidence/d2e0faa.md), [`docs/evidence/721ea29.md`](docs/evidence/721ea29.md)). Agents, gates, and handoff rules: [`.cursor/README.md`](.cursor/README.md).
 
 ## MCP setup
 

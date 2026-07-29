@@ -1,6 +1,6 @@
 ---
-description: Keep agents README and main README Agentic workflow in sync when agents change
-globs: .cursor/agents/**
+description: Keep .cursor README and main README Agentic workflow in sync when agents change
+globs: .cursor/agents/**,.cursor/README.md
 alwaysApply: false
 ---
 
@@ -8,19 +8,19 @@ alwaysApply: false
 
 When you add, remove, rename, or materially change agents under `.cursor/agents/` (roles, pipeline, gates, handoffs, or local-LLM assumptions), update both docs in the **same change**:
 
-1. **[`.cursor/agents/README.md`](.cursor/agents/README.md)** — source of truth for the pipeline diagram, agent roster table, handoff bus, and how-to-use steps
-2. **[`README.md`](README.md) § Agentic workflow** — short public summary + link to the agents README; keep the stage list aligned (plan → plan review → implement → unit test → code review)
+1. **[`.cursor/README.md`](.cursor/README.md)** — source of truth for the pipeline diagram, agent roster table, handoff bus, and how-to-use steps
+2. **[`README.md`](README.md) § Agentic workflow** — short public summary + link to `.cursor/README.md`; keep the stage list aligned (plan → plan review → implement → unit test → code review; UI adds simulate)
 
 ## Do
 
 - Add or remove roster rows when agent files are added or deleted
 - Refresh the pipeline diagram / stage table if orchestrator↔specialist wiring changes
-- Keep the main README section brief; put detail only in `.cursor/agents/README.md`
+- Keep the main README section brief; put detail only in `.cursor/README.md`
 - Preserve documentation tone (factual dogfood, not marketing)
 
 ## Do not
 
-- Leave a new/renamed agent file undocumented in the agents README roster
+- Leave a new/renamed agent file undocumented in the `.cursor/README.md` roster
 - Expand the main README into a second full agent guide
 - Skip the main README link/summary when the public-facing workflow story changes
 
