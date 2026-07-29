@@ -657,9 +657,9 @@ public class ProxyChatCompletionService
     /// <summary>
     /// Repairs unfolded context so tool turns always follow an assistant/tool predecessor:
     /// restore a folded parent assistant when the live tip is a tool result, then drop any
-    /// remaining orphan tools. Optionally omits older duplicate file-read tool turns from the
-    /// wire (same path-keyed last-wins as soft compression; does not mark folded). Logs when
-    /// recovery or live dedupe runs so bad retain folds stay visible.
+    /// remaining orphan tools. Optionally omits older duplicate file-read and identical
+    /// failed-edit tool turns from the wire (does not mark folded). Logs when recovery or
+    /// live dedupe runs so bad retain folds stay visible.
     /// </summary>
     private List<ConversationMessage> PrepareRecentRawForChatTemplate(
         Guid conversationId,
@@ -691,7 +691,8 @@ public class ProxyChatCompletionService
         }
 
         var list = sanitized as List<ConversationMessage> ?? sanitized.ToList();
-        return ApplyLiveDuplicateFileReadDedupe(conversationId, list, allMessages, tipSequence);
+        list = ApplyLiveDuplicateFileReadDedupe(conversationId, list, allMessages, tipSequence);
+        return ApplyLiveDuplicateFailedEditDedupe(conversationId, list, allMessages, tipSequence);
     }
 
     /// <summary>
@@ -742,6 +743,59 @@ public class ProxyChatCompletionService
         {
             _logger.LogWarning(
                 "Dropped {DroppedCount} orphan tool message(s) after live duplicate-file-read dedupe for conversation {ConversationId}.",
+                orphanDropped,
+                conversationId);
+        }
+
+        return sanitized as List<ConversationMessage> ?? sanitized.ToList();
+    }
+
+    /// <summary>
+    /// Wire-only: drop older identical failed file-edit tool results (path + old_string
+    /// last-wins) from the outgoing retain window so StrReplace failure loops do not stack.
+    /// Does not <c>MarkFoldedInto</c>. Same tip-include/strip pattern as file-read dedupe.
+    /// </summary>
+    private List<ConversationMessage> ApplyLiveDuplicateFailedEditDedupe(
+        Guid conversationId,
+        List<ConversationMessage> recentRaw,
+        IReadOnlyList<ConversationMessage> allMessages,
+        int tipSequence)
+    {
+        if (!_policy.DedupeDuplicateFailedEdits || recentRaw.Count == 0)
+        {
+            return recentRaw;
+        }
+
+        var tipEntity = allMessages.FirstOrDefault(m => m.Sequence == tipSequence);
+        IReadOnlyList<ConversationMessage> corpus = recentRaw;
+        if (tipEntity is not null && recentRaw.TrueForAll(m => m.Sequence != tipSequence))
+        {
+            corpus = recentRaw.Append(tipEntity).OrderBy(m => m.Sequence).ToList();
+        }
+
+        var dedupe = DuplicateFailedEditDeduper.Apply(corpus, tipSequence);
+        if (!dedupe.DroppedAny)
+        {
+            return recentRaw;
+        }
+
+        _logger.LogInformation(
+            "duplicate_failed_edit_dedupe conversationId={ConversationId} phase=live_chat droppedCount={DroppedCount} keptKeys={KeptKeys} droppedSequences={DroppedSequences}",
+            conversationId,
+            dedupe.DroppedSequences.Count,
+            string.Join(',', dedupe.KeptKeys),
+            string.Join(',', dedupe.DroppedSequences));
+
+        var keptPrior = dedupe.Retain
+            .Where(m => m.Sequence < tipSequence)
+            .OrderBy(m => m.Sequence)
+            .ToList();
+
+        var (sanitized, orphanDropped) = ChatTemplateMessageOrder.RemoveOrphanToolMessages(keptPrior);
+        if (orphanDropped > 0)
+        {
+            _logger.LogWarning(
+                "Dropped {DroppedCount} orphan tool message(s) after live duplicate-failed-edit dedupe for conversation {ConversationId}.",
                 orphanDropped,
                 conversationId);
         }
@@ -1200,6 +1254,30 @@ public class ProxyChatCompletionService
             .Select(foldUniverse, maxMessagesOverride: _policy.CompressionRetainMessageCount)
             .ToList();
         var keepIds = keepRecent.Select(m => m.Id).ToHashSet();
+        // When later failed edits on path P remain unfolded, pin the last successful mutation
+        // group for P so fold does not erase the post-edit tip the next hop needs.
+        var pinnedSuccess = HotPathSuccessfulEditRetainer.SelectPinnedMessages(foldUniverse);
+        if (pinnedSuccess.Count > 0)
+        {
+            var added = 0;
+            foreach (var message in pinnedSuccess)
+            {
+                if (keepIds.Add(message.Id))
+                {
+                    added++;
+                }
+            }
+
+            if (added > 0)
+            {
+                _logger.LogInformation(
+                    "hot_path_successful_edit_retain conversationId={ConversationId} pinnedCount={PinnedCount} sequences={Sequences}",
+                    prepared.Conversation.Id,
+                    added,
+                    string.Join(',', pinnedSuccess.Select(m => m.Sequence)));
+            }
+        }
+
         var foldSet = foldUniverse
             .Where(m => !keepIds.Contains(m.Id))
             .OrderBy(m => m.Sequence)

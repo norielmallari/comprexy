@@ -38,6 +38,13 @@ public class ContextPolicyOptions
     /// </summary>
     public bool DedupeDuplicateFileReads { get; set; } = true;
 
+    /// <summary>
+    /// When true (default), drop older identical failed file-edit tool results (path +
+    /// <c>old_string</c> last-wins) from the live chat outgoing retain window so StrReplace
+    /// failure loops do not stack (wire-only omit; does not mark folded).
+    /// </summary>
+    public bool DedupeDuplicateFailedEdits { get; set; } = true;
+
     /// <summary>Tiktoken encoding used for approximate token estimation.</summary>
     public string TokenizerEncoding { get; set; } = "cl100k_base";
 }

@@ -1511,14 +1511,14 @@ public class ToolSchemaOrchestrator
         string? toolResultContent,
         Dictionary<string, AnnouncedClientToolCall> announcedCalls)
     {
-        if (!LooksLikeSuccessfulFileMutation(toolResultContent) ||
+        if (!FileMutationClassifier.LooksLikeSuccessfulFileMutation(toolResultContent) ||
             !announcedCalls.TryGetValue(toolCallId, out var call) ||
-            !IsMutatingFileTool(call.Name))
+            !FileMutationClassifier.IsMutatingFileTool(call.Name))
         {
             return;
         }
 
-        var path = TryExtractPathFromToolArguments(call.ArgumentsJson);
+        var path = FileMutationClassifier.TryExtractPathFromToolArguments(call.ArgumentsJson);
         if (path is null)
         {
             return;
@@ -1625,70 +1625,6 @@ public class ToolSchemaOrchestrator
 
             index[id.Trim()] = new AnnouncedClientToolCall(name, argsJson);
         }
-    }
-
-    private static bool IsMutatingFileTool(string toolName) =>
-        toolName.Equals("edit", StringComparison.OrdinalIgnoreCase) ||
-        toolName.Equals("write", StringComparison.OrdinalIgnoreCase) ||
-        toolName.Equals("StrReplace", StringComparison.OrdinalIgnoreCase) ||
-        toolName.Equals("Write", StringComparison.OrdinalIgnoreCase) ||
-        toolName.Equals("search_replace", StringComparison.OrdinalIgnoreCase) ||
-        toolName.Equals("ApplyPatch", StringComparison.OrdinalIgnoreCase);
-
-    private static bool LooksLikeSuccessfulFileMutation(string? content)
-    {
-        if (string.IsNullOrWhiteSpace(content))
-        {
-            return false;
-        }
-
-        if (content.Contains("Could not find", StringComparison.OrdinalIgnoreCase) ||
-            content.Contains("Error:", StringComparison.OrdinalIgnoreCase) ||
-            content.Contains("failed", StringComparison.OrdinalIgnoreCase))
-        {
-            return false;
-        }
-
-        return content.Contains("Edit applied successfully", StringComparison.OrdinalIgnoreCase) ||
-               content.Contains("Wrote contents", StringComparison.OrdinalIgnoreCase) ||
-               content.Contains("Updated file", StringComparison.OrdinalIgnoreCase) ||
-               content.Contains("has been written", StringComparison.OrdinalIgnoreCase);
-    }
-
-    private static string? TryExtractPathFromToolArguments(string argumentsJson)
-    {
-        if (string.IsNullOrWhiteSpace(argumentsJson))
-        {
-            return null;
-        }
-
-        try
-        {
-            using var document = JsonDocument.Parse(argumentsJson);
-            if (document.RootElement.ValueKind != JsonValueKind.Object)
-            {
-                return null;
-            }
-
-            foreach (var name in new[] { "filePath", "file_path", "target_file", "path" })
-            {
-                if (document.RootElement.TryGetProperty(name, out var value) &&
-                    value.ValueKind == JsonValueKind.String)
-                {
-                    var path = value.GetString();
-                    if (!string.IsNullOrWhiteSpace(path))
-                    {
-                        return path.Trim();
-                    }
-                }
-            }
-        }
-        catch (JsonException)
-        {
-            return null;
-        }
-
-        return null;
     }
 
     private sealed record AnnouncedClientToolCall(string Name, string ArgumentsJson);

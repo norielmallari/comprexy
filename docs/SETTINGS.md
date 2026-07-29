@@ -68,9 +68,10 @@ Soft token budget and Inline fold retain windows.
 | `CompressionRetainMessageCount` | `1` | Inline fold tip: trailing unfolded messages kept raw (atomic assistant+tool groups). `1` = tip only. |
 | `MaxRecentRawTokens` | `24000` | Token budget for the Inline fold retain window (newest-first). |
 | `DedupeDuplicateFileReads` | `true` | Live chat: wire-only omit older same-path file-read tool results from the outgoing retain window so Read loops do not stack identical tool results. |
+| `DedupeDuplicateFailedEdits` | `true` | Live chat: wire-only omit older identical failed file-edit tool results (path + `old_string` last-wins) so StrReplace failure loops do not stack. |
 | `TokenizerEncoding` | `cl100k_base` | Tiktoken encoding for token estimates. |
 
-Inline wrap-up reuses live sampling / `chat_template_*` but omits tool-calling fields (`tools`, `tool_choice`, `functions`, and related `function_call` / `parallel_tool_calls` when present); a wrap-up that still returns `tool_calls` soft-fails as `wrapup_tool_calls`. Soft-pressure eligible turns hold the streaming tail until wrap-up finishes (success or soft-fail): `[DONE]` on stop turns, and the whole real `tool_calls` tail on mid-chain turns so the client starts tools only after the checkpoint attempt resolves.
+Inline wrap-up reuses live sampling / `chat_template_*` but omits tool-calling fields (`tools`, `tool_choice`, `functions`, and related `function_call` / `parallel_tool_calls` when present); a wrap-up that still returns `tool_calls` soft-fails as `wrapup_tool_calls`. Soft-pressure eligible turns hold the streaming tail until wrap-up finishes (success or soft-fail): `[DONE]` on stop turns, and the whole real `tool_calls` tail on mid-chain turns so the client starts tools only after the checkpoint attempt resolves. When unfolded history still has failed edits on a path, Inline fold **pins** the last successful mutation atomic group for that path into the retain set (in addition to `CompressionRetainMessageCount`) so the post-edit tip is not erased.
 
 ---
 

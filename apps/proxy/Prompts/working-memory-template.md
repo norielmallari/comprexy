@@ -15,8 +15,10 @@
 ## Constraints
 - ...
 
+## Rules
+- ...
+
 ## Files And Code Context
-- path: why it matters / key facts
 - ...
 
 ## Important Context
