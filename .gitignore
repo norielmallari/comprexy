@@ -20,6 +20,9 @@ internal/
 .cursor/agent-state/**
 !.cursor/agent-state/README.md
 
+# Next.js dashboard build output
+apps/dashboard/.next/
+
 # User-specific files
 *.rsuser
 *.suo
