@@ -6,7 +6,7 @@ OpenAI-compatible context compression proxy for long-running chats and coding ag
 
 Soft budget pressure triggers a blocking Inline follow-up wrap-up on eligible turns (closed stored tool chain + cooldown). Local-first by default: point `Provider` at Ollama, LM Studio, vLLM, or a cloud OpenAI-compatible endpoint.
 
-[Quick start](#quick-start) · [Why Comprexy?](#why-comprexy) · [Design principles](#design-principles) · [What Comprexy is not](#what-comprexy-is-not) · [Source of truth](#source-of-truth) · [MCP setup](#mcp-setup) · [Features](#features) · [How it works](#how-it-works) · [Configuration](#configuration) · [Limitations](#limitations) · [Architecture](#architecture) · [Contributing](#contributing)
+[Quick start](#quick-start) · [Why Comprexy?](#why-comprexy) · [Design principles](#design-principles) · [What Comprexy is not](#what-comprexy-is-not) · [Source of truth](#source-of-truth) · [Agentic workflow](#agentic-workflow) · [MCP setup](#mcp-setup) · [Features](#features) · [How it works](#how-it-works) · [Configuration](#configuration) · [Limitations](#limitations) · [Architecture](#architecture) · [Contributing](#contributing)
 
 ![.NET](https://img.shields.io/badge/.NET-10-512BD4?logo=dotnet&logoColor=white)
 ![Platform](https://img.shields.io/badge/platform-cross--platform-informational)
@@ -83,9 +83,15 @@ Comprexy was built from a real local LLM limitation: long-running planning workf
 
 Comprexy keeps the **sent** context manageable — stable information in versioned working memory, older context folded on soft budget pressure — so the model does not need the full accumulated history every turn. Smaller upstream prompts do not guarantee faster inference, but they help keep long sessions in a size range where local tok/s stays usable. The goal is simple: make long-running local LLM workflows practical.
 
-### First validation
+### Dogfood validation
 
-In one end-to-end planning run, Comprexy supported a 29-turn Cursor workflow on a local LLM that produced the [Comprexy Metrics Dashboard implementation plan](docs/plans/comprexy-dashboard-implementation-plan.md). The run accumulated an estimated 2.00M baseline tokens across all turns. After compression and trimming, the sent-equivalent volume was about 1.08M tokens (roughly 800k saved). On the final turn, the estimated payload dropped from about 94k baseline tokens to about 37k compressed tokens (77 raw messages → 31 sent); across the run, effective prompt size stayed roughly in the 21–58k range instead of climbing linearly toward ~93k. Full phase breakdown: [`docs/evidence/d2e0faa.md`](docs/evidence/d2e0faa.md). This is one dogfood workflow, not a universal benchmark — and it does not claim measured tok/s gains.
+Two end-to-end Cursor workflows on a local LLM (Qwen-35B behind Comprexy):
+
+1. **Planning (29 turns)** — produced the [Comprexy Metrics Dashboard implementation plan](docs/plans/comprexy-dashboard-implementation-plan.md). About 2.00M baseline tokens across the run → ~1.08M sent-equivalent (~800k saved). Final turn ~94k → ~37k estimated tokens (77 raw → 31 sent); effective prompts stayed roughly 21–58k. Evidence: [`docs/evidence/d2e0faa.md`](docs/evidence/d2e0faa.md).
+
+2. **Implementation (331 turns)** — built `apps/dashboard/` in one conversation (commit `721ea29`). About 66.05M baseline tokens → 10.21M sent-equivalent; after 7.47M compression overhead, rollup net savings ~48.37M (73.23%). After the first working-memory fold, actual prompts stayed mostly ~20–50k (under the ~64k comfort ceiling for this local setup). Final analysis (last turn under 256k baseline): ~256k → ~35k estimated tokens. Evidence: [`docs/evidence/721ea29.md`](docs/evidence/721ea29.md).
+
+These are dogfood workflows, not universal benchmarks — and they do not claim measured tok/s gains. Agent pipeline used for this work: [Agentic workflow](#agentic-workflow).
 
 Comprexy’s approach:
 
@@ -119,6 +125,12 @@ If you need routing, spend tracking, or broad agent wrappers, tools like LiteLLM
 Comprexy persists completed conversation turns as the durable record. Working memory is a derived, versioned representation used to construct bounded upstream prompts. Compression marks messages as folded; it does not delete or replace them.
 
 Soft pressure above `SoftLimitTokens` triggers a blocking Inline wrap-up on eligible turns. The wrap-up folds older unfolded messages into a new working-memory version while retaining a tip window (`CompressionRetainMessageCount` / `MaxRecentRawTokens`).
+
+## Agentic workflow
+
+Comprexy is developed with a Cursor subagent pipeline (plan → adversarial plan review → implement → unit test → adversarial code review), coordinated by orchestrators and handed off through files under `.cursor/agent-state/`. The same local-LLM setup that struggles past ~64k prompt tokens stays usable because Comprexy bounds what the model actually sees.
+
+That loop produced the metrics dashboard plan and implementation dogfood runs ([`docs/evidence/d2e0faa.md`](docs/evidence/d2e0faa.md), [`docs/evidence/721ea29.md`](docs/evidence/721ea29.md)). Agents, gates, and handoff rules: [`.cursor/agents/README.md`](.cursor/agents/README.md).
 
 ## MCP setup
 
