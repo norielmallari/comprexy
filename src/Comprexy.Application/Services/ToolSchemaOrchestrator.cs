@@ -21,7 +21,17 @@ public sealed class ToolSchemaSession
 
     public Dictionary<string, string> FullDefinitionsByName { get; init; } = new(StringComparer.Ordinal);
 
-    public HashSet<string> FileClientToolNames { get; init; } = new(StringComparer.Ordinal);
+    /// <summary>
+    /// Client tool names replaced by Virtual IR (hidden from model catalog). Prefer this name.
+    /// </summary>
+    public HashSet<string> ReplacedClientToolNames { get; init; } = new(StringComparer.Ordinal);
+
+    /// <summary>Obsolete alias — use <see cref="ReplacedClientToolNames"/>.</summary>
+    public HashSet<string> FileClientToolNames
+    {
+        get => ReplacedClientToolNames;
+        init => ReplacedClientToolNames = value;
+    }
 
     public HashSet<string> BoundVirtualToolNames { get; init; } = new(StringComparer.Ordinal);
 
@@ -124,7 +134,7 @@ public class ToolSchemaOrchestrator
     /// </param>
     /// <param name="replacedClientToolNames">
     /// Native client tools replaced by Virtual <c>comprexy_*</c> backends (see
-    /// <see cref="ToolIrMappingValidator.GetFileClientToolNames"/>). Assistants/results for these
+    /// <see cref="ToolIrMappingValidator.GetReplacedClientToolNames"/>). Assistants/results for these
     /// names are never persisted into the IR transcript — client wire only.
     /// </param>
     public async Task<ToolInboundRewriteResult> ValidateAndRewriteInboundToolResultsAsync(
@@ -388,7 +398,7 @@ public class ToolSchemaOrchestrator
                 parsed.FullDefinitionsByName);
             if (cached.IsValid && cached.Document is not null)
             {
-                return (ToolIrMappingValidator.GetFileClientToolNames(cached.Document), CatalogMutated: false);
+                return (ToolIrMappingValidator.GetReplacedClientToolNames(cached.Document), CatalogMutated: false);
             }
         }
 
@@ -404,7 +414,7 @@ public class ToolSchemaOrchestrator
             return (new HashSet<string>(StringComparer.Ordinal), outcome.CatalogMutated);
         }
 
-        return (outcome.Result.Session.FileClientToolNames, outcome.CatalogMutated);
+        return (outcome.Result.Session.ReplacedClientToolNames, outcome.CatalogMutated);
     }
 
     public async Task<ToolSchemaPrepareOutcome> TryPrepareRewriteAsync(
@@ -542,11 +552,11 @@ public class ToolSchemaOrchestrator
             definitionsByName[toolName] = definitionJson;
         }
 
-        var fileClientTools = ToolIrMappingValidator.GetFileClientToolNames(mapping)
+        var replacedClientTools = ToolIrMappingValidator.GetReplacedClientToolNames(mapping)
             .ToHashSet(StringComparer.Ordinal);
         var boundVirtual = mapping.Bindings
             .Select(b => b.ComprexyTool)
-            .Where(ToolSchemaConstants.IsVirtualFileTool)
+            .Where(ToolSchemaConstants.IsVirtualTool)
             .ToHashSet(StringComparer.Ordinal);
 
         var session = new ToolSchemaSession
@@ -555,7 +565,7 @@ public class ToolSchemaOrchestrator
             CatalogToolNames = parsed.CompactEntries.Select(e => e.Name).ToHashSet(StringComparer.Ordinal),
             Mapping = mapping,
             FullDefinitionsByName = definitionsByName,
-            FileClientToolNames = fileClientTools,
+            ReplacedClientToolNames = replacedClientTools,
             BoundVirtualToolNames = boundVirtual
         };
 
@@ -782,7 +792,7 @@ public class ToolSchemaOrchestrator
                 continue;
             }
 
-            if (ToolSchemaConstants.IsVirtualFileTool(call.Name))
+            if (ToolSchemaConstants.IsVirtualTool(call.Name))
             {
                 if (!session.BoundVirtualToolNames.Contains(call.Name))
                 {
@@ -812,9 +822,9 @@ public class ToolSchemaOrchestrator
                 continue;
             }
 
-            // Non-file passthrough (or unexpected name).
+            // Passthrough (or unexpected name).
             if (!session.CatalogToolNames.Contains(call.Name) ||
-                session.FileClientToolNames.Contains(call.Name))
+                session.ReplacedClientToolNames.Contains(call.Name))
             {
                 var error = BuildToolErrorJson(
                     "unknown_tool",
@@ -1076,7 +1086,7 @@ public class ToolSchemaOrchestrator
         }
 
         var tools = new JsonArray();
-        foreach (var name in ToolSchemaConstants.VirtualFileToolNames)
+        foreach (var name in VirtualToolRegistry.VirtualToolNames.OrderBy(n => n, StringComparer.Ordinal))
         {
             if (session.BoundVirtualToolNames.Contains(name))
             {
@@ -1089,7 +1099,7 @@ public class ToolSchemaOrchestrator
         foreach (var (toolName, definitionJson) in session.FullDefinitionsByName
                      .OrderBy(kv => kv.Key, StringComparer.Ordinal))
         {
-            if (session.FileClientToolNames.Contains(toolName))
+            if (session.ReplacedClientToolNames.Contains(toolName))
             {
                 continue;
             }

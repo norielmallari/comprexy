@@ -50,6 +50,37 @@ public class ToolIrFileBodyCacheAndDistillTests
     }
 
     [Fact]
+    public void Distill_Shell_TruncatesContentAndDoesNotTouchFileCache()
+    {
+        var options = Options.Create(new ToolSchemaOptions { MaxShellObservationChars = 20 });
+        var cache = new ToolIrFileBodyCache(options);
+        var distiller = new ToolIrResultDistiller(options, cache);
+        var conversationId = Guid.NewGuid();
+        var mapping = new ToolIrCallMapping(
+            conversationId,
+            "ir_shell",
+            "cur_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            ToolSchemaConstants.ShellToolName,
+            "Shell",
+            """{"command":"ls"}""",
+            """{"command":"ls"}""",
+            "direct",
+            Path: null,
+            StartLine: null,
+            EndLine: null,
+            Pending: true);
+
+        var observationJson = distiller.Distill(conversationId, mapping, new string('z', 50));
+        using var observation = System.Text.Json.JsonDocument.Parse(observationJson);
+
+        Assert.Equal("shell", observation.RootElement.GetProperty("type").GetString());
+        Assert.Equal("ls", observation.RootElement.GetProperty("command").GetString());
+        Assert.True(observation.RootElement.GetProperty("truncated").GetBoolean());
+        Assert.Equal(21, observation.RootElement.GetProperty("content").GetString()!.Length);
+        Assert.False(cache.TryGet(conversationId, "ls", out _));
+    }
+
+    [Fact]
     public void DistillFileRange_PartialWindow_DoesNotPoisonCache_AndReturnsContent()
     {
         var options = Options.Create(new ToolSchemaOptions { MaxRangeLines = 200 });

@@ -340,6 +340,123 @@ public class ToolIrMappingValidatorTests
         Assert.DoesNotContain("write", hidden);
     }
 
+    [Fact]
+    public void GetReplacedClientToolNames_HidesShellBackend()
+    {
+        var document = new ToolIrMappingDocument
+        {
+            SchemaHash = "h",
+            ClientCapabilities =
+            [
+                Cap("read", ToolIrCapabilities.FileReadRaw),
+                Cap("Shell", ToolIrCapabilities.ShellBackend),
+                Cap("write", ToolIrCapabilities.OtherFile)
+            ],
+            Bindings =
+            [
+                new ToolIrBinding
+                {
+                    ComprexyTool = ToolSchemaConstants.FileRangeToolName,
+                    PrimaryClientTool = "read",
+                    Strategy = ToolIrStrategies.Direct,
+                    ArgMap = new Dictionary<string, string>(StringComparer.Ordinal) { ["path"] = "path" }
+                },
+                new ToolIrBinding
+                {
+                    ComprexyTool = ToolSchemaConstants.ShellToolName,
+                    PrimaryClientTool = "Shell",
+                    Strategy = ToolIrStrategies.Direct,
+                    ArgMap = new Dictionary<string, string>(StringComparer.Ordinal) { ["command"] = "command" }
+                }
+            ]
+        };
+
+        var hidden = ToolIrMappingValidator.GetReplacedClientToolNames(document);
+
+        Assert.Contains("read", hidden);
+        Assert.Contains("Shell", hidden);
+        Assert.DoesNotContain("write", hidden);
+    }
+
+    [Fact]
+    public void Validate_ShellBinding_RequiresDirectStrategy()
+    {
+        const string hash = "abc";
+        var json = MappingJson(
+            hash,
+            [
+                Capability("Read"),
+                Capability("Shell", "SHELL_BACKEND")
+            ],
+            [
+                new
+                {
+                    comprexy_tool = "comprexy_read_file_range",
+                    primary_client_tool = "Read",
+                    strategy = "read_then_slice",
+                    arg_map = new { path = "path" }
+                },
+                new
+                {
+                    comprexy_tool = "comprexy_shell",
+                    primary_client_tool = "Shell",
+                    strategy = "read_then_slice",
+                    arg_map = new { command = "command" }
+                }
+            ]);
+
+        var result = ToolIrMappingValidator.Validate(json, Catalog, hash);
+
+        Assert.False(result.IsValid);
+        Assert.Contains("requires strategy 'direct'", result.Error);
+    }
+
+    [Fact]
+    public void Validate_ShellBinding_AcceptsDirect()
+    {
+        const string hash = "abc";
+        var json = MappingJson(
+            hash,
+            [
+                Capability("Read"),
+                Capability("Shell", "SHELL_BACKEND")
+            ],
+            [
+                new
+                {
+                    comprexy_tool = "comprexy_read_file_range",
+                    primary_client_tool = "Read",
+                    strategy = "read_then_slice",
+                    arg_map = new { path = "path" }
+                },
+                new
+                {
+                    comprexy_tool = "comprexy_shell",
+                    primary_client_tool = "Shell",
+                    strategy = "direct",
+                    arg_map = new { command = "command" }
+                }
+            ]);
+
+        var result = ToolIrMappingValidator.Validate(json, Catalog, hash);
+
+        Assert.True(result.IsValid, result.Error);
+    }
+
+    [Fact]
+    public void VirtualToolRegistry_IncludesFileAndShellFamilies()
+    {
+        Assert.True(VirtualToolRegistry.IsVirtual(ToolSchemaConstants.FileRangeToolName));
+        Assert.True(VirtualToolRegistry.IsVirtual(ToolSchemaConstants.ShellToolName));
+        Assert.Contains(ToolIrCapabilities.ShellBackend, VirtualToolRegistry.ReplacedCapabilities);
+        Assert.Contains(
+            ToolSchemaConstants.ShellToolName,
+            VirtualToolRegistry.NamesInFamily(VirtualToolFamilies.Shell));
+        Assert.Equal(
+            ToolIrVirtualToolDefinitions.ShellWireJson.Trim(),
+            VirtualToolRegistry.GetWireJson(ToolSchemaConstants.ShellToolName).Trim());
+    }
+
     private static ToolIrClientCapability Cap(string tool, string capability) => new()
     {
         ClientTool = tool,

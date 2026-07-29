@@ -20,6 +20,9 @@ public class ToolSchemaOptions
     /// <summary>Max directory entries returned by <c>comprexy_dir_list</c>.</summary>
     public int MaxDirListEntries { get; set; } = 200;
 
+    /// <summary>Max characters of native shell output kept in a distilled IR observation.</summary>
+    public int MaxShellObservationChars { get; set; } = 4000;
+
     /// <summary>In-memory file-body cache TTL.</summary>
     public TimeSpan FileCacheAbsoluteExpiration { get; set; } = TimeSpan.FromMinutes(20);
 

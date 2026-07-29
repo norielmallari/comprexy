@@ -204,24 +204,25 @@ public class ToolIrSchemaMapper
           "client_capabilities": [
             {
               "client_tool": "<exact client tool name>",
-              "capability": "FILE_READ_RAW|FILE_SEARCH_BACKEND|DIRECTORY_LIST_BACKEND|FILE_METADATA|OTHER_FILE|NON_FILE",
+              "capability": "FILE_READ_RAW|FILE_SEARCH_BACKEND|DIRECTORY_LIST_BACKEND|FILE_METADATA|OTHER_FILE|SHELL_BACKEND|NON_FILE",
               "risk": "low|medium|high",
               "supports": { "path": true, "offset": false, "limit": false, "query": false }
             }
           ],
           "bindings": [
             {
-              "comprexy_tool": "comprexy_read_file_manifest|comprexy_read_file_range|comprexy_read_file_search|comprexy_dir_list",
+              "comprexy_tool": "comprexy_read_file_manifest|comprexy_read_file_range|comprexy_read_file_search|comprexy_dir_list|comprexy_shell",
               "primary_client_tool": "<exact client tool name from catalog>",
               "strategy": "direct|read_then_slice",
-              "arg_map": { "path": "<client arg name>", "start_line": "<optional>", "end_line": "<optional>", "query": "<optional>" },
+              "arg_map": { "path": "<client arg name>", "start_line": "<optional>", "end_line": "<optional>", "query": "<optional>", "command": "<optional>", "working_directory": "<optional>", "block_until_ms": "<optional>", "description": "<optional>" },
               "defaults": { "<client required arg with no IR source>": "<literal JSON value>" }
             }
           ]
         }
         Rules:
         - Include every inbound client tool exactly once in client_capabilities.
-        - Mark write/edit/ApplyPatch/terminal/MCP/browser and other mutate or non-read tools as NON_FILE (full-schema passthrough). Never OTHER_FILE for write/edit.
+        - Mark write/edit/ApplyPatch/MCP/browser and other mutate tools as NON_FILE (full-schema passthrough). Never OTHER_FILE for write/edit.
+        - Mark terminal / Shell / bash / run_terminal_cmd (and equivalents) as SHELL_BACKEND — not NON_FILE. Bind comprexy_shell to that primary with strategy direct.
         - OTHER_FILE is only for rare file-adjacent tools that are neither Virtual backends nor passthrough mutates; unbound OTHER_FILE/FILE_METADATA still pass through on the model surface.
         - Only emit bindings for MVP comprexy_* tools that have a suitable primary_client_tool.
         - Prefer purpose-fit tools (list_dir / Grep / Read) over overloading Glob when the catalog has them.
@@ -229,6 +230,7 @@ public class ToolIrSchemaMapper
         - comprexy_read_file_range: bind to FILE_READ_RAW (e.g. Read). Use read_then_slice when the native read tool lacks offset/limit; otherwise direct.
         - comprexy_read_file_search: bind to Grep/content search (FILE_SEARCH_BACKEND). Prefer Grep over Glob; if Glob is used, arg_map query→pattern (or glob_pattern).
         - comprexy_dir_list: prefer DIRECTORY_LIST_BACKEND. Glob/glob is allowed (FILE_SEARCH_BACKEND): arg_map must rename IR fields to the exact client parameter names from the catalog schema (e.g. path→path or path→target_directory).
+        - comprexy_shell: bind to SHELL_BACKEND. strategy must be direct. arg_map IR→client names for command (required), and optionally working_directory, block_until_ms, description. Prefer short IR surface; do not invent client-only knobs (notify_on_output, smart-mode, etc.) unless the client schema requires them via defaults.
         - defaults: client parameter name → JSON literal. Emit defaults whenever the primary client tool has required properties that Virtual IR cannot supply (classic: directory listing via a glob tool that requires pattern → defaults.pattern = "*" or defaults.glob_pattern = "*"). IR-mapped values win over defaults for the same client key. Never invent client tool or parameter names not in the catalog schema.
         - Never invent client tool names. Never include tools not in the catalog.
         """;

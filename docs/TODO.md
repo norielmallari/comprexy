@@ -208,21 +208,23 @@ Deferred and planned work for Comprexy. Prefer [GitHub Issues](https://github.co
 
 | Field | Value |
 | --- | --- |
-| **Status** | `open` |
+| **Status** | `partial` |
 | **Priority** | Low |
 | **Area** | `ToolSchema` Virtual Tools |
 
-**Summary:** MVP virtualizes file tools only; edit/terminal/MCP/browser stay full-schema passthrough. Later phases may add Virtual surfaces for those families.
+**Summary:** File Virtual Tools plus Shell family (`SHELL_BACKEND` / `comprexy_shell`) ship via `VirtualToolRegistry`. Edit/write/ApplyPatch, MCP, and browser remain full-schema passthrough.
 
-**Workaround:** Non-file tools pass through unchanged when Virtual is active.
+**Workaround:** Remaining non-virtualized tools pass through unchanged when Virtual is active.
 
 **Acceptance criteria:**
 
-- [ ] Mapping schema extended for the new Virtual tool family.
-- [ ] Planner + distill paths for the new tools without an inner invisible multi-tool loop unless explicitly designed.
-- [ ] Docs and tests for outbound surface and wire remap.
+- [x] Mapping schema extended for the Shell Virtual tool family (`SHELL_BACKEND`, `comprexy_shell`).
+- [x] Planner + distill paths for Shell without an inner invisible multi-tool loop.
+- [x] Docs and tests for outbound surface and wire remap (Shell).
+- [ ] Edit / write / ApplyPatch Virtual family.
+- [ ] MCP / browser Virtual families.
 
-**Notes:** Plan: [`internal/plans/virtual-tools.md`](../internal/plans/virtual-tools.md). Design: [`internal/tool-ir.md`](../internal/tool-ir.md).
+**Notes:** Plan: [`internal/plans/shell-ir.md`](../internal/plans/shell-ir.md). Archived file-IR plan: [`internal/archive/plans/virtual-tools.md`](../archive/plans/virtual-tools.md).
 
 ---
 

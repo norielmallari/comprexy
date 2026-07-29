@@ -87,6 +87,7 @@ public static class ToolIrCapabilities
     public const string FileMetadata = "FILE_METADATA";
     public const string OtherFile = "OTHER_FILE";
     public const string NonFile = "NON_FILE";
+    public const string ShellBackend = "SHELL_BACKEND";
 
     public static readonly HashSet<string> Allowed = new(StringComparer.Ordinal)
     {
@@ -95,52 +96,19 @@ public static class ToolIrCapabilities
         DirectoryListBackend,
         FileMetadata,
         OtherFile,
-        NonFile
+        NonFile,
+        ShellBackend
     };
 
     /// <summary>
-    /// Capabilities whose client tools are replaced by Virtual <c>comprexy_*</c> file tools
+    /// Capabilities whose client tools are replaced by Virtual <c>comprexy_*</c> tools
     /// and must be hidden from the model-facing catalog. <see cref="OtherFile"/> /
     /// <see cref="FileMetadata"/> / <see cref="NonFile"/> stay as full-schema passthrough
     /// unless they are also a binding primary.
     /// </summary>
-    public static readonly HashSet<string> ReplacedByVirtualTools = new(StringComparer.Ordinal)
-    {
-        FileReadRaw,
-        FileSearchBackend,
-        DirectoryListBackend
-    };
+    public static IReadOnlySet<string> ReplacedByVirtualTools => VirtualToolRegistry.ReplacedCapabilities;
 
-    /// <summary>Allowed primary-tool capabilities per Virtual file tool.</summary>
+    /// <summary>Allowed primary-tool capabilities per Virtual tool.</summary>
     public static IReadOnlySet<string>? AllowedForVirtualTool(string comprexyTool) =>
-        comprexyTool switch
-        {
-            ToolSchemaConstants.FileManifestToolName => ManifestCapabilities,
-            ToolSchemaConstants.FileRangeToolName => FileReadCapabilities,
-            ToolSchemaConstants.FileSearchToolName => SearchCapabilities,
-            ToolSchemaConstants.DirListToolName => DirListCapabilities,
-            _ => null
-        };
-
-    private static readonly HashSet<string> ManifestCapabilities = new(StringComparer.Ordinal)
-    {
-        FileReadRaw,
-        FileMetadata
-    };
-
-    private static readonly HashSet<string> FileReadCapabilities = new(StringComparer.Ordinal)
-    {
-        FileReadRaw
-    };
-
-    private static readonly HashSet<string> SearchCapabilities = new(StringComparer.Ordinal)
-    {
-        FileSearchBackend
-    };
-
-    private static readonly HashSet<string> DirListCapabilities = new(StringComparer.Ordinal)
-    {
-        DirectoryListBackend,
-        FileSearchBackend
-    };
+        VirtualToolRegistry.AllowedCapsFor(comprexyTool);
 }

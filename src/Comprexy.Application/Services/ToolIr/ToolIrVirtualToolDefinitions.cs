@@ -2,17 +2,10 @@ using System.Text.Json.Nodes;
 
 namespace Comprexy.Application.Services.ToolIr;
 
-/// <summary>Full OpenAI tool schemas for MVP Virtual file tools.</summary>
+/// <summary>OpenAI wire schemas for Virtual IR tools (file + shell families).</summary>
 public static class ToolIrVirtualToolDefinitions
 {
-    public static string GetWireJson(string toolName) => toolName switch
-    {
-        ToolSchemaConstants.FileManifestToolName => FileManifestWireJson,
-        ToolSchemaConstants.FileRangeToolName => FileRangeWireJson,
-        ToolSchemaConstants.FileSearchToolName => FileSearchWireJson,
-        ToolSchemaConstants.DirListToolName => DirListWireJson,
-        _ => throw new ArgumentOutOfRangeException(nameof(toolName), toolName, "Unknown virtual tool.")
-    };
+    public static string GetWireJson(string toolName) => VirtualToolRegistry.GetWireJson(toolName);
 
     public static JsonNode ParseWire(string toolName) =>
         JsonNode.Parse(GetWireJson(toolName))
@@ -112,6 +105,39 @@ public static class ToolIrVirtualToolDefinitions
                 }
               },
               "required": ["path"],
+              "additionalProperties": false
+            }
+          }
+        }
+        """;
+
+    public const string ShellWireJson = """
+        {
+          "type": "function",
+          "function": {
+            "name": "comprexy_shell",
+            "description": "Run a terminal command in the workspace. Prefer comprexy_read_file_range / comprexy_read_file_search / comprexy_dir_list (or client Read/Grep/Glob) over shell for file reads, search, and directory listing. Do not use for reading or editing files when a dedicated tool exists.",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "command": {
+                  "type": "string",
+                  "description": "The command to execute."
+                },
+                "working_directory": {
+                  "type": "string",
+                  "description": "Optional absolute working directory (defaults to workspace root)."
+                },
+                "block_until_ms": {
+                  "type": "number",
+                  "description": "Optional foreground wait in milliseconds before the client backgrounds the command. Defaults to the client tool default when omitted."
+                },
+                "description": {
+                  "type": "string",
+                  "description": "Optional short label (5-10 words) describing what the command does."
+                }
+              },
+              "required": ["command"],
               "additionalProperties": false
             }
           }

@@ -74,6 +74,7 @@ public class ToolIrPlanner
             ToolSchemaConstants.FileManifestToolName => PlanFileManifest(conversationId, call, binding, mapping, args),
             ToolSchemaConstants.FileSearchToolName => PlanNativeOrError(conversationId, call, binding, mapping, args, requirePath: false),
             ToolSchemaConstants.DirListToolName => PlanNativeOrError(conversationId, call, binding, mapping, args, requirePath: true),
+            ToolSchemaConstants.ShellToolName => PlanShell(conversationId, call, binding, args),
             _ => new ToolIrPlanItem(
                 ToolIrPlanKind.LocalObservation,
                 call,
@@ -83,6 +84,43 @@ public class ToolIrPlanner
                 null,
                 null)
         };
+    }
+
+    private ToolIrPlanItem PlanShell(
+        Guid conversationId,
+        ParsedToolCall call,
+        ToolIrBinding binding,
+        Dictionary<string, JsonElement> args)
+    {
+        if (!TryGetString(args, "command", out _))
+        {
+            return LocalError(call, "invalid_args", "comprexy_shell requires command.");
+        }
+
+        var clientArgs = BuildNativeArgs(binding, args, ToolIrStrategies.Direct, startLine: 0, endLine: 0);
+        var clientCallId = NewClientCallId(call.Id);
+        var map = new ToolIrCallMapping(
+            conversationId,
+            call.Id,
+            clientCallId,
+            call.Name,
+            binding.PrimaryClientTool,
+            call.ArgumentsJson,
+            clientArgs,
+            ToolIrStrategies.Direct,
+            Path: null,
+            StartLine: null,
+            EndLine: null,
+            Pending: true);
+
+        return new ToolIrPlanItem(
+            ToolIrPlanKind.NativeClientCall,
+            call,
+            null,
+            clientCallId,
+            binding.PrimaryClientTool,
+            clientArgs,
+            map);
     }
 
     private ToolIrPlanItem PlanFileRange(

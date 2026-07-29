@@ -197,4 +197,89 @@ public class ToolIrPlannerTests
         Assert.Equal("/from-ir", args.RootElement.GetProperty("path").GetString());
         Assert.Equal("*", args.RootElement.GetProperty("pattern").GetString());
     }
+
+    [Fact]
+    public void Plan_Shell_RemapsCommandViaArgMap()
+    {
+        var planner = CreatePlanner();
+        var mapping = JsonSerializer.Deserialize<ToolIrMappingDocument>(JsonSerializer.Serialize(new
+        {
+            schema_hash = "h",
+            client_capabilities = new object[]
+            {
+                new
+                {
+                    client_tool = "Shell",
+                    capability = "SHELL_BACKEND",
+                    risk = "high",
+                    supports = new { path = false, offset = false, limit = false, query = false }
+                }
+            },
+            bindings = new object[]
+            {
+                new
+                {
+                    comprexy_tool = "comprexy_shell",
+                    primary_client_tool = "Shell",
+                    strategy = "direct",
+                    arg_map = new
+                    {
+                        command = "command",
+                        working_directory = "working_directory",
+                        description = "description"
+                    }
+                }
+            }
+        }))!;
+        var call = new ParsedToolCall(
+            "call_shell",
+            ToolSchemaConstants.ShellToolName,
+            """{"command":"dotnet test","working_directory":"/workspace/repo","description":"run tests"}""");
+
+        var items = planner.Plan(Guid.NewGuid(), [call], mapping);
+
+        Assert.Single(items);
+        Assert.Equal(ToolIrPlanKind.NativeClientCall, items[0].Kind);
+        Assert.Equal("Shell", items[0].ClientToolName);
+        using var args = JsonDocument.Parse(items[0].ClientArgumentsJson!);
+        Assert.Equal("dotnet test", args.RootElement.GetProperty("command").GetString());
+        Assert.Equal("/workspace/repo", args.RootElement.GetProperty("working_directory").GetString());
+        Assert.Equal("run tests", args.RootElement.GetProperty("description").GetString());
+    }
+
+    [Fact]
+    public void Plan_Shell_MissingCommand_LocalError()
+    {
+        var planner = CreatePlanner();
+        var mapping = JsonSerializer.Deserialize<ToolIrMappingDocument>(JsonSerializer.Serialize(new
+        {
+            schema_hash = "h",
+            client_capabilities = new object[]
+            {
+                new
+                {
+                    client_tool = "Shell",
+                    capability = "SHELL_BACKEND",
+                    risk = "high",
+                    supports = new { path = false, offset = false, limit = false, query = false }
+                }
+            },
+            bindings = new object[]
+            {
+                new
+                {
+                    comprexy_tool = "comprexy_shell",
+                    primary_client_tool = "Shell",
+                    strategy = "direct",
+                    arg_map = new { command = "command" }
+                }
+            }
+        }))!;
+        var call = new ParsedToolCall("call_shell", ToolSchemaConstants.ShellToolName, "{}");
+
+        var items = planner.Plan(Guid.NewGuid(), [call], mapping);
+
+        Assert.Equal(ToolIrPlanKind.LocalObservation, items[0].Kind);
+        Assert.Contains("command", items[0].ObservationJson, StringComparison.OrdinalIgnoreCase);
+    }
 }

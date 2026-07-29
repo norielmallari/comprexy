@@ -37,6 +37,7 @@ public class ToolIrResultDistiller
             ToolSchemaConstants.FileManifestToolName => DistillFileManifest(conversationId, mapping, nativeContent),
             ToolSchemaConstants.FileSearchToolName => DistillFileSearch(mapping, nativeContent),
             ToolSchemaConstants.DirListToolName => DistillDirList(mapping, nativeContent),
+            ToolSchemaConstants.ShellToolName => DistillShell(mapping, nativeContent),
             _ => JsonSerializer.Serialize(new
             {
                 type = "passthrough",
@@ -44,6 +45,19 @@ public class ToolIrResultDistiller
                 content = Truncate(nativeContent, 4000)
             })
         };
+    }
+
+    private string DistillShell(ToolIrCallMapping mapping, string nativeContent)
+    {
+        var truncatedContent = Truncate(nativeContent, _options.MaxShellObservationChars);
+        var truncated = !string.Equals(truncatedContent, nativeContent, StringComparison.Ordinal);
+        return JsonSerializer.Serialize(new
+        {
+            type = "shell",
+            command = TryReadArg(mapping.IrArgumentsJson, "command"),
+            truncated,
+            content = truncatedContent
+        });
     }
 
     private string DistillFileRange(Guid conversationId, ToolIrCallMapping mapping, string nativeContent)

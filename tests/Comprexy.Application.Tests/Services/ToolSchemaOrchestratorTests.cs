@@ -193,6 +193,59 @@ public class ToolSchemaOrchestratorTests
             }
         });
 
+    private static string ValidReadShellBoundMappingJson(string schemaHash) =>
+        JsonSerializer.Serialize(new
+        {
+            schema_hash = schemaHash,
+            client_capabilities = new object[]
+            {
+                new
+                {
+                    client_tool = "Read",
+                    capability = "FILE_READ_RAW",
+                    risk = "low",
+                    supports = new { path = true, offset = false, limit = false, query = false }
+                },
+                new
+                {
+                    client_tool = "Shell",
+                    capability = "SHELL_BACKEND",
+                    risk = "high",
+                    supports = new { path = false, offset = false, limit = false, query = false }
+                }
+            },
+            bindings = new object[]
+            {
+                new
+                {
+                    comprexy_tool = "comprexy_read_file_range",
+                    primary_client_tool = "Read",
+                    strategy = "read_then_slice",
+                    arg_map = new { path = "path" }
+                },
+                new
+                {
+                    comprexy_tool = "comprexy_read_file_manifest",
+                    primary_client_tool = "Read",
+                    strategy = "direct",
+                    arg_map = new { path = "path" }
+                },
+                new
+                {
+                    comprexy_tool = "comprexy_shell",
+                    primary_client_tool = "Shell",
+                    strategy = "direct",
+                    arg_map = new
+                    {
+                        command = "command",
+                        working_directory = "working_directory",
+                        block_until_ms = "block_until_ms",
+                        description = "description"
+                    }
+                }
+            }
+        });
+
     private void SetupMapperReturns(string mappingJson, int times = 1)
     {
         var setup = _chatCompletionClient
@@ -513,6 +566,137 @@ public class ToolSchemaOrchestratorTests
             m => m.Role == MessageRole.System &&
                  (m.Content?.Contains("compact", StringComparison.OrdinalIgnoreCase) == true ||
                   m.Content?.Contains("tool schema rules", StringComparison.Ordinal) == true));
+    }
+
+    [Fact]
+    public async Task TryPrepareRewriteAsync_OutboundTools_BoundShell_HidesNativeShell_ShowsComprexyShell()
+    {
+        var request = ReadAndShellToolsRequest();
+        var hash = CatalogHashFor(request);
+        var orchestrator = CreateOrchestrator();
+        SetupMapperReturns(ValidReadShellBoundMappingJson(hash));
+
+        var outcome = await orchestrator.TryPrepareRewriteAsync(
+            Guid.NewGuid(),
+            [new ChatMessage(MessageRole.User, "hello")],
+            request,
+            CancellationToken.None);
+
+        Assert.NotNull(outcome.Result);
+        Assert.True(outcome.Result!.RewrittenClientRequest.TryGetProperty("tools", out var tools));
+        var names = tools.EnumerateArray()
+            .Select(t => t.GetProperty("function").GetProperty("name").GetString()!)
+            .ToList();
+
+        Assert.Contains(ToolSchemaConstants.ShellToolName, names);
+        Assert.Contains(ToolSchemaConstants.FileRangeToolName, names);
+        Assert.Contains(ToolSchemaConstants.ConversationIdMetaToolName, names);
+        Assert.DoesNotContain("Shell", names);
+        Assert.DoesNotContain("Read", names);
+
+        var shellTool = tools.EnumerateArray()
+            .First(t => t.GetProperty("function").GetProperty("name").GetString() ==
+                        ToolSchemaConstants.ShellToolName);
+        var description = shellTool.GetProperty("function").GetProperty("description").GetString()!;
+        Assert.DoesNotContain("Git Safety Protocol", description, StringComparison.Ordinal);
+        Assert.True(description.Length < 800);
+    }
+
+    [Fact]
+    public async Task RunInternalLoopAsync_Shell_EmitsNativeShell_AndInboundDistillsTruncatedObservation()
+    {
+        _options.MaxShellObservationChars = 40;
+        var request = ReadAndShellToolsRequest();
+        var hash = CatalogHashFor(request);
+        var conversationId = Guid.NewGuid();
+        var orchestrator = CreateOrchestrator();
+        SetupMapperReturns(ValidReadShellBoundMappingJson(hash));
+
+        var prepare = await orchestrator.TryPrepareRewriteAsync(
+            conversationId,
+            [new ChatMessage(MessageRole.User, "hello")],
+            request,
+            CancellationToken.None);
+        Assert.NotNull(prepare.Result);
+
+        const string irCallId = "ir_shell_1";
+        var assistantJson = IrShellAssistantJson(irCallId, "dotnet build", "/workspace/repo");
+        var initial = new UpstreamChatResult(
+            string.Empty,
+            "tool_calls",
+            1,
+            1,
+            RawResponseJson: """{"choices":[{"message":{"role":"assistant","tool_calls":[]},"finish_reason":"tool_calls"}]}""",
+            AssistantMessageJson: assistantJson);
+
+        var loop = await orchestrator.RunInternalLoopAsync(
+            prepare.Result!.Session,
+            ChatEndpoint(),
+            ChatUpstream(prepare.Result!.RewrittenClientRequest, new ChatMessage(MessageRole.User, "hello")),
+            initial,
+            CancellationToken.None);
+
+        Assert.False(loop.RequiresInternalHandling);
+        Assert.Single(loop.AllowedRealToolCalls);
+        Assert.Equal("Shell", loop.AllowedRealToolCalls[0].Name);
+        using var nativeArgs = JsonDocument.Parse(loop.AllowedRealToolCalls[0].ArgumentsJson);
+        Assert.Equal("dotnet build", nativeArgs.RootElement.GetProperty("command").GetString());
+        Assert.Equal("/workspace/repo", nativeArgs.RootElement.GetProperty("working_directory").GetString());
+        var clientCallId = loop.AllowedRealToolCalls[0].Id;
+        AssertOpaqueClientCallId(clientCallId);
+        Assert.DoesNotContain("comprexy_shell", loop.FinalUpstreamResult.RawResponseJson, StringComparison.Ordinal);
+
+        var nativeOutput = new string('x', 80);
+        var inbound = await ValidateInboundAndCompleteAsync(
+            orchestrator,
+            conversationId,
+            [ToolCallWireHelper.BuildToolResultMessage(clientCallId, nativeOutput)]);
+
+        Assert.Single(inbound);
+        Assert.Equal(irCallId, ExtractToolCallId(inbound[0]));
+        using var observation = JsonDocument.Parse(inbound[0].Content!);
+        Assert.Equal("shell", observation.RootElement.GetProperty("type").GetString());
+        Assert.Equal("dotnet build", observation.RootElement.GetProperty("command").GetString());
+        Assert.True(observation.RootElement.GetProperty("truncated").GetBoolean());
+        Assert.True(observation.RootElement.GetProperty("content").GetString()!.Length <= 41);
+    }
+
+    [Fact]
+    public async Task ValidateAndRewriteInbound_ReplacedShellTool_DropsNativeAssistantAndOrphanResult()
+    {
+        const string clientCallId = "cur_replacedshellaaaaaaaaaaaaaaaaa";
+        var orchestrator = CreateOrchestrator();
+        using var assistantDoc = JsonDocument.Parse(
+            $$"""
+            {
+              "role": "assistant",
+              "content": "",
+              "tool_calls": [
+                {
+                  "id": "{{clientCallId}}",
+                  "type": "function",
+                  "function": {
+                    "name": "Shell",
+                    "arguments": "{\"command\":\"ls\"}"
+                  }
+                }
+              ]
+            }
+            """);
+        var assistant = new ChatMessage(MessageRole.Assistant, string.Empty, assistantDoc.RootElement.Clone());
+        var tool = ToolCallWireHelper.BuildToolResultMessage(clientCallId, "total 0");
+        var replaced = new HashSet<string>(StringComparer.Ordinal) { "Shell" };
+
+        var inbound = await orchestrator.ValidateAndRewriteInboundToolResultsAsync(
+            Guid.NewGuid(),
+            [assistant, tool],
+            [],
+            [],
+            CancellationToken.None,
+            replaced);
+
+        Assert.Empty(inbound.Messages);
+        Assert.Empty(inbound.CompletedClientCallIds);
     }
 
     [Fact]
@@ -1363,6 +1547,28 @@ public class ToolSchemaOrchestratorTests
                     id = callId,
                     type = "function",
                     function = new { name = "comprexy_read_file_range", arguments = args }
+                }
+            }
+        });
+    }
+
+    private static string IrShellAssistantJson(string callId, string command, string? workingDirectory = null)
+    {
+        object argsObj = workingDirectory is null
+            ? new { command }
+            : new { command, working_directory = workingDirectory };
+        var args = JsonSerializer.Serialize(argsObj);
+        return JsonSerializer.Serialize(new
+        {
+            role = "assistant",
+            content = (string?)null,
+            tool_calls = new[]
+            {
+                new
+                {
+                    id = callId,
+                    type = "function",
+                    function = new { name = "comprexy_shell", arguments = args }
                 }
             }
         });

@@ -1,3 +1,5 @@
+using Comprexy.Application.Services.ToolIr;
+
 namespace Comprexy.Application.Services;
 
 public static class ToolSchemaConstants
@@ -8,13 +10,24 @@ public static class ToolSchemaConstants
     public const string FileRangeToolName = "comprexy_read_file_range";
     public const string FileSearchToolName = "comprexy_read_file_search";
     public const string DirListToolName = "comprexy_dir_list";
+    public const string ShellToolName = "comprexy_shell";
 
+    /// <summary>File-family Virtual tool names (convenience; prefer <see cref="ToolIr.VirtualToolRegistry"/>).</summary>
     public static readonly IReadOnlyList<string> VirtualFileToolNames =
     [
         FileManifestToolName,
         FileRangeToolName,
         FileSearchToolName,
         DirListToolName
+    ];
+
+    public static readonly IReadOnlyList<string> VirtualToolNames =
+    [
+        FileManifestToolName,
+        FileRangeToolName,
+        FileSearchToolName,
+        DirListToolName,
+        ShellToolName
     ];
 
     public const string ConversationIdMetaToolWireJson = """
@@ -39,6 +52,8 @@ public static class ToolSchemaConstants
         !string.IsNullOrWhiteSpace(name) &&
         VirtualFileToolNames.Contains(name, StringComparer.Ordinal);
 
+    public static bool IsVirtualTool(string? name) => VirtualToolRegistry.IsVirtual(name);
+
     public static bool IsReservedToolName(string? name) =>
-        IsConversationIdMetaTool(name) || IsVirtualFileTool(name);
+        IsConversationIdMetaTool(name) || IsVirtualTool(name);
 }

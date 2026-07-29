@@ -135,6 +135,30 @@ public class ToolCatalogParserTests
     }
 
     [Fact]
+    public void TryParse_DetectsReservedShellVirtualToolNameCollision()
+    {
+        using var document = JsonDocument.Parse("""
+            {
+              "tools": [
+                {
+                  "type": "function",
+                  "function": {
+                    "name": "comprexy_shell",
+                    "description": "Client-defined reserved name.",
+                    "parameters": { "type": "object" }
+                  }
+                }
+              ]
+            }
+            """);
+
+        var parsed = _parser.TryParse(document.RootElement);
+
+        Assert.NotNull(parsed);
+        Assert.True(parsed!.HasMetaToolNameCollision);
+    }
+
+    [Fact]
     public void TryParse_DetectsConversationIdMetaToolNameCollision()
     {
         using var document = JsonDocument.Parse("""

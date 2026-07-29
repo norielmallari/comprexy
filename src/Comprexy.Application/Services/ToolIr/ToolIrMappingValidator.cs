@@ -107,7 +107,7 @@ public static class ToolIrMappingValidator
         foreach (var binding in document.Bindings)
         {
             if (string.IsNullOrWhiteSpace(binding.ComprexyTool) ||
-                !ToolSchemaConstants.IsVirtualFileTool(binding.ComprexyTool))
+                !ToolSchemaConstants.IsVirtualTool(binding.ComprexyTool))
             {
                 return new ValidationResult(
                     false,
@@ -139,6 +139,16 @@ public static class ToolIrMappingValidator
                     false,
                     null,
                     $"Unknown strategy '{binding.Strategy}' for '{binding.ComprexyTool}'.");
+            }
+
+            if (VirtualToolRegistry.TryGet(binding.ComprexyTool, out var virtualSpec) &&
+                string.Equals(virtualSpec.Family, VirtualToolFamilies.Shell, StringComparison.Ordinal) &&
+                !string.Equals(binding.Strategy, ToolIrStrategies.Direct, StringComparison.Ordinal))
+            {
+                return new ValidationResult(
+                    false,
+                    null,
+                    $"Binding '{binding.ComprexyTool}' requires strategy 'direct' (got '{binding.Strategy}').");
             }
 
             var primaryCapability = document.ClientCapabilities.FirstOrDefault(c =>
@@ -341,7 +351,12 @@ public static class ToolIrMappingValidator
         return null;
     }
 
-    public static IReadOnlySet<string> GetFileClientToolNames(ToolIrMappingDocument document)
+    /// <summary>
+    /// Client tool names replaced by Virtual IR (capabilities in
+    /// <see cref="ToolIrCapabilities.ReplacedByVirtualTools"/> plus binding primaries).
+    /// Hidden from the model-facing catalog.
+    /// </summary>
+    public static IReadOnlySet<string> GetReplacedClientToolNames(ToolIrMappingDocument document)
     {
         var names = new HashSet<string>(StringComparer.Ordinal);
         foreach (var capability in document.ClientCapabilities)
@@ -359,6 +374,10 @@ public static class ToolIrMappingValidator
 
         return names;
     }
+
+    /// <summary>Obsolete name — use <see cref="GetReplacedClientToolNames"/>.</summary>
+    public static IReadOnlySet<string> GetFileClientToolNames(ToolIrMappingDocument document) =>
+        GetReplacedClientToolNames(document);
 
     public static ToolIrBinding? FindBinding(ToolIrMappingDocument document, string comprexyTool) =>
         document.Bindings.FirstOrDefault(b =>
