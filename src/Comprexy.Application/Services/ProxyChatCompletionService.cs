@@ -2,6 +2,7 @@ using System.Text.Json;
 using Comprexy.Application.Abstractions;
 using Comprexy.Application.Configuration;
 using Comprexy.Application.Models;
+using Comprexy.Application.Services.CacheAlignment;
 using Comprexy.Application.Tracing;
 using Comprexy.Domain.Entities;
 using Comprexy.Domain.Enums;
@@ -25,6 +26,7 @@ public class ProxyChatCompletionService
     private readonly IWorkingMemoryRepository _workingMemoryRepository;
     private readonly ITokenEstimator _tokenEstimator;
     private readonly ContextBuilder _contextBuilder;
+    private readonly ICacheAlignmentService _cacheAlignment;
     private readonly ContextBudgetEvaluator _budgetEvaluator;
     private readonly RecentContextSelector _recentContextSelector;
     private readonly ProviderEndpointResolver _endpointResolver;
@@ -37,6 +39,7 @@ public class ProxyChatCompletionService
     private readonly IClock _clock;
     private readonly ContextPolicyOptions _policy;
     private readonly ProxyOptions _proxyOptions;
+    private readonly CacheAlignmentOptions _cacheAlignmentOptions;
     private readonly IHostApplicationLifetime _hostApplicationLifetime;
     private readonly IPayloadTraceLogger _payloadTrace;
     private readonly IRequestTraceFileSession _requestTraceFiles;
@@ -50,6 +53,7 @@ public class ProxyChatCompletionService
         IWorkingMemoryRepository workingMemoryRepository,
         ITokenEstimator tokenEstimator,
         ContextBuilder contextBuilder,
+        ICacheAlignmentService cacheAlignment,
         ContextBudgetEvaluator budgetEvaluator,
         RecentContextSelector recentContextSelector,
         ProviderEndpointResolver endpointResolver,
@@ -62,6 +66,7 @@ public class ProxyChatCompletionService
         IClock clock,
         IOptions<ContextPolicyOptions> policy,
         IOptions<ProxyOptions> proxyOptions,
+        IOptions<CacheAlignmentOptions> cacheAlignmentOptions,
         IHostApplicationLifetime hostApplicationLifetime,
         IPayloadTraceLogger payloadTrace,
         IRequestTraceFileSession requestTraceFiles,
@@ -74,6 +79,7 @@ public class ProxyChatCompletionService
         _workingMemoryRepository = workingMemoryRepository;
         _tokenEstimator = tokenEstimator;
         _contextBuilder = contextBuilder;
+        _cacheAlignment = cacheAlignment;
         _budgetEvaluator = budgetEvaluator;
         _recentContextSelector = recentContextSelector;
         _endpointResolver = endpointResolver;
@@ -86,6 +92,7 @@ public class ProxyChatCompletionService
         _clock = clock;
         _policy = policy.Value;
         _proxyOptions = proxyOptions.Value;
+        _cacheAlignmentOptions = cacheAlignmentOptions.Value;
         _hostApplicationLifetime = hostApplicationLifetime;
         _payloadTrace = payloadTrace;
         _requestTraceFiles = requestTraceFiles;
@@ -319,7 +326,7 @@ public class ProxyChatCompletionService
 
             // Ensure MappingJson before staging so replaced/excluded native tools are known on the
             // first Virtual turn (client may dump read/glob/excluded history before any IR emit).
-            var (replacedClientToolNames, catalogMutatedForInbound) =
+            var (replacedClientToolNames, catalogMutatedForInbound, inboundCatalogHash, inboundDisableToolIr) =
                 await _toolSchemaOrchestrator.ResolveReplacedClientToolNamesAsync(
                     conversation.Id,
                     request.RawRequest,
@@ -327,6 +334,10 @@ public class ProxyChatCompletionService
             if (catalogMutatedForInbound)
             {
                 await _unitOfWork.SaveChangesAsync(cancellationToken);
+                ApplyCacheAlignmentCatalogMutation(
+                    conversation.Id,
+                    inboundCatalogHash,
+                    inboundDisableToolIr);
             }
 
             // Rewrite Virtual Tools inbound results before persist so DB/model see IR observations.
@@ -452,6 +463,7 @@ public class ProxyChatCompletionService
         // Always rebuild from stored (IR-side) messages. WM is optional — pre-first-compression
         // is the same path with workingMemory == null (never forward client wire history).
         // Folding happens only inside Inline wrap-up on complete.
+        var useCacheAlignment = _cacheAlignmentOptions.Enabled;
         var recentRaw = PrepareRecentRawForChatTemplate(
             conversation.Id,
             allMessages
@@ -460,13 +472,28 @@ public class ProxyChatCompletionService
                 .ToList(),
             currentUserMessage,
             allMessages,
-            currentMessageEntity.Sequence);
+            currentMessageEntity.Sequence,
+            applyLiveDedupe: !useCacheAlignment);
 
-        var outgoing = _contextBuilder.Build(
-            conversation.SystemPrompt,
-            workingMemory,
-            recentRaw,
-            currentUserMessage);
+        IReadOnlyList<ChatMessage> outgoing;
+        if (useCacheAlignment)
+        {
+            outgoing = MaterializeOutgoingViaCacheAlignment(
+                conversation,
+                workingMemory,
+                recentRaw,
+                currentUserMessage,
+                currentMessageEntity,
+                allMessages);
+        }
+        else
+        {
+            outgoing = _contextBuilder.Build(
+                conversation.SystemPrompt,
+                workingMemory,
+                recentRaw,
+                currentUserMessage);
+        }
         var toolSchema = await TryPrepareToolSchemaAsync(
             conversation.Id,
             outgoing,
@@ -529,9 +556,168 @@ public class ProxyChatCompletionService
         if (outcome.CatalogMutated)
         {
             await _unitOfWork.SaveChangesAsync(cancellationToken);
+            if (outcome.Result is not null)
+            {
+                ApplyCacheAlignmentCatalogMutation(
+                    conversationId,
+                    outcome.Result.Session.Mapping.SchemaHash,
+                    disableToolIr: false);
+            }
+            else
+            {
+                ApplyCacheAlignmentCatalogMutation(
+                    conversationId,
+                    catalogHash: null,
+                    disableToolIr: true);
+            }
         }
 
         return outcome.Result;
+    }
+
+    private void ApplyCacheAlignmentCatalogMutation(
+        Guid conversationId,
+        string? catalogHash,
+        bool disableToolIr)
+    {
+        if (!_cacheAlignmentOptions.Enabled)
+        {
+            return;
+        }
+
+        if (disableToolIr)
+        {
+            _cacheAlignment.Invalidate(conversationId);
+            return;
+        }
+
+        if (!string.IsNullOrWhiteSpace(catalogHash))
+        {
+            _cacheAlignment.SetCatalogHash(conversationId, catalogHash);
+        }
+    }
+
+    private IReadOnlyList<ChatMessage> MaterializeOutgoingViaCacheAlignment(
+        Conversation conversation,
+        WorkingMemory? workingMemory,
+        List<ConversationMessage> recentRaw,
+        ChatMessage currentUserMessage,
+        ConversationMessage currentMessageEntity,
+        IReadOnlyList<ConversationMessage> allMessages)
+    {
+        var messagesById = allMessages.ToDictionary(m => m.Id);
+        var snapshot = _cacheAlignment.GetSnapshot(conversation.Id);
+        var wmVersion = workingMemory?.Version ?? 0;
+
+        if (snapshot is null
+            || snapshot.WorkingMemoryVersion != wmVersion
+            || snapshot.RetainFrontierWatermark > currentMessageEntity.Sequence)
+        {
+            // Cold ensure (or WM/watermark mismatch): rebuild wrap-up-ready Prefix from frontier.
+            if (snapshot is not null)
+            {
+                _cacheAlignment.Invalidate(conversation.Id);
+            }
+
+            if (!WrapUpReadiness.TryEnsureWrapUpReady(
+                    recentRaw,
+                    out var prefixFrontier,
+                    out var excluded))
+            {
+                _logger.LogWarning(
+                    "Cache Alignment EnsureWrapUpReady failed for conversation {ConversationId}; falling back to ContextBuilder.Build.",
+                    conversation.Id);
+                return _contextBuilder.Build(
+                    conversation.SystemPrompt,
+                    workingMemory,
+                    recentRaw,
+                    currentUserMessage);
+            }
+
+            var prefix = _contextBuilder.BuildLivePrefix(
+                conversation.SystemPrompt,
+                workingMemory,
+                prefixFrontier);
+            var prefixIds = prefixFrontier.Select(m => m.Id).ToList();
+            var watermark = prefixFrontier.Count == 0
+                ? 0
+                : prefixFrontier.Max(m => m.Sequence);
+
+            if (!_cacheAlignment.TryStorePrefix(
+                    conversation.Id,
+                    prefix,
+                    prefixIds,
+                    wmVersion,
+                    watermark,
+                    catalogHash: null))
+            {
+                _logger.LogWarning(
+                    "Cache Alignment TryStorePrefix rejected for conversation {ConversationId}; falling back to ContextBuilder.Build.",
+                    conversation.Id);
+                return _contextBuilder.Build(
+                    conversation.SystemPrompt,
+                    workingMemory,
+                    recentRaw,
+                    currentUserMessage);
+            }
+
+            var suffixIds = excluded
+                .Concat(new[] { currentMessageEntity })
+                .Select(m => m.Id)
+                .Distinct()
+                .ToList();
+            // Also include any unfolded messages after watermark not in Prefix (open tips).
+            foreach (var message in allMessages.Where(m =>
+                         !m.IsFolded &&
+                         m.Sequence > watermark &&
+                         m.Id != currentMessageEntity.Id))
+            {
+                if (!prefixIds.Contains(message.Id) && !suffixIds.Contains(message.Id))
+                {
+                    suffixIds.Add(message.Id);
+                }
+            }
+
+            _cacheAlignment.ReplaceSuffix(conversation.Id, suffixIds);
+        }
+        else
+        {
+            // Warm: Suffix = unfolded after watermark (including tip); Prefix frozen.
+            var suffixIds = allMessages
+                .Where(m => !m.IsFolded && m.Sequence > snapshot.RetainFrontierWatermark)
+                .OrderBy(m => m.Sequence)
+                .Select(m => m.Id)
+                .ToList();
+            if (suffixIds.Count == 0 || suffixIds[^1] != currentMessageEntity.Id)
+            {
+                // Tip must be present even if sequence heuristic missed it.
+                if (!suffixIds.Contains(currentMessageEntity.Id))
+                {
+                    suffixIds.Add(currentMessageEntity.Id);
+                }
+            }
+
+            _cacheAlignment.ReplaceSuffix(conversation.Id, suffixIds);
+        }
+
+        var tipSequence = currentMessageEntity.Sequence;
+        return _cacheAlignment.MaterializeLive(
+            conversation.Id,
+            messagesById,
+            corpus => ApplyEphemeralLiveDedupe(conversation.Id, corpus.ToList(), allMessages, tipSequence));
+    }
+
+    /// <summary>
+    /// Ephemeral wire-omit for Cache Alignment MaterializeLive — must not mutate stored Prefix/Suffix.
+    /// </summary>
+    private List<ConversationMessage> ApplyEphemeralLiveDedupe(
+        Guid conversationId,
+        List<ConversationMessage> corpus,
+        IReadOnlyList<ConversationMessage> allMessages,
+        int tipSequence)
+    {
+        var list = ApplyLiveDuplicateFileReadDedupe(conversationId, corpus, allMessages, tipSequence);
+        return ApplyLiveDuplicateFailedEditDedupe(conversationId, list, allMessages, tipSequence);
     }
 
     private async Task<PreparedRequest> BuildPreparedRequestAsync(
@@ -666,7 +852,8 @@ public class ProxyChatCompletionService
         List<ConversationMessage> recentRaw,
         ChatMessage tip,
         IReadOnlyList<ConversationMessage> allMessages,
-        int tipSequence)
+        int tipSequence,
+        bool applyLiveDedupe = true)
     {
         var (withParent, restored) = ChatTemplateMessageOrder.EnsureToolTipHasParent(
             recentRaw,
@@ -691,6 +878,11 @@ public class ProxyChatCompletionService
         }
 
         var list = sanitized as List<ConversationMessage> ?? sanitized.ToList();
+        if (!applyLiveDedupe)
+        {
+            return list;
+        }
+
         list = ApplyLiveDuplicateFileReadDedupe(conversationId, list, allMessages, tipSequence);
         return ApplyLiveDuplicateFailedEditDedupe(conversationId, list, allMessages, tipSequence);
     }
@@ -891,6 +1083,11 @@ public class ProxyChatCompletionService
                 toDelete.Count,
                 keepNonSystemCount,
                 keepNonSystemCount);
+        }
+
+        if (_cacheAlignmentOptions.Enabled)
+        {
+            _cacheAlignment.Invalidate(conversation.Id);
         }
 
         await _unitOfWork.SaveChangesAsync(cancellationToken);
@@ -1296,19 +1493,59 @@ public class ProxyChatCompletionService
         try
         {
             var wrapUpUser = _compressionPromptFactory.BuildInlineWrapUpUserMessage();
-            IEnumerable<ChatMessage> wrapPrefix = prepared.UpstreamRequest.Messages;
-            if (wrapUpMode == InlineWrapUpMode.StopTurn)
+            IReadOnlyList<ChatMessage> wrapMessages;
+            if (_cacheAlignmentOptions.Enabled && _cacheAlignment.GetSnapshot(prepared.Conversation.Id) is not null)
             {
-                // Prefer the upstream assistant wire object (incl. reasoning_content) so the follow-up
-                // continues the live turn's exact message shape for KV-cache prefix alignment.
-                var visibleAssistant = new ChatMessage(
-                    MessageRole.Assistant,
-                    visibleAssistantContent,
-                    ParseOptionalWire(upstreamResult.AssistantMessageJson));
-                wrapPrefix = wrapPrefix.Append(visibleAssistant);
-            }
+                var messagesById = storedMessages.ToDictionary(m => m.Id);
+                messagesById[assistantEntity.Id] = assistantEntity;
+                ChatMessage? visibleAssistant = null;
+                if (wrapUpMode == InlineWrapUpMode.StopTurn)
+                {
+                    visibleAssistant = new ChatMessage(
+                        MessageRole.Assistant,
+                        visibleAssistantContent,
+                        ParseOptionalWire(upstreamResult.AssistantMessageJson));
+                }
 
-            var wrapMessages = wrapPrefix.Append(wrapUpUser).ToList();
+                var projection = _cacheAlignment.ProjectWrapUp(
+                    prepared.Conversation.Id,
+                    wrapUpMode == InlineWrapUpMode.MidChainPrefix
+                        ? CacheAlignmentWrapUpMode.MidChainPrefix
+                        : CacheAlignmentWrapUpMode.StopTurn,
+                    visibleAssistant,
+                    wrapUpUser,
+                    messagesById,
+                    prepared.UpstreamRequest.Messages);
+                if (projection.SoftFailed)
+                {
+                    compressionEvent.Fail(
+                        "wrapup_cache_alignment:" + (projection.SoftFailReason ?? "unknown"),
+                        _clock.UtcNow);
+                    _logger.LogInformation(
+                        "Inline follow-up wrap-up soft-failed Cache Alignment projection for conversation {ConversationId}: {Reason}",
+                        prepared.Conversation.Id,
+                        projection.SoftFailReason);
+                    return;
+                }
+
+                wrapMessages = projection.Messages;
+            }
+            else
+            {
+                IEnumerable<ChatMessage> wrapPrefix = prepared.UpstreamRequest.Messages;
+                if (wrapUpMode == InlineWrapUpMode.StopTurn)
+                {
+                    // Prefer the upstream assistant wire object (incl. reasoning_content) so the follow-up
+                    // continues the live turn's exact message shape for KV-cache prefix alignment.
+                    var visibleAssistant = new ChatMessage(
+                        MessageRole.Assistant,
+                        visibleAssistantContent,
+                        ParseOptionalWire(upstreamResult.AssistantMessageJson));
+                    wrapPrefix = wrapPrefix.Append(visibleAssistant);
+                }
+
+                wrapMessages = wrapPrefix.Append(wrapUpUser).ToList();
+            }
 
             // Reuse live sampling / chat_template_* for KV alignment, but omit tools so wrap-up
             // cannot continue the agent tool loop (tip alone is insufficient on local models).
@@ -1428,6 +1665,44 @@ public class ProxyChatCompletionService
         foreach (var message in foldSet)
         {
             message.MarkFoldedInto(newVersion);
+        }
+
+        if (_cacheAlignmentOptions.Enabled)
+        {
+            var retained = foldUniverse
+                .Where(m => keepIds.Contains(m.Id))
+                .OrderBy(m => m.Sequence)
+                .ToList();
+            if (!WrapUpReadiness.TryEnsureWrapUpReady(retained, out var readyRetain, out _))
+            {
+                _logger.LogWarning(
+                    "Cache Alignment CommitWorkingMemory EnsureWrapUpReady failed for conversation {ConversationId}; invalidating Prefix.",
+                    prepared.Conversation.Id);
+                _cacheAlignment.Invalidate(prepared.Conversation.Id);
+            }
+            else
+            {
+                var newPrefix = _contextBuilder.BuildLivePrefix(
+                    prepared.Conversation.SystemPrompt,
+                    newWorkingMemory,
+                    readyRetain);
+                var prefixIds = readyRetain.Select(m => m.Id).ToList();
+                var watermark = readyRetain.Count == 0 ? 0 : readyRetain.Max(m => m.Sequence);
+                var foldedIds = foldSet.Select(m => m.Id).ToHashSet();
+                if (!_cacheAlignment.TryCommitWorkingMemory(
+                        prepared.Conversation.Id,
+                        newPrefix,
+                        prefixIds,
+                        newVersion,
+                        watermark,
+                        foldedIds))
+                {
+                    _logger.LogWarning(
+                        "Cache Alignment TryCommitWorkingMemory rejected for conversation {ConversationId}; invalidating Prefix.",
+                        prepared.Conversation.Id);
+                    _cacheAlignment.Invalidate(prepared.Conversation.Id);
+                }
+            }
         }
 
         var tokensAreEstimated = !wrapResult.PromptTokens.HasValue || !wrapResult.CompletionTokens.HasValue;

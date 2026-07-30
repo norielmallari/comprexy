@@ -1,6 +1,7 @@
 using Comprexy.Application.Abstractions;
 using Comprexy.Application.Configuration;
 using Comprexy.Application.Services;
+using Comprexy.Application.Services.CacheAlignment;
 using Comprexy.Application.Services.ToolIr;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -58,10 +59,14 @@ public static class ServiceCollectionExtensions
         services.AddOptions<ToolSchemaOptions>()
             .Bind(configuration.GetSection(ToolSchemaOptions.SectionName));
 
+        services.AddOptions<CacheAlignmentOptions>()
+            .Bind(configuration.GetSection(CacheAlignmentOptions.SectionName));
+
         services.AddSingleton<IRequestTraceFileSession, RequestTraceFileSession>();
         services.AddSingleton<IPayloadTraceLogger, PayloadTraceLogger>();
         services.AddSingleton<IConversationIdentityResolver, ConversationIdentityResolver>();
         services.AddSingleton<IConversationRequestGate, ConversationRequestGate>();
+        services.AddSingleton<ICacheAlignmentService, CacheAlignmentService>();
         services.AddSingleton<ContextBudgetEvaluator>();
         services.AddSingleton<ContextBuilder>();
         services.AddSingleton<RecentContextSelector>();

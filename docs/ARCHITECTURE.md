@@ -71,7 +71,9 @@ Persistence timing: new non-assistant messages are staged in prepare and saved i
 
 ### Outgoing context
 
-`ContextBuilder` always assembles roughly:
+When `CacheAlignment:Enabled` (default), `ICacheAlignmentService` owns a process-local **wrap-up-ready message Prefix** per conversation (system + optional working-memory system message + closed unfolded raw). Live prepare materializes `Prefix ⊕ Suffix` (ephemeral file-read / failed-edit wire-omit on a copy only). Inline wrap-up appends tip (+ stop-turn visible assistant) via `ProjectWrapUp` without rewriting Prefix. WM accept calls `CommitWorkingMemory`; snapshot rewind and Tool IR disable call `Invalidate`. Tools stay on the wire body, never inside Prefix. `GetByConversationIdAsync` is unchanged.
+
+When Cache Alignment is disabled, `ContextBuilder.Build` assembles roughly:
 
 `system (first-turn capture) + optional working-memory system message + still-unfolded raw messages (+ current tip)`
 
@@ -223,7 +225,7 @@ Loaded as: `appsettings.json` → environment-specific → host defaults → opt
 | Fold / WM versions / Inline prompts | `ProxyChatCompletionService`, `CompressionPromptFactory`, `RecentContextSelector` |
 | Token metrics / conversation proof totals | `ConversationTurnMetric`, `ConversationMetricsSummary`, `ConversationMetricsRecorder`, `IConversationMetricsQueryService`, control-api REST + MCP |
 | Conversation message / WM retrieval (MCP RAG) | `IConversationRetrievalQueryService`, `ConversationMessage` / `WorkingMemory` repos, control-api retrieval MCP tools |
-| Outgoing message assembly | `ContextBuilder`, `RecentContextSelector` |
+| Outgoing message assembly | `ICacheAlignmentService` (wrap-up-ready Prefix when enabled), `ContextBuilder`, `RecentContextSelector` |
 | Identity / fingerprint | `ConversationIdentityResolver` |
 | Schema / keys / indexes | `EntityBase`, EF configs under `Infrastructure/Persistence` (migrations via `dotnet ef` only) |
 | Upstream HTTP / SSE parse | `OpenAiCompatibleChatCompletionClient`, streaming helpers |

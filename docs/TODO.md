@@ -154,7 +154,7 @@ Deferred and planned work for Comprexy. Prefer [GitHub Issues](https://github.co
 - [ ] Per-conversation lock or similar mechanism to avoid cache stampedes under concurrent requests.
 - [ ] Cache hit/miss metrics or logging for operational visibility.
 
-**Notes:** Caching reduces DB load frequency but does not replace [TODO-006](#todo-006--bound-message-loads-per-conversation) bounded loads.
+**Notes:** Caching reduces DB load frequency but does not replace [TODO-006](#todo-006--bound-message-loads-per-conversation) bounded loads. Cache Alignment (`ICacheAlignmentService`, `CacheAlignment` options) is adjacent provider message-prefix / KV work — it does **not** close the TTL conversation-row cache ACs above.
 
 ---
 

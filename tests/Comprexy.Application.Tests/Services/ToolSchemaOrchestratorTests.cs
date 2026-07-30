@@ -733,6 +733,32 @@ public class ToolSchemaOrchestratorTests
     }
 
     [Fact]
+    public async Task TryPrepareRewriteAsync_ExcludeFromModelTools_IsCaseInsensitive()
+    {
+        _options.ExcludeFromModelTools = ["readlints"];
+        var request = ReadWriteReadLintsToolsRequest();
+        var hash = CatalogHashFor(request);
+        var orchestrator = CreateOrchestrator();
+        SetupMapperReturns(ValidReadWriteReadLintsMappingJson(hash));
+
+        var outcome = await orchestrator.TryPrepareRewriteAsync(
+            Guid.NewGuid(),
+            [new ChatMessage(MessageRole.User, "hello")],
+            request,
+            CancellationToken.None);
+
+        Assert.NotNull(outcome.Result);
+        Assert.Contains("ReadLints", outcome.Result!.Session.ExcludedFromModelToolNames);
+        Assert.True(outcome.Result.RewrittenClientRequest.TryGetProperty("tools", out var tools));
+        var names = tools.EnumerateArray()
+            .Select(t => t.GetProperty("function").GetProperty("name").GetString()!)
+            .ToList();
+
+        Assert.DoesNotContain("ReadLints", names);
+        Assert.Contains("Write", names);
+    }
+
+    [Fact]
     public async Task RunInternalLoopAsync_ExcludedTool_LocalReject_NoClientFacingCall()
     {
         _options.ExcludeFromModelTools = ["ReadLints"];

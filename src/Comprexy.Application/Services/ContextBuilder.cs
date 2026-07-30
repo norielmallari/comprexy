@@ -76,8 +76,8 @@ public class ContextBuilder
     }
 
     /// <summary>
-    /// Live chat prefix without a trailing tip: system, optional working memory, then raw messages.
-    /// Used by Smart Cached compression so the shared prefix can match KV cache from chat.
+    /// Cache Alignment cold rebuild helper: system, optional working memory, then raw messages
+    /// (no trailing tip). Live prepare materializes via <c>ICacheAlignmentService</c> when enabled.
     /// </summary>
     public IReadOnlyList<ChatMessage> BuildLivePrefix(
         string? systemPrompt,

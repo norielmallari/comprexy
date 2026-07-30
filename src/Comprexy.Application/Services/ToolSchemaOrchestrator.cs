@@ -29,8 +29,9 @@ public sealed class ToolSchemaSession
     /// <summary>
     /// Operator denylist (<c>ToolSchema:ExcludeFromModelTools</c>) — hidden from model catalog,
     /// locally rejected if called, swallowed on inbound like replaced tools.
+    /// Names compared ordinal ignore-case.
     /// </summary>
-    public HashSet<string> ExcludedFromModelToolNames { get; init; } = new(StringComparer.Ordinal);
+    public HashSet<string> ExcludedFromModelToolNames { get; init; } = new(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>Obsolete alias — use <see cref="ReplacedClientToolNames"/>.</summary>
     public HashSet<string> FileClientToolNames
@@ -372,21 +373,25 @@ public class ToolSchemaOrchestrator
     /// Ensures MappingJson when the catalog hash needs a map so the first
     /// Virtual turn can drop client-native remapped / excluded history before it is staged.
     /// </summary>
-    public async Task<(IReadOnlySet<string> ReplacedClientToolNames, bool CatalogMutated)> ResolveReplacedClientToolNamesAsync(
+    /// <returns>
+    /// Replaced names, whether catalog rows need flush, catalog hash when known, and whether
+    /// this call just disabled Tool IR (Cache Alignment must Invalidate Prefix).
+    /// </returns>
+    public async Task<(IReadOnlySet<string> ReplacedClientToolNames, bool CatalogMutated, string? CatalogHash, bool DisableToolIr)> ResolveReplacedClientToolNamesAsync(
         Guid conversationId,
         JsonElement? rawRequest,
         CancellationToken cancellationToken)
     {
         if (!ShouldAttemptActivation(passThrough: false))
         {
-            return (new HashSet<string>(StringComparer.Ordinal), CatalogMutated: false);
+            return (new HashSet<string>(StringComparer.Ordinal), CatalogMutated: false, CatalogHash: null, DisableToolIr: false);
         }
 
         var excluded = _options.GetNormalizedExcludedToolNames();
         var parsed = _catalogParser.TryParse(rawRequest);
         if (parsed is null || parsed.HasMetaToolNameCollision)
         {
-            return (new HashSet<string>(StringComparer.Ordinal), CatalogMutated: false);
+            return (new HashSet<string>(StringComparer.Ordinal), CatalogMutated: false, CatalogHash: null, DisableToolIr: false);
         }
 
         var existingCatalog = await _catalogRepository.GetByConversationIdAsync(conversationId, cancellationToken);
@@ -394,7 +399,7 @@ public class ToolSchemaOrchestrator
             string.Equals(existingCatalog.CatalogHash, parsed.CatalogHash, StringComparison.Ordinal) &&
             existingCatalog.ToolIrDisabled)
         {
-            return (new HashSet<string>(StringComparer.Ordinal), CatalogMutated: false);
+            return (new HashSet<string>(StringComparer.Ordinal), CatalogMutated: false, CatalogHash: parsed.CatalogHash, DisableToolIr: false);
         }
 
         var catalogToolNames = parsed.CompactEntries.Select(e => e.Name).ToHashSet(StringComparer.Ordinal);
@@ -412,7 +417,9 @@ public class ToolSchemaOrchestrator
             {
                 return (
                     ToHiddenSet(ToolIrMappingValidator.GetReplacedClientToolNames(cached.Document), excluded),
-                    CatalogMutated: false);
+                    CatalogMutated: false,
+                    CatalogHash: parsed.CatalogHash,
+                    DisableToolIr: false);
             }
         }
 
@@ -426,12 +433,18 @@ public class ToolSchemaOrchestrator
         if (outcome.Result is null)
         {
             // Prepare may have DisableToolIr — do not apply exclude when Virtual is off for this hash.
-            return (new HashSet<string>(StringComparer.Ordinal), outcome.CatalogMutated);
+            return (
+                new HashSet<string>(StringComparer.Ordinal),
+                outcome.CatalogMutated,
+                CatalogHash: parsed.CatalogHash,
+                DisableToolIr: outcome.CatalogMutated);
         }
 
         return (
             ToHiddenSet(outcome.Result.Session.ReplacedClientToolNames, outcome.Result.Session.ExcludedFromModelToolNames),
-            outcome.CatalogMutated);
+            outcome.CatalogMutated,
+            CatalogHash: outcome.Result.Session.Mapping.SchemaHash,
+            DisableToolIr: false);
     }
 
     public async Task<ToolSchemaPrepareOutcome> TryPrepareRewriteAsync(
@@ -572,7 +585,7 @@ public class ToolSchemaOrchestrator
         var replacedClientTools = ToolIrMappingValidator.GetReplacedClientToolNames(mapping)
             .ToHashSet(StringComparer.Ordinal);
         var excludedFromModel = _options.GetNormalizedExcludedToolNames()
-            .ToHashSet(StringComparer.Ordinal);
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
         var boundVirtual = mapping.Bindings
             .Select(b => b.ComprexyTool)
             .Where(ToolSchemaConstants.IsVirtualTool)
@@ -1201,7 +1214,8 @@ public class ToolSchemaOrchestrator
         IEnumerable<string>? replaced,
         IEnumerable<string>? excluded)
     {
-        var set = new HashSet<string>(StringComparer.Ordinal);
+        // OrdinalIgnoreCase so ExcludeFromModelTools matches IDE case variants (TodoWrite vs todowrite).
+        var set = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         if (replaced is not null)
         {
             foreach (var name in replaced)

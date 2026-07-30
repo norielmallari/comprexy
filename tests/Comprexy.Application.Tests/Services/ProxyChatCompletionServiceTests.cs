@@ -3,6 +3,7 @@ using Comprexy.Application.Abstractions;
 using Comprexy.Application.Configuration;
 using Comprexy.Application.Models;
 using Comprexy.Application.Services;
+using Comprexy.Application.Services.CacheAlignment;
 using Comprexy.Application.Services.ToolIr;
 using Comprexy.Domain.Entities;
 using Comprexy.Domain.Enums;
@@ -32,6 +33,8 @@ public class ProxyChatCompletionServiceTests
     };
 
     private ProxyOptions _proxyOptions = new();
+
+    private CacheAlignmentOptions _cacheAlignmentOptions = new() { Enabled = true, MaxConversations = 1024 };
 
     private readonly CompressionOptions _compressionOptions = new();
 
@@ -68,7 +71,8 @@ public class ProxyChatCompletionServiceTests
 
     private ProxyChatCompletionService CreateService(
         IConversationRequestGate? requestGate = null,
-        IConversationMetricsRecorder? metricsRecorder = null)
+        IConversationMetricsRecorder? metricsRecorder = null,
+        ICacheAlignmentService? cacheAlignment = null)
     {
         _clock.Setup(c => c.UtcNow).Returns(DateTimeOffset.UtcNow);
         _tokenEstimator.Setup(t => t.CountTokens(It.IsAny<string>())).Returns(5);
@@ -113,6 +117,9 @@ public class ProxyChatCompletionServiceTests
             _clock.Object,
             toolSchemaOptions);
 
+        ICacheAlignmentService alignment = cacheAlignment
+            ?? new CacheAlignmentService(Options.Create(_cacheAlignmentOptions));
+
         return new ProxyChatCompletionService(
             new ConversationIdentityResolver(),
             requestGate ?? new ConversationRequestGate(),
@@ -121,6 +128,7 @@ public class ProxyChatCompletionServiceTests
             _workingMemoryRepository.Object,
             _tokenEstimator.Object,
             new ContextBuilder(),
+            alignment,
             new ContextBudgetEvaluator(Options.Create(_policy)),
             new RecentContextSelector(Options.Create(_policy)),
             endpointResolver,
@@ -152,6 +160,7 @@ public class ProxyChatCompletionServiceTests
             _clock.Object,
             Options.Create(_policy),
             Options.Create(_proxyOptions),
+            Options.Create(_cacheAlignmentOptions),
             _hostLifetime.Object,
             Mock.Of<IPayloadTraceLogger>(),
             Mock.Of<IRequestTraceFileSession>(),
@@ -3044,6 +3053,173 @@ public class ProxyChatCompletionServiceTests
         _unitOfWork.Verify(u => u.SaveChangesAsync(It.IsAny<CancellationToken>()), Times.Once);
         Assert.True(_mapSaveChangesCount >= 1);
         Assert.Empty(_callIdMapRepo.Rows);
+    }
+
+    [Fact]
+    public async Task HandleAsync_CacheAlignmentEnabled_PrepareUsesMaterializeLive()
+    {
+        _estimatedTokensToReturn = 10;
+        var spy = new Mock<ICacheAlignmentService>();
+        spy.Setup(s => s.GetSnapshot(It.IsAny<Guid>())).Returns((CacheAlignmentSnapshot?)null);
+        spy.Setup(s => s.TryStorePrefix(
+                It.IsAny<Guid>(),
+                It.IsAny<IReadOnlyList<ChatMessage>>(),
+                It.IsAny<IReadOnlyList<Guid>>(),
+                It.IsAny<int>(),
+                It.IsAny<int>(),
+                It.IsAny<string?>()))
+            .Returns(true);
+        spy.Setup(s => s.MaterializeLive(
+                It.IsAny<Guid>(),
+                It.IsAny<IReadOnlyDictionary<Guid, ConversationMessage>>(),
+                It.IsAny<Func<IReadOnlyList<ConversationMessage>, IReadOnlyList<ConversationMessage>>?>()))
+            .Returns((Guid _, IReadOnlyDictionary<Guid, ConversationMessage> _, Func<IReadOnlyList<ConversationMessage>, IReadOnlyList<ConversationMessage>>? _) =>
+                new List<ChatMessage>
+                {
+                    new(MessageRole.System, "You are helpful."),
+                    new(MessageRole.User, "Hello")
+                });
+
+        _conversationRepository.Setup(r => r.FindByKeyAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((Conversation?)null);
+        _workingMemoryRepository.Setup(r => r.GetLatestAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((WorkingMemory?)null);
+        _chatCompletionClient
+            .Setup(c => c.CompleteAsync(It.IsAny<ProviderEndpoint>(), It.IsAny<UpstreamRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new UpstreamChatResult("ok", "stop", 10, 2));
+
+        var service = CreateService(cacheAlignment: spy.Object);
+        await service.HandleAsync(BuildRequest(conversationHeader: "ca-materialize"), CancellationToken.None);
+
+        spy.Verify(s => s.TryStorePrefix(
+            It.IsAny<Guid>(),
+            It.IsAny<IReadOnlyList<ChatMessage>>(),
+            It.IsAny<IReadOnlyList<Guid>>(),
+            It.IsAny<int>(),
+            It.IsAny<int>(),
+            It.IsAny<string?>()), Times.Once);
+        spy.Verify(s => s.MaterializeLive(
+            It.IsAny<Guid>(),
+            It.IsAny<IReadOnlyDictionary<Guid, ConversationMessage>>(),
+            It.IsAny<Func<IReadOnlyList<ConversationMessage>, IReadOnlyList<ConversationMessage>>?>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task HandleAsync_CacheAlignmentDisabled_DoesNotCallMaterializeLive()
+    {
+        _cacheAlignmentOptions = new CacheAlignmentOptions { Enabled = false };
+        _estimatedTokensToReturn = 10;
+        var spy = new Mock<ICacheAlignmentService>();
+
+        _conversationRepository.Setup(r => r.FindByKeyAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((Conversation?)null);
+        _workingMemoryRepository.Setup(r => r.GetLatestAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((WorkingMemory?)null);
+        _chatCompletionClient
+            .Setup(c => c.CompleteAsync(It.IsAny<ProviderEndpoint>(), It.IsAny<UpstreamRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new UpstreamChatResult("ok", "stop", 10, 2));
+
+        var service = CreateService(cacheAlignment: spy.Object);
+        await service.HandleAsync(BuildRequest(conversationHeader: "ca-disabled"), CancellationToken.None);
+
+        spy.Verify(s => s.MaterializeLive(
+            It.IsAny<Guid>(),
+            It.IsAny<IReadOnlyDictionary<Guid, ConversationMessage>>(),
+            It.IsAny<Func<IReadOnlyList<ConversationMessage>, IReadOnlyList<ConversationMessage>>?>()), Times.Never);
+        spy.Verify(s => s.TryStorePrefix(
+            It.IsAny<Guid>(),
+            It.IsAny<IReadOnlyList<ChatMessage>>(),
+            It.IsAny<IReadOnlyList<Guid>>(),
+            It.IsAny<int>(),
+            It.IsAny<int>(),
+            It.IsAny<string?>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task HandleAsync_TwoPrepares_EphemeralOmitDoesNotChangeStoredPrefix()
+    {
+        _policy.DedupeDuplicateFileReads = true;
+        _estimatedTokensToReturn = 10;
+        var alignment = new CacheAlignmentService(Options.Create(_cacheAlignmentOptions));
+        var conversation = Conversation.Create("header:ca-omit", DateTimeOffset.UtcNow);
+        conversation.CaptureSystemPromptIfAbsent("You are helpful.");
+        conversation.SetSyncedMessageCount(0, DateTimeOffset.UtcNow);
+        var stored = new List<ConversationMessage>();
+
+        _conversationRepository.Setup(r => r.FindByKeyAsync("header:ca-omit", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(conversation);
+        _messageRepository.Setup(r => r.GetByConversationIdAsync(conversation.Id, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(() => stored.ToList());
+        _messageRepository.Setup(r => r.Add(It.IsAny<ConversationMessage>()))
+            .Callback<ConversationMessage>(m => stored.Add(m));
+        _workingMemoryRepository.Setup(r => r.GetLatestAsync(conversation.Id, It.IsAny<CancellationToken>()))
+            .ReturnsAsync((WorkingMemory?)null);
+        _chatCompletionClient
+            .Setup(c => c.CompleteAsync(It.IsAny<ProviderEndpoint>(), It.IsAny<UpstreamRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new UpstreamChatResult("ok", "stop", 10, 2));
+
+        var service = CreateService(cacheAlignment: alignment);
+        await service.HandleAsync(BuildRequest(conversationHeader: "ca-omit", userContent: "first"), CancellationToken.None);
+        var afterFirst = alignment.GetSnapshot(conversation.Id);
+        Assert.NotNull(afterFirst);
+        var prefixBytes = afterFirst!.Prefix.ToList();
+
+        // Grow client history past synced cursor so the second prepare Appends without rewind.
+        var payload = new
+        {
+            model = "client-model",
+            stream = false,
+            temperature = 0.2,
+            tools = new object[]
+            {
+                new { type = "function", function = new { name = "lookup" } }
+            },
+            messages = new object[]
+            {
+                new { role = "system", content = "You are helpful." },
+                new { role = "user", content = "first" },
+                new { role = "assistant", content = "ok" },
+                new { role = "user", content = "second" }
+            }
+        };
+        using var document = JsonDocument.Parse(JsonSerializer.Serialize(payload));
+        var secondRequest = Comprexy.Api.Mapping.ChatCompletionRequestParser.Parse(
+            document.RootElement.Clone(),
+            "ca-omit");
+
+        await service.HandleAsync(secondRequest, CancellationToken.None);
+        var afterSecond = alignment.GetSnapshot(conversation.Id);
+        Assert.NotNull(afterSecond);
+        Assert.True(CacheAlignmentService.ArePrefixEqual(prefixBytes, afterSecond!.Prefix));
+    }
+
+    [Fact]
+    public async Task HandleAsync_PassThrough_DoesNotCallCacheAlignmentMaterialize()
+    {
+        _proxyOptions = new ProxyOptions { PassThrough = true };
+        _estimatedTokensToReturn = 10;
+        var spy = new Mock<ICacheAlignmentService>();
+
+        _conversationRepository.Setup(r => r.FindByKeyAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((Conversation?)null);
+        _chatCompletionClient
+            .Setup(c => c.CompleteAsync(It.IsAny<ProviderEndpoint>(), It.IsAny<UpstreamRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new UpstreamChatResult("ok", "stop", 10, 2));
+
+        var service = CreateService(cacheAlignment: spy.Object);
+        await service.HandleAsync(BuildRequest(conversationHeader: "ca-passthrough"), CancellationToken.None);
+
+        spy.Verify(s => s.MaterializeLive(
+            It.IsAny<Guid>(),
+            It.IsAny<IReadOnlyDictionary<Guid, ConversationMessage>>(),
+            It.IsAny<Func<IReadOnlyList<ConversationMessage>, IReadOnlyList<ConversationMessage>>?>()), Times.Never);
+        spy.Verify(s => s.TryStorePrefix(
+            It.IsAny<Guid>(),
+            It.IsAny<IReadOnlyList<ChatMessage>>(),
+            It.IsAny<IReadOnlyList<Guid>>(),
+            It.IsAny<int>(),
+            It.IsAny<int>(),
+            It.IsAny<string?>()), Times.Never);
     }
 
     private static string CreateContentSseChunk(string content) =>
