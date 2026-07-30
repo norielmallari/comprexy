@@ -1,6 +1,6 @@
 # Architecture
 
-Contributor-oriented map of how Comprexy is structured and how a chat request moves through the system. Operator setup and config tables live in [`SETTINGS.md`](SETTINGS.md); deferred work lives in [`TODO.md`](TODO.md).
+Contributor-oriented map of how Comprexy is structured and how a chat request moves through the system. Operator setup and config tables live in [`SETTINGS.md`](SETTINGS.md).
 
 ## Purpose
 
@@ -16,6 +16,7 @@ It is intentionally narrow: chat-completion context management (including tool-s
 apps/
   proxy/                     # Data plane: Comprexy.Api host (`Endpoints/`), chat DTOs, prompts
   control-api/               # Control plane: REST metrics (`GET /v1/comprexy/*`) + telemetry MCP (`/mcp`)
+  dashboard/                 # Optional Next.js metrics UI over control-api (`:3000`)
 src/
   Comprexy.Application/      Use cases, ports (abstractions), orchestration
   Comprexy.Domain/           Entities and enums (no infrastructure deps)
@@ -30,6 +31,7 @@ tests/
 | --- | --- |
 | **Proxy (`apps/proxy`)** | Parse OpenAI-shaped JSON, map errors/status codes, stream SSE, optional API-key gate, composition root for chat |
 | **Control API (`apps/control-api`)** | Operator REST metrics and remote telemetry MCP (Streamable HTTP at `/mcp`); shares Application/Infrastructure and SQLite with the proxy |
+| **Dashboard (`apps/dashboard`)** | Optional browser UI for conversation metrics over control-api REST; does not talk to the proxy or SQLite directly |
 | **Application** | Conversation identity, prepare/complete chat, soft-budget decisions, context rebuild, Inline wrap-up, Virtual Tools (ToolSchema / ToolIr), token metrics / telemetry query facade, conversation retrieval (RAG) query facade |
 | **Domain** | `EntityBase`, `Conversation`, `ConversationMessage`, `WorkingMemory`, `CompressionEvent`, `ConversationTurnMetric`, `ConversationMetricsSummary`, `ConversationToolCatalog`, `ConversationToolDefinition`, `ConversationToolCallMap` and related enums |
 | **Infrastructure** | Persistence, OpenAI-compatible HTTP client, tiktoken estimates, shared API-key middleware |
@@ -47,12 +49,14 @@ flowchart TB
   Proxy --> Upstream[IChatCompletionClient]
   Api --> Pass[UpstreamPassthroughProxy]
   Pass --> Provider[Other /v1/* upstream]
-  Ops[Operator / dashboard / MCP client] --> Control["apps/control-api /v1/comprexy + /mcp"]
+  Ops[Operator / MCP client] --> Control["apps/control-api /v1/comprexy + /mcp"]
+  Dashboard["apps/dashboard :3000"] --> Control
   Control --> DB
 ```
 
 - **Chat path:** `POST /v1/chat/completions` → `ProxyChatCompletionService` (rebuild, soft budget, Inline wrap-up).
 - **Metrics path:** `GET /v1/comprexy/conversations*` on **control-api** (`:8130`) → conversation token proof summaries and per-turn breakdown. Proxy emits/persists metrics; it does not serve query routes. The per-turn prepared-prompt split (system / working memory / history + tools) is derived read-side by `ConversationMetricsQueryService` from `Conversation.SystemPrompt` and stored `WorkingMemory.TokenCount`; nothing extra is persisted per turn, and the three parts sum to `CompressedInputTokensEstimated` so clients render them without re-deriving.
+- **Dashboard path:** optional `apps/dashboard` (`:3000`) browser UI over control-api REST (not the proxy). Enable CORS for the dashboard origin on control-api when needed.
 - **Telemetry MCP path:** Streamable HTTP at `/mcp` on **control-api** — same Application read facades as REST (`IConversationMetricsQueryService` for metrics; `IConversationRetrievalQueryService` for message/WM RAG). Tools are `comprexy_*` and require an explicit `conversationId` (from the proxy meta-tool `comprexy_get_current_conversation_id`, response header `X-Comprexy-Conversation-Id`, or operator tooling). Resources use `comprexy://conversation/{conversationId}/…` templates. Stateless transport; no ambient current-conversation header on MCP. Summary totals, weighted/simple average, peak, and final-turn fields are whole-conversation; median and savings regressions are computed from the bounded `TurnIndex`-ordered sample and are marked via `IsPartialTurnSample` when the conversation exceeds the row cap. Retrieval tools search/window `ConversationMessage` by `Sequence` and expose versioned `WorkingMemory` plus open tool-chain status derived via `ToolCallChainState` (same closed-chain rule as Inline wrap-up; `isAwaitingClientToolResults` marks tip-only in-flight batches). Host filtering defaults to loopback (`AllowedHosts`); CORS denies browser origins unless `Cors:AllowedOrigins` lists them.
 - **Passthrough path:** other `/v1/{**path}` → reverse-proxy to `Provider` unchanged.
 - **Escape hatch:** `Proxy:PassThrough` forwards the original chat body with no rebuild, compression, or turn metrics.
@@ -67,7 +71,7 @@ flowchart TB
 4. **Upstream** — non-stream `CompleteAsync` or stream with SSE; when ToolSchema Virtual is active, conversation-id meta and local file-cache satisfies stay proxy-internal (streaming clients get live content/reasoning with remapped native `tool_calls` and early `[DONE]` suppressed until the final client-bound turn); model comes from `Provider:Model` when set, otherwise the client's request `model`. On eligible Inline turns, streaming also defers the client tail until the follow-up wrap-up attempt finishes: final `[DONE]` on every eligible turn, plus the whole real `tool_calls` tail on mid-chain turns.
 5. **Complete** — persist assistant (and staged user) turns; if Inline eligible, run a blocking wrap-up and two-phase save (visible transcript, then event ± WM); otherwise persist only.
 
-Persistence timing: new non-assistant messages are staged in prepare and saved in complete after a successful upstream call, except named early flushes (CatalogMutated, snapshot rewind, inbound distill commit before dual-id Complete — see Persistence § Unit of Work ownership). Treat the DB as a record of completed turns unless that contract changes (see TODO-002).
+Persistence timing: new non-assistant messages are staged in prepare and saved in complete after a successful upstream call, except named early flushes (CatalogMutated, snapshot rewind, inbound distill commit before dual-id Complete — see Persistence § Unit of Work ownership). Treat the DB as a record of completed turns unless that contract changes.
 
 ### Outgoing context
 
@@ -219,6 +223,7 @@ Loaded as: `appsettings.json` → environment-specific → host defaults → opt
 | --- | --- |
 | HTTP contract, status codes, streaming (chat) | `apps/proxy` `Endpoints/*`, mappers, streaming |
 | Metrics query HTTP | `apps/control-api` `Endpoints/MetricsEndpoints.cs` |
+| Metrics dashboard UI | `apps/dashboard` (Next.js; consumes control-api REST) |
 | Telemetry MCP tools/resources | `apps/control-api` `Mcp/` (`ConversationTools`, `ConversationRetrievalTools`, `ConversationResources`, `ConversationRetrievalResources`) |
 | Shared API-key middleware | `Infrastructure/Hosting/ApiKeyAuthMiddleware` |
 | Turn prepare/complete, soft budget, Inline wrap-up, Virtual Tools rewrite | `ProxyChatCompletionService`, `ToolSchemaOrchestrator`, `ToolIr*` helpers |

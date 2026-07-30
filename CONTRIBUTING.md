@@ -1,6 +1,8 @@
-# Contributing to Comprexy
+# Contributing to Comprexy OSS
 
 Thanks for contributing.
+
+This repository is a MIT-licensed proof of concept and is **not under active feature development**. Bug fixes, documentation, and compatibility improvements are welcome case-by-case. **New feature pull requests are out of scope.** Further product work continues as Comprexy (separate from this tree). See the README [Project direction](README.md#project-direction) section.
 
 ## Prerequisites
 
@@ -23,6 +25,7 @@ Or `dotnet build` / `dotnet test`. Local hosts: `proxy`, `control-api`, or `dev`
 apps/
   proxy/                     # Data-plane host (Comprexy.Api), chat endpoints, prompts
   control-api/               # Control-plane host: metrics REST + telemetry MCP (`/mcp`)
+  dashboard/                 # Optional Next.js metrics UI over control-api (`:3000`)
 
 src/
   Comprexy.Domain/           Entities & enums (including tool catalog / dual-id map)
@@ -36,7 +39,6 @@ tests/
 docs/
   ARCHITECTURE.md            System map (chat lifecycle, Virtual Tools, persistence)
   SETTINGS.md                Operator config reference (including ToolSchema)
-  TODO.md                    Public backlog / deferred work
 ```
 
 ## Local database
@@ -80,7 +82,7 @@ Use Local for upstream `Provider` settings and optional `Trace:RequestFiles` aud
 
 Public docs live in `README.md`, `CONTRIBUTING.md`, and `docs/`. Keep them factual and operator-facing: what the software does, how to configure it, and known limits. Prefer calm, precise language over marketing or audit-style severity writeups.
 
-Deferred work belongs in [`docs/TODO.md`](docs/TODO.md) or GitHub Issues. Design notes and private reviews should stay out of the public tree.
+Design notes, private reviews, and internal backlog should stay out of the public tree (e.g. gitignored `internal/`). Use GitHub Issues when an item needs public discussion.
 
 ## Security
 

@@ -1,19 +1,29 @@
-# Comprexy
+# Comprexy OSS
 
-OpenAI-compatible context compression proxy for long-running chats and coding agents.
+OpenAI-compatible context observability and compression proxy for long-running agentic workflows.
 
-**Comprexy™** sits between your client (Cursor, CLI agents, custom apps) and any OpenAI-compatible upstream. It persists completed turns, rebuilds a bounded upstream prompt from versioned **working memory** plus still-unfolded messages, and folds older context via **Inline** wrap-up when soft budget pressure applies — without summarizing on every reply.
+**Comprexy OSS** sits between your client (Cursor, CLI agents, custom apps) and any OpenAI-compatible upstream. It persists completed turns, rebuilds a bounded upstream prompt from versioned **working memory** plus still-unfolded messages, and folds older context via **Inline** wrap-up when soft budget pressure applies — without summarizing on every reply.
 
-Under **Virtual Tools** (default), Comprexy also owns the **model-facing tool catalog**: large IDE schemas (file read, shell, and similar) are replaced with compact `comprexy_*` IR tools, remapped to native client calls, and distilled on the way back — so tool definitions and results stop dominating the prompt. Optional `ExcludeFromModelTools` hides selected client tools from the model entirely.
+Under **Virtual Tools** (default), Comprexy OSS also owns the **model-facing tool catalog**: large IDE schemas (file read, shell, and similar) are replaced with compact `comprexy_*` IR tools, remapped to native client calls, and distilled on the way back — so tool definitions and results stop dominating the prompt. Optional `ExcludeFromModelTools` hides selected client tools from the model entirely.
 
 Soft budget pressure triggers a blocking Inline follow-up wrap-up on eligible turns (closed stored tool chain + cooldown). Local-first by default: point `Provider` at Ollama, LM Studio, vLLM, or a cloud OpenAI-compatible endpoint.
 
-[Quick start](#quick-start) · [Why Comprexy?](#why-comprexy) · [Design principles](#design-principles) · [What Comprexy is not](#what-comprexy-is-not) · [Source of truth](#source-of-truth) · [Agentic workflow](#agentic-workflow) · [MCP setup](#mcp-setup) · [Features](#features) · [How it works](#how-it-works) · [Virtual Tools](#virtual-tools) · [Configuration](#configuration) · [Limitations](#limitations) · [Architecture](#architecture) · [Contributing](#contributing)
+[Project direction](#project-direction) · [Quick start](#quick-start) · [Why Comprexy OSS?](#why-comprexy-oss) · [Design principles](#design-principles) · [What Comprexy OSS is not](#what-comprexy-oss-is-not) · [Source of truth](#source-of-truth) · [Agentic workflow](#agentic-workflow) · [MCP setup](#mcp-setup) · [Features](#features) · [How it works](#how-it-works) · [Virtual Tools](#virtual-tools) · [Configuration](#configuration) · [Limitations](#limitations) · [Architecture](#architecture) · [Contributing](#contributing)
 
 ![.NET](https://img.shields.io/badge/.NET-10-512BD4?logo=dotnet&logoColor=white)
 ![Platform](https://img.shields.io/badge/platform-cross--platform-informational)
 ![License](https://img.shields.io/badge/license-MIT-green)
-![Status](https://img.shields.io/badge/status-early%20preview-orange)
+![Status](https://img.shields.io/badge/status-proof%20of%20concept-orange)
+
+## Project direction
+
+This repository is a **MIT-licensed proof of concept**. It is **not under active feature development**.
+
+Further product work continues as **Comprexy**, separate from this repository. Bug fixes, documentation updates, and compatibility fixes may still land here. New features will not.
+
+You are free to use, fork, and modify this code under the [MIT License](LICENSE). The Comprexy name and branding for separate or commercial products remain subject to the [Trademark & Copyright](#trademark--copyright) terms below.
+
+> Comprexy OSS proves the capability. Comprexy is the product.
 
 ## Quick start
 
@@ -64,7 +74,7 @@ Override the API base with `NEXT_PUBLIC_API_BASE_URL` if control-api is not on `
 
 If .NET 10 is missing, the script prompts to install the SDK into `~/.dotnet` (or `%USERPROFILE%\.dotnet` on Windows) via the official Microsoft install script. Use `install-dotnet` or `COMPREXY_AUTO_INSTALL_DOTNET=1` for non-interactive installs.
 
-On first run, Comprexy applies EF Core migrations and creates `data/comprexy.db` under the repo root (shared with control-api). Listen URLs:
+On first run, Comprexy OSS applies EF Core migrations and creates `data/comprexy.db` under the repo root (shared with control-api). Listen URLs:
 
 | Process | URL |
 | --- | --- |
@@ -93,17 +103,17 @@ curl http://localhost:8129/v1/chat/completions \
   }'
 ```
 
-On the normal path, when `Provider:Model` is set Comprexy replaces `model` with that value; when it is null/omitted, the client's `model` is forwarded. In `Proxy:PassThrough` mode, the client body (including `model`) is forwarded as sent unless `Provider:Model` overrides it.
+On the normal path, when `Provider:Model` is set Comprexy OSS replaces `model` with that value; when it is null/omitted, the client's `model` is forwarded. In `Proxy:PassThrough` mode, the client body (including `model`) is forwarded as sent unless `Provider:Model` overrides it.
 
-## Why Comprexy?
+## Why Comprexy OSS?
 
-Comprexy was built from a real local LLM limitation: long-running planning workflows in Cursor became impractical as context accumulated. History, tool output, and corrections pile up until each turn is noisy, expensive, or past the model’s useful window. On local runtimes, once the prompt crosses a size threshold, tokens-per-second often drops sharply — prefill gets heavier, streaming feels sticky, and the developer loop slows down even when the model could still answer. Restarting and re-explaining kills flow; summarizing on every turn adds latency; blind truncation drops decisions you still need.
+Comprexy OSS was built from a real local LLM limitation: long-running planning workflows in Cursor became impractical as context accumulated. History, tool output, and corrections pile up until each turn is noisy, expensive, or past the model’s useful window. On local runtimes, once the prompt crosses a size threshold, tokens-per-second often drops sharply — prefill gets heavier, streaming feels sticky, and the developer loop slows down even when the model could still answer. Restarting and re-explaining kills flow; summarizing on every turn adds latency; blind truncation drops decisions you still need.
 
-Comprexy keeps the **sent** context manageable — stable information in versioned working memory, older context folded on soft budget pressure — so the model does not need the full accumulated history every turn. Coding agents also ship large `tools[]` catalogs (a single Shell definition can be thousands of tokens); Virtual Tools shrinks what the model sees without changing what the IDE executes. Smaller upstream prompts do not guarantee faster inference, but they help keep long sessions in a size range where local tok/s stays usable. The goal is simple: make long-running local LLM workflows practical.
+Comprexy OSS keeps the **sent** context manageable — stable information in versioned working memory, older context folded on soft budget pressure — so the model does not need the full accumulated history every turn. Coding agents also ship large `tools[]` catalogs (a single Shell definition can be thousands of tokens); Virtual Tools shrinks what the model sees without changing what the IDE executes. Smaller upstream prompts do not guarantee faster inference, but they help keep long sessions in a size range where local tok/s stays usable. The goal of this proof of concept is simple: make long-running local LLM workflows practical.
 
 ### Dogfood validation
 
-Top 3 evidences — end-to-end Cursor workflows on a local LLM (Qwen-35B behind Comprexy):
+Top 3 evidences — end-to-end Cursor workflows on a local LLM (Qwen-35B behind Comprexy OSS):
 
 1. **Dashboard implementation + tests (125 turns)** — continued `apps/dashboard/` (layout, chart polish; commit `5ca87ca`). About 10.35M baseline tokens → 5.19M sent-equivalent; after ~175k compression overhead, rollup net savings ~4.99M (48.24%). After working-memory folds, actual prompts stayed roughly 15–60k (under the ~64k comfort ceiling). Final turn ~124k → ~55k estimated tokens (247 raw → 76 sent; WM v3). Parent-session telemetry only (subagents not included). Evidence: [`docs/evidence/5ca87ca.md`](docs/evidence/5ca87ca.md) ([dashboard snapshot](docs/evidence/5ca87ca.png)).
 
@@ -115,11 +125,11 @@ These are dogfood workflows, not universal benchmarks — and they do not claim 
 
 ### Token and cost intelligence
 
-Comprexy Core includes conversation-level token and cost intelligence for long-running workflows.
+Comprexy OSS includes conversation-level token and cost intelligence for long-running workflows.
 
-For each conversation, Comprexy tracks estimated baseline token volume, sent-equivalent token volume, compression overhead, net tokens saved, savings ratios, working-memory versions, budget events, and per-turn prompt growth. That makes it easier to inspect what would have been sent without context management, what was actually sent upstream, and how compression behaved over time. Cost figures are estimate-based: apply a USD-per-1M-token rate to those token totals when you want a cost-equivalent signal. These signals support workflow inspection and tuning; they do not guarantee savings or ROI.
+For each conversation, it tracks estimated baseline token volume, sent-equivalent token volume, compression overhead, net tokens saved, savings ratios, working-memory versions, budget events, and per-turn prompt growth. That makes it easier to inspect what would have been sent without context management, what was actually sent upstream, and how compression behaved over time. Cost figures are estimate-based: apply a USD-per-1M-token rate to those token totals when you want a cost-equivalent signal. These signals support workflow inspection and tuning; they do not guarantee savings or ROI.
 
-Comprexy’s approach:
+Approach:
 
 | Goal | Approach |
 | --- | --- |
@@ -129,7 +139,7 @@ Comprexy’s approach:
 | Stay compatible | OpenAI-compatible `/v1` base URL: chat completions are compressed; other `/v1/*` routes proxy upstream |
 | Stay focused | Context compression and tool-surface management for chat completions — not a multi-provider gateway or agent framework |
 
-If you need routing, spend tracking, or broad agent wrappers, tools like LiteLLM or Headroom may fit better. Comprexy is intentionally narrower: chat-completion context management (including Virtual Tools) only.
+If you need routing, spend tracking, or broad agent wrappers, tools like LiteLLM or Headroom may fit better. Comprexy OSS is intentionally narrower: chat-completion context management (including Virtual Tools) only.
 
 ## Design principles
 
@@ -140,8 +150,9 @@ If you need routing, spend tracking, or broad agent wrappers, tools like LiteLLM
 - Prefer inspectable, deterministic behavior over opaque truncation.
 - Stay local-first and OpenAI-compatible; stay narrow (context compression and tool-surface management, not a gateway or agent framework).
 
-## What Comprexy is not
+## What Comprexy OSS is not
 
+- Not under active feature development — see [Project direction](#project-direction).
 - Not a model or LLM runtime — it proxies to your configured upstream.
 - Not a multi-provider gateway, router, or billing layer.
 - Not a vector database or retrieval framework.
@@ -151,13 +162,13 @@ If you need routing, spend tracking, or broad agent wrappers, tools like LiteLLM
 
 ## Source of truth
 
-Comprexy persists completed conversation turns as the durable record. Working memory is a derived, versioned representation used to construct bounded upstream prompts. Compression marks messages as folded; it does not delete or replace them.
+Comprexy OSS persists completed conversation turns as the durable record. Working memory is a derived, versioned representation used to construct bounded upstream prompts. Compression marks messages as folded; it does not delete or replace them.
 
 Soft pressure above `SoftLimitTokens` triggers a blocking Inline wrap-up on eligible turns. The wrap-up folds older unfolded messages into a new working-memory version while retaining a tip window (`CompressionRetainMessageCount` / `MaxRecentRawTokens`).
 
 ## Agentic workflow
 
-Comprexy is developed with a Cursor subagent pipeline (plan → adversarial plan review → track-specific implement → unit test → adversarial review; UI adds mocked Playwright authorship then simulate), coordinated by orchestrators and handed off through files under `.cursor/agent-state/`. Every approved plan declares `track: backend | ui | mixed`. The same local-LLM setup that struggles past ~64k prompt tokens stays usable because Comprexy bounds what the model actually sees.
+This proof of concept was developed with a Cursor subagent pipeline (plan → adversarial plan review → track-specific implement → unit test → adversarial review; UI adds mocked Playwright authorship then simulate), coordinated by orchestrators and handed off through files under `.cursor/agent-state/`. Every approved plan declares `track: backend | ui | mixed`. The same local-LLM setup that struggles past ~64k prompt tokens stays usable because Comprexy OSS bounds what the model actually sees.
 
 That loop produced the top 3 dogfood evidences ([`docs/evidence/5ca87ca.md`](docs/evidence/5ca87ca.md), [`docs/evidence/721ea29.md`](docs/evidence/721ea29.md), [`docs/evidence/d2e0faa.md`](docs/evidence/d2e0faa.md)). Agents, gates, and handoff rules: [`.cursor/README.md`](.cursor/README.md).
 
@@ -214,6 +225,7 @@ Telemetry MCP tools are named `comprexy_*` and require `conversationId` from the
 | --- | --- |
 | OpenAI-compatible `/v1` | `POST /v1/chat/completions` is compressed (roles: `system` / `user` / `assistant` / `tool`). Other `/v1/*` routes reverse-proxy to `Provider` unchanged |
 | Token metrics API | Control API `GET /v1/comprexy/conversations` (+ `/metrics`, `/metrics/turns`) on `:8130` reports raw vs compressed token savings per conversation |
+| Metrics dashboard | Optional Next.js UI in `apps/dashboard` (`:3000`) over control-api REST; requires Node.js (LTS) |
 | Telemetry MCP | Control API `/mcp` exposes read-only summaries, turns, compression phases, budget events, prompt growth, comparisons, evidence markdown, and conversation retrieval (search / message window / working memory / open tool chains) to MCP clients |
 | Token and cost intelligence | Conversation-level telemetry for estimated baseline tokens, sent-equivalent tokens, compression overhead, net savings, prompt growth, and final-turn snapshots; optional USD-at-rate cost-equivalent estimates from those token totals |
 | Rolling working memory | Versioned compressed representation of older context for prompt reconstruction. Derived from persisted messages via Inline wrap-up |
@@ -233,7 +245,7 @@ Telemetry MCP tools are named `comprexy_*` and require `conversationId` from the
 
 ```mermaid
 flowchart LR
-  Client[LLM client] --> Proxy["Comprexy /v1/chat/completions"]
+  Client[LLM client] --> Proxy["Comprexy OSS /v1/chat/completions"]
   Proxy --> Store[(Persisted turns)]
   Store --> Budget{Soft budget}
   Budget -->|under soft| Rebuild[Prompt rebuild]
@@ -251,7 +263,7 @@ flowchart LR
 
 ### What compression does
 
-Compression in Comprexy:
+Compression in Comprexy OSS:
 
 - Reduces the active upstream prompt.
 - Creates versioned working memory.
@@ -262,7 +274,7 @@ Compression does not delete persisted turns, replace the durable transcript, or 
 
 ## Virtual Tools
 
-Coding agents often attach large OpenAI-compatible `tools[]` / `functions` catalogs. Under Virtual Tools, Comprexy owns the **model-facing** contract while the IDE still executes **native** tools:
+Coding agents often attach large OpenAI-compatible `tools[]` / `functions` catalogs. Under Virtual Tools, Comprexy OSS owns the **model-facing** contract while the IDE still executes **native** tools:
 
 ```text
 Client tools[] → catalog hash + mapper → model IR tools
@@ -305,11 +317,9 @@ Settings load from `appsettings.json`, environment overlays, and optional gitign
 - After working memory exists, the system prompt captured on the first turn is reused when rebuilding context.
 - `Proxy:PassThrough` disables context management entirely.
 - Soft Inline wrap-up and the conversation gate are process-local; they are not shared across multiple API instances.
-- Virtual Tools mapping is best-effort per catalog hash; on mapper exhaustion Comprexy sets `ToolIrDisabled` and forwards native tools for that hash (compression stays on).
+- Virtual Tools mapping is best-effort per catalog hash; on mapper exhaustion Comprexy OSS sets `ToolIrDisabled` and forwards native tools for that hash (compression stays on).
 - `ExcludeFromModelTools` hides tools from the model only; they remain in the client catalog. Already-persisted transcript turns are not scrubbed.
 - Token and cost intelligence is estimate-based. Actual provider billing may differ because of model-specific tokenization, prompt caching, output volume, provider pricing, local hardware utilization, and workflow shape.
-
-Deferred work is tracked in [`docs/TODO.md`](docs/TODO.md).
 
 ## Architecture
 
@@ -317,7 +327,7 @@ Layering, request lifecycle, Virtual Tools, compression ownership, and persisten
 
 ## Security
 
-Treat API keys and request audit logs as sensitive. Prefer `appsettings.Local.json`, environment variables, or user secrets for `Provider:ApiKey`, `Compression:ApiKey`, and `Auth:RequiredApiKey`. Comprexy forwards traffic only to the configured upstream(s) — review those endpoints and what clients send. See [`CONTRIBUTING.md`](CONTRIBUTING.md#security) for contributor hygiene (what not to commit or share).
+Treat API keys and request audit logs as sensitive. Prefer `appsettings.Local.json`, environment variables, or user secrets for `Provider:ApiKey`, `Compression:ApiKey`, and `Auth:RequiredApiKey`. Comprexy OSS forwards traffic only to the configured upstream(s) — review those endpoints and what clients send. See [`CONTRIBUTING.md`](CONTRIBUTING.md#security) for contributor hygiene (what not to commit or share).
 
 ## AI-assisted development
 
@@ -325,7 +335,7 @@ Much of this repository was produced with AI coding assistants under human direc
 
 ## Contributing
 
-Issues and pull requests are welcome. See [`CONTRIBUTING.md`](CONTRIBUTING.md) for build, test, database, and migration notes.
+Bug fixes, documentation, and compatibility improvements are welcome case-by-case. **New feature work is out of scope** for this repository (see [Project direction](#project-direction)). See [`CONTRIBUTING.md`](CONTRIBUTING.md) for build, test, database, and migration notes.
 
 ## License
 
@@ -335,4 +345,8 @@ Issues and pull requests are welcome. See [`CONTRIBUTING.md`](CONTRIBUTING.md) f
 
 Comprexy™ is a trademark claimed by Noriel Mallari. © 2026 Noriel Mallari.
 
-The MIT License applies strictly to the software source code. It does not grant permission to use the Comprexy name, logo, or branding to identify, market, or promote any separate, modified, or derivative product.
+The MIT License applies strictly to the software source code in this repository (Comprexy OSS). It does not grant permission to use the Comprexy name, logo, or branding to identify, market, or promote any separate, modified, or derivative product.
+
+Forks and derivatives should use a distinct name unless written permission is granted.
+
+Descriptive attribution such as “based on Comprexy OSS” is allowed, provided it does not imply official endorsement, sponsorship, or affiliation.

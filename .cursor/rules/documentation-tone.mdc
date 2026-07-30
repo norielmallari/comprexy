@@ -38,8 +38,8 @@ Drop-in compatible with everything…
 ## Placement
 
 - Operator/contributor material: `README.md`, `CONTRIBUTING.md`, `docs/`
-- Design notes, private reviews, and adversarial writeups: keep out of the public tree (e.g. gitignored `internal/`)
-- Backlog items: neutral summaries and priorities — not finding dumps
+- Design notes, private reviews, adversarial writeups, and backlog: keep out of the public tree (e.g. gitignored `internal/`)
+- Backlog items (when kept privately): neutral summaries and priorities — not finding dumps
 
 ## TODO Tasks
 

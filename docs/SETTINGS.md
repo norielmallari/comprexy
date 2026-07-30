@@ -77,7 +77,7 @@ Inline wrap-up reuses live sampling / `chat_template_*` and keeps the live `tool
 
 ## CacheAlignment
 
-Process-local wrap-up-ready message Prefix for provider KV / prompt-cache alignment. Registered only when proxy services are enabled (`enableProxyServices: true`). Not a SQLite / TTL conversation-row cache (see TODO-007).
+Process-local wrap-up-ready message Prefix for provider KV / prompt-cache alignment. Registered only when proxy services are enabled (`enableProxyServices: true`). Not a SQLite / TTL conversation-row cache.
 
 | Key | Default | Description |
 | --- | --- | --- |
@@ -129,7 +129,7 @@ Proxy stock `AllowedHosts` is `*` (`apps/proxy/appsettings.json`). control-api s
 | `AllowedHosts` | `localhost;127.0.0.1` | ASP.NET Core host filtering; rejects other `Host` headers. |
 | `Cors:AllowedOrigins` | `[]` (empty) | When empty, the default CORS policy denies all browser origins. List explicit origins to allow browser clients; do not use `*`. |
 
-Server-side MCP clients (Cursor, etc.) do not rely on CORS. Wildcard `AllowedHosts: "*"` is not the control-api default.
+Server-side MCP clients (Cursor, etc.) do not rely on CORS. Wildcard `AllowedHosts: "*"` is not the control-api default. The optional metrics dashboard (`apps/dashboard`, `:3000`) is a browser client of control-api REST — Development already allows `http://localhost:3000`; for other hosts, list the origin in `Cors:AllowedOrigins`.
 
 ---
 

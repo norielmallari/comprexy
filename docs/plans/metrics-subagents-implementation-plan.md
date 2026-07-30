@@ -1,6 +1,6 @@
 # Metrics: parent + subagent conversation rollup
 
-Research and implementation plan for including spawned subagent sessions in workflow-level metrics. Backlog: [TODO-013](../TODO.md#todo-013--metrics-rollup-for-subagent-conversations).
+Research and implementation plan for including spawned subagent sessions in workflow-level metrics.
 
 ## Problem
 
@@ -145,9 +145,9 @@ Rollup only fills in when something sets the parent header on subagent requests 
 3. One-level parent only, or nested trees (subagent spawning subagent)?
 4. Retroactive operator linking UI/API for orphan children?
 5. Double-counting: parent baseline already includes Task tool **payloads** in the parent transcript; child sessions are **additional** upstream chats — tree sum is the right “tokens actually sent to the model across sessions,” but evidence copy must say so.
-6. Tenant/auth: when multi-key lands ([TODO-005](../TODO.md#todo-005--multi-key--per-tenant-api-key-management)), restrict parent links to same tenant.
+6. Tenant/auth: when multi-key / per-tenant API keys land, restrict parent links to same tenant.
 
-## Acceptance criteria (for the TODO)
+## Acceptance criteria
 
 - [ ] Optional parent link persisted on child `Conversation` from an explicit client signal (header and/or operator attach).
 - [ ] Query API returns parent + children + summed token/savings rollup without merging transcripts.
