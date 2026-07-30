@@ -11,7 +11,8 @@ namespace Comprexy.Application.Services;
 /// </summary>
 public class ContextBuilder
 {
-    private const string DefaultSystemPrompt = "You are a helpful assistant.";
+    /// <summary>Used when a conversation captured no system prompt. Read-side breakdowns mirror this.</summary>
+    public const string DefaultSystemPrompt = "You are a helpful assistant.";
 
     private const string WorkingMemoryPreamble = """
         This is compressed historical context from earlier in the conversation.

@@ -33,9 +33,10 @@ describe('HeroCard', () => {
     expect(screen.getByText('0')).toBeInTheDocument();
   });
 
-  it('has role="region" on root', () => {
-    const { container } = render(<HeroCard tokensSaved={1000} />);
-    const region = container.querySelector('[role="region"]');
-    expect(region).toBeInTheDocument();
+  it('exposes a Tokens Saved region', () => {
+    render(<HeroCard tokensSaved={1000} />);
+    expect(
+      screen.getByRole('region', { name: 'Tokens Saved' }),
+    ).toBeInTheDocument();
   });
 });

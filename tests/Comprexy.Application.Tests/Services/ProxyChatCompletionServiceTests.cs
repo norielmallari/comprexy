@@ -995,12 +995,12 @@ public class ProxyChatCompletionServiceTests
             n => n == "lookup" || n == ToolSchemaConstants.ConversationIdMetaToolName);
 
         Assert.True(wrapUp.OriginalClientRequest.HasValue);
-        Assert.False(wrapUp.OriginalClientRequest!.Value.TryGetProperty("tools", out _));
-        Assert.False(wrapUp.OriginalClientRequest.Value.TryGetProperty("tool_choice", out _));
+        Assert.True(wrapUp.OriginalClientRequest!.Value.TryGetProperty("tools", out _));
+        Assert.Equal("none", wrapUp.OriginalClientRequest.Value.GetProperty("tool_choice").GetString());
         if (wrapUp.RewrittenClientRequest is { } wrapRewritten)
         {
-            Assert.False(wrapRewritten.TryGetProperty("tools", out _));
-            Assert.False(wrapRewritten.TryGetProperty("tool_choice", out _));
+            Assert.True(wrapRewritten.TryGetProperty("tools", out _));
+            Assert.Equal("none", wrapRewritten.GetProperty("tool_choice").GetString());
         }
     }
 
@@ -1681,12 +1681,12 @@ public class ProxyChatCompletionServiceTests
         Assert.Equal(UpstreamRequestPurpose.Compression, captured[1].Request.Purpose);
         Assert.True(captured[1].Request.OriginalClientRequest.HasValue);
         Assert.True(captured[0].Request.OriginalClientRequest!.Value.TryGetProperty("tools", out _));
-        Assert.False(captured[1].Request.OriginalClientRequest!.Value.TryGetProperty("tools", out _));
-        Assert.False(captured[1].Request.OriginalClientRequest!.Value.TryGetProperty("tool_choice", out _));
+        Assert.True(captured[1].Request.OriginalClientRequest!.Value.TryGetProperty("tools", out _));
+        Assert.Equal("none", captured[1].Request.OriginalClientRequest!.Value.GetProperty("tool_choice").GetString());
         if (captured[1].Request.RewrittenClientRequest is { } wrapRewritten)
         {
-            Assert.False(wrapRewritten.TryGetProperty("tools", out _));
-            Assert.False(wrapRewritten.TryGetProperty("tool_choice", out _));
+            Assert.True(wrapRewritten.TryGetProperty("tools", out _));
+            Assert.Equal("none", wrapRewritten.GetProperty("tool_choice").GetString());
         }
 
         Assert.Equal(captured[0].Request.CallOptions, captured[1].Request.CallOptions);
@@ -1958,7 +1958,8 @@ public class ProxyChatCompletionServiceTests
         Assert.Equal(2, captured.Count);
         Assert.True(IsWrapUpRequest(captured[1]));
         Assert.True(captured[0].OriginalClientRequest!.Value.TryGetProperty("tools", out _));
-        Assert.False(captured[1].OriginalClientRequest!.Value.TryGetProperty("tools", out _));
+        Assert.True(captured[1].OriginalClientRequest!.Value.TryGetProperty("tools", out _));
+        Assert.Equal("none", captured[1].OriginalClientRequest!.Value.GetProperty("tool_choice").GetString());
         Assert.Equal(captured[0].Messages.Count + 1, captured[1].Messages.Count);
         Assert.Equal(PromptFactory.BuildInlineWrapUpUserMessage().Content, captured[1].Messages[^1].Content);
         var penultimate = captured[1].Messages[^2];

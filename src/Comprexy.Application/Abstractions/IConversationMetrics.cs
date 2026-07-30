@@ -79,6 +79,14 @@ public interface IConversationMetricsQueryService
         CancellationToken cancellationToken);
 
     /// <summary>
+    /// Per-turn split of the prepared prompt into system / working memory / history+tools,
+    /// derived at query time. Keyed by <c>TurnIndex</c>.
+    /// </summary>
+    Task<IReadOnlyList<ConversationTurnContextBreakdown>> ListTurnContextBreakdownsAsync(
+        Guid conversationId,
+        CancellationToken cancellationToken);
+
+    /// <summary>
     /// Returns true when a conversation row exists (metrics may still be empty).
     /// </summary>
     Task<bool> ConversationExistsAsync(Guid conversationId, CancellationToken cancellationToken);

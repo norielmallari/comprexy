@@ -1,3 +1,4 @@
+using Comprexy.Application.Models.Telemetry;
 using Comprexy.Domain.Entities;
 
 namespace Comprexy.ControlApi.Contracts.Metrics;
@@ -64,6 +65,16 @@ public sealed class ConversationTurnMetricDto
 
     public int CompressedInputTokensEstimated { get; init; }
 
+    /// <summary>
+    /// Prepared-prompt split; the three sum to <see cref="CompressedInputTokensEstimated"/>.
+    /// Derived at query time — the turn row stores no breakdown.
+    /// </summary>
+    public int SystemPromptTokensEstimated { get; init; }
+
+    public int WorkingMemoryTokensEstimated { get; init; }
+
+    public int HistoryAndToolsTokensEstimated { get; init; }
+
     public int? ActualPromptTokens { get; init; }
 
     public int ActualCompletionTokens { get; init; }
@@ -124,7 +135,9 @@ public static class ConversationMetricsMapper
             UpdatedAt = summary.UpdatedAt
         };
 
-    public static ConversationTurnMetricDto ToTurnDto(ConversationTurnMetric turn) =>
+    public static ConversationTurnMetricDto ToTurnDto(
+        ConversationTurnMetric turn,
+        ConversationTurnContextBreakdown? breakdown = null) =>
         new()
         {
             Id = turn.Id,
@@ -133,6 +146,10 @@ public static class ConversationMetricsMapper
             Model = turn.Model,
             RawInputTokensEstimated = turn.RawInputTokensEstimated,
             CompressedInputTokensEstimated = turn.CompressedInputTokensEstimated,
+            SystemPromptTokensEstimated = breakdown?.SystemPromptTokensEstimated ?? 0,
+            WorkingMemoryTokensEstimated = breakdown?.WorkingMemoryTokensEstimated ?? 0,
+            HistoryAndToolsTokensEstimated =
+                breakdown?.HistoryAndToolsTokensEstimated ?? turn.CompressedInputTokensEstimated,
             ActualPromptTokens = turn.ActualPromptTokens,
             ActualCompletionTokens = turn.ActualCompletionTokens,
             BaselineTotalTokensEstimated = turn.BaselineTotalTokensEstimated,

@@ -9,6 +9,8 @@ public sealed class ConversationMetricsQueryService : IConversationMetricsQueryS
     private readonly IConversationMetricsSummaryRepository _summaryRepository;
     private readonly IConversationTurnMetricRepository _turnMetricRepository;
     private readonly IConversationRepository _conversationRepository;
+    private readonly IWorkingMemoryRepository _workingMemoryRepository;
+    private readonly ITokenEstimator _tokenEstimator;
     private readonly IEvidenceMarkdownService _evidenceMarkdownService;
     private readonly IRegressionDetector _regressionDetector;
 
@@ -16,12 +18,16 @@ public sealed class ConversationMetricsQueryService : IConversationMetricsQueryS
         IConversationMetricsSummaryRepository summaryRepository,
         IConversationTurnMetricRepository turnMetricRepository,
         IConversationRepository conversationRepository,
+        IWorkingMemoryRepository workingMemoryRepository,
+        ITokenEstimator tokenEstimator,
         IEvidenceMarkdownService evidenceMarkdownService,
         IRegressionDetector regressionDetector)
     {
         _summaryRepository = summaryRepository;
         _turnMetricRepository = turnMetricRepository;
         _conversationRepository = conversationRepository;
+        _workingMemoryRepository = workingMemoryRepository;
+        _tokenEstimator = tokenEstimator;
         _evidenceMarkdownService = evidenceMarkdownService;
         _regressionDetector = regressionDetector;
     }
@@ -39,6 +45,56 @@ public sealed class ConversationMetricsQueryService : IConversationMetricsQueryS
         Guid conversationId,
         CancellationToken cancellationToken) =>
         _turnMetricRepository.ListByConversationIdAsync(conversationId, cancellationToken);
+
+    public async Task<IReadOnlyList<ConversationTurnContextBreakdown>> ListTurnContextBreakdownsAsync(
+        Guid conversationId,
+        CancellationToken cancellationToken)
+    {
+        // Same DbContext scope: sequential EF calls only.
+        var turns = await _turnMetricRepository.ListByConversationIdAsync(conversationId, cancellationToken);
+        if (turns.Count == 0)
+        {
+            return [];
+        }
+
+        var conversation = await _conversationRepository.FindByIdAsync(conversationId, cancellationToken);
+        var workingMemoryVersions = await _workingMemoryRepository.ListVersionTokenCountsAsync(
+            conversationId,
+            cancellationToken);
+
+        // The first-turn system prompt is reused for every rebuild, so this is one estimate per
+        // conversation rather than a per-turn residual.
+        var systemPromptTokens = _tokenEstimator.CountTokens(
+            string.IsNullOrWhiteSpace(conversation?.SystemPrompt)
+                ? ContextBuilder.DefaultSystemPrompt
+                : conversation.SystemPrompt);
+
+        var tokensByVersion = workingMemoryVersions.ToDictionary(w => w.Version, w => w.TokenCount);
+
+        return turns
+            .Select(turn =>
+            {
+                var workingMemoryTokens = turn.WorkingMemoryVersionUsed is int version
+                    && tokensByVersion.TryGetValue(version, out var stored)
+                        ? stored
+                        : 0;
+
+                // Clamp only the residual: system + WM can exceed a tiny prepared prompt when the
+                // captured prompt was re-estimated with a different encoding.
+                var remainder = Math.Max(
+                    0,
+                    turn.CompressedInputTokensEstimated - systemPromptTokens - workingMemoryTokens);
+
+                return new ConversationTurnContextBreakdown
+                {
+                    TurnIndex = turn.TurnIndex,
+                    SystemPromptTokensEstimated = systemPromptTokens,
+                    WorkingMemoryTokensEstimated = workingMemoryTokens,
+                    HistoryAndToolsTokensEstimated = remainder
+                };
+            })
+            .ToList();
+    }
 
     public Task<bool> ConversationExistsAsync(Guid conversationId, CancellationToken cancellationToken) =>
         _conversationRepository.ExistsAsync(conversationId, cancellationToken);

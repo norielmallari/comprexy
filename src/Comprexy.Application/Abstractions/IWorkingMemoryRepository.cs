@@ -1,3 +1,4 @@
+using Comprexy.Application.Models.Telemetry;
 using Comprexy.Domain.Entities;
 
 namespace Comprexy.Application.Abstractions;
@@ -19,6 +20,13 @@ public interface IWorkingMemoryRepository
         Guid conversationId,
         string query,
         int take,
+        CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Version + token count for every version of a conversation, ascending, without content.
+    /// </summary>
+    Task<IReadOnlyList<WorkingMemoryVersionTokens>> ListVersionTokenCountsAsync(
+        Guid conversationId,
         CancellationToken cancellationToken);
 
     void Add(WorkingMemory workingMemory);

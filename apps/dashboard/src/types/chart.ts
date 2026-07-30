@@ -13,20 +13,18 @@ export interface ChartDataPoint {
   turnIndex: number;
   /** Model name used in this turn */
   model: string;
-  /** Prompt tokens (light gray) */
-  promptTokens: number;
-  /** System tokens (light gray) */
+  /** Captured system prompt; constant across the conversation */
   systemTokens: number;
-  /** Compressed working memory tokens */
-  compressedTokens: number;
-  /** Compression overhead tokens (amber) */
-  overheadTokens: number;
-  /** Baseline total for ghost bar comparison */
+  /** Still-unfolded raw turns plus the model-facing tool catalog */
+  historyTokens: number;
+  /** Working memory injected on this turn; 0 before the first version exists */
+  workingMemoryTokens: number;
+  /** Prompt actually sent upstream — the sum of the three segments above */
+  preparedPromptTokens: number;
+  /** Uncompressed prompt estimate, drawn as the ghost bar behind the stack */
   baselineTokens: number;
-  /** Working memory version used (null = not compressed) */
+  /** Working memory version used (null = none yet) */
   workingMemoryVersion: number | null;
-  /** Total compressed tokens (prompt + system + compressed + overhead) */
-  totalCompressed: number;
   /** Net tokens saved in this turn */
   netTokensSaved: number;
   /** Token savings ratio */
@@ -45,4 +43,6 @@ export interface ChartLegendItem {
   label: string;
   /** Color value */
   color: string;
+  /** Draw the swatch as a dashed outline, matching the ghost bar rather than a solid segment */
+  outlined?: boolean;
 }

@@ -65,6 +65,14 @@ export interface ConversationTurnMetricDto {
   model: string;
   rawInputTokensEstimated: number;
   compressedInputTokensEstimated: number;
+  /**
+   * Prepared-prompt split derived by the control API. The three sum to
+   * `compressedInputTokensEstimated`. `systemPromptTokensEstimated` is constant across a
+   * conversation; `workingMemoryTokensEstimated` is 0 before the first working memory exists.
+   */
+  systemPromptTokensEstimated: number;
+  workingMemoryTokensEstimated: number;
+  historyAndToolsTokensEstimated: number;
   actualPromptTokens: number | null;
   actualCompletionTokens: number;
   baselineTotalTokensEstimated: number;

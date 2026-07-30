@@ -28,7 +28,6 @@ export function OverheadCard({
       title="Overhead"
       value={displayValue}
       unit="%"
-      variant="compact"
     />
   );
 }

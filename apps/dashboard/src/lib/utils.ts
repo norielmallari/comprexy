@@ -65,6 +65,25 @@ export function getBestCompressionRatio(
 }
 
 /**
+ * Simple mean of the per-turn net token savings ratios.
+ * Unlike the weighted ratio, every turn contributes equally.
+ */
+export function getAverageCompressionRatio(
+  turns: ConversationTurnMetricDto[] | null | undefined,
+): number | null {
+  if (!turns || turns.length === 0) {
+    return null;
+  }
+
+  const total = turns.reduce(
+    (sum, turn) => sum + turn.netTokenSavingsRatio,
+    0,
+  );
+
+  return total / turns.length;
+}
+
+/**
  * Format a number with thousand separators.
  *
  * @param value - The number to format
@@ -196,15 +215,9 @@ export function getWmColor(
 /**
  * Transform turn metrics from the API into chart-ready data points.
  *
- * The API returns aggregated token counts, while the chart needs a
- * breakdown into segments (prompt, system, compressed WM, overhead).
- *
- * Mapping:
- *   - promptTokens: actualPromptTokens from API
- *   - systemTokens: derived as rawInput - actualPrompt
- *   - compressedTokens: compressedInputTokensEstimated
- *   - overheadTokens: derived as compressedTotal - (prompt + system + compressed)
- *   - baselineTokens: rawInputTokensEstimated
+ * The stack is the prepared prompt split into system / history+tools / working memory, which the
+ * control API derives so the three sum to `compressedInputTokensEstimated`. The ghost bar is the
+ * uncompressed prompt estimate for the same turn, so both sides are prompt-to-prompt.
  *
  * @param turns - API turn metrics
  * @returns Chart data points
@@ -212,31 +225,18 @@ export function getWmColor(
 export function transformTurnsToChartData(
   turns: ConversationTurnMetricDto[],
 ): ChartDataPoint[] {
-  return turns.map((turn) => {
-    const promptTokens = turn.actualPromptTokens ?? 0;
-    const systemTokens = Math.max(0, turn.rawInputTokensEstimated - promptTokens);
-    const compressedTokens = turn.compressedInputTokensEstimated ?? 0;
-    const totalCompressed = turn.compressedTotalTokensEstimated;
-    const overheadTokens = Math.max(
-      0,
-      totalCompressed - (promptTokens + systemTokens + compressedTokens),
-    );
-    const baselineTokens = turn.rawInputTokensEstimated;
-
-    return {
-      turnIndex: turn.turnIndex,
-      model: turn.model,
-      promptTokens,
-      systemTokens,
-      compressedTokens,
-      overheadTokens,
-      baselineTokens,
-      workingMemoryVersion: turn.workingMemoryVersionUsed,
-      totalCompressed,
-      netTokensSaved: turn.netTokensSaved,
-      savingsRatio: turn.netTokenSavingsRatio,
-      softBudgetExceeded: turn.softBudgetExceeded,
-      hardBudgetExceeded: turn.hardBudgetExceeded,
-    };
-  });
+  return turns.map((turn) => ({
+    turnIndex: turn.turnIndex,
+    model: turn.model,
+    systemTokens: turn.systemPromptTokensEstimated,
+    historyTokens: turn.historyAndToolsTokensEstimated,
+    workingMemoryTokens: turn.workingMemoryTokensEstimated,
+    preparedPromptTokens: turn.compressedInputTokensEstimated,
+    baselineTokens: turn.rawInputTokensEstimated,
+    workingMemoryVersion: turn.workingMemoryVersionUsed,
+    netTokensSaved: turn.netTokensSaved,
+    savingsRatio: turn.netTokenSavingsRatio,
+    softBudgetExceeded: turn.softBudgetExceeded,
+    hardBudgetExceeded: turn.hardBudgetExceeded,
+  }));
 }

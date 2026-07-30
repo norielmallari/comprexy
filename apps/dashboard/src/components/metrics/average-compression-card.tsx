@@ -1,6 +1,5 @@
 /**
- * Average Compression card showing the average token savings ratio as a percentage.
- * Derived from MetricsSummary.AverageTokenSavingsRatio.
+ * Average Compression card showing the simple mean of per-turn savings ratios.
  */
 
 import { MetricCard } from "./metric-card";

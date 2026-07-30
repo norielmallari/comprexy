@@ -5,11 +5,9 @@ import { ChartLegend } from '@/components/charts/chart-legend';
 import type { ChartLegendItem } from '@/types/chart';
 
 const defaultItems: ChartLegendItem[] = [
-  { label: 'Prompt', color: '#94a3b8' },
   { label: 'System', color: '#cbd5e0' },
+  { label: 'History + tools', color: '#94a3b8' },
   { label: 'Compressed WM', color: '#2d6bc4' },
-  { label: 'Overhead', color: '#d69e2e' },
-  { label: 'Baseline (ghost)', color: '#cbd5e0' },
 ];
 
 describe('ChartLegend', () => {
@@ -82,6 +80,17 @@ describe('ChartLegend', () => {
     const colorBlock = container.querySelector('span.inline-block');
     expect(colorBlock).toHaveStyle({ backgroundColor: '#ff0000' });
     expect(screen.getByText('Test Item')).toBeInTheDocument();
+  });
+
+  it('draws outlined items as a dashed border instead of a solid swatch', () => {
+    const { container } = render(
+      <ChartLegend items={[{ label: 'Baseline (ghost)', color: '#64748b', outlined: true }]} />,
+    );
+
+    const block = container.querySelector('span.inline-block');
+    expect(block).toHaveAttribute('data-outlined', 'true');
+    expect(block).toHaveStyle({ border: '1px dashed #64748b' });
+    expect(block).not.toHaveStyle({ backgroundColor: '#64748b' });
   });
 
   it('renders unique keys based on label', () => {

@@ -1,4 +1,5 @@
 using Comprexy.Application.Abstractions;
+using Comprexy.Application.Models.Telemetry;
 using Comprexy.Domain.Entities;
 using Microsoft.EntityFrameworkCore;
 
@@ -42,6 +43,20 @@ public class EfWorkingMemoryRepository(ComprexyDbContext dbContext) : IWorkingMe
             .Take(take)
             .ToListAsync(cancellationToken);
     }
+
+    public async Task<IReadOnlyList<WorkingMemoryVersionTokens>> ListVersionTokenCountsAsync(
+        Guid conversationId,
+        CancellationToken cancellationToken) =>
+        await dbContext.WorkingMemories
+            .AsNoTracking()
+            .Where(w => w.ConversationId == conversationId)
+            .OrderBy(w => w.Version)
+            .Select(w => new WorkingMemoryVersionTokens
+            {
+                Version = w.Version,
+                TokenCount = w.TokenCount
+            })
+            .ToListAsync(cancellationToken);
 
     public void Add(WorkingMemory workingMemory) => dbContext.WorkingMemories.Add(workingMemory);
 

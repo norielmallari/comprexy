@@ -4,49 +4,33 @@ import { describe, expect, it, vi } from 'vitest';
 import { BarChart } from '@/components/charts/bar-chart';
 import type { ChartDataPoint } from '@/types/chart';
 
-const mockData: ChartDataPoint[] = [
-  {
-    turnIndex: 1,
-    model: 'gpt-4',
-    promptTokens: 5000,
-    systemTokens: 3000,
-    compressedTokens: 2000,
-    overheadTokens: 500,
-    baselineTokens: 10000,
-    workingMemoryVersion: 2,
-    totalCompressed: 10500,
-    netTokensSaved: -500,
-    savingsRatio: 0.05,
-    softBudgetExceeded: false,
-    hardBudgetExceeded: false,
-  },
-  {
-    turnIndex: 2,
-    model: 'gpt-4',
-    promptTokens: 6000,
-    systemTokens: 4000,
-    compressedTokens: 3000,
-    overheadTokens: 600,
-    baselineTokens: 12000,
-    workingMemoryVersion: 2,
-    totalCompressed: 13600,
-    netTokensSaved: -1600,
-    savingsRatio: 0.13,
-    softBudgetExceeded: true,
-    hardBudgetExceeded: false,
-  },
-];
+const makePoint = (partial: Partial<ChartDataPoint> = {}): ChartDataPoint => ({
+  turnIndex: 1,
+  model: 'gpt-4',
+  systemTokens: 3000,
+  historyTokens: 5000,
+  workingMemoryTokens: 2000,
+  preparedPromptTokens: 10000,
+  baselineTokens: 14000,
+  workingMemoryVersion: 2,
+  netTokensSaved: 4000,
+  savingsRatio: 0.28,
+  softBudgetExceeded: false,
+  hardBudgetExceeded: false,
+  ...partial,
+});
 
-vi.mock('@/components/ui/tooltip', () => ({
-  Tooltip: ({ children }: any) => <div data-testid="tooltip-root">{children}</div>,
-  TooltipTrigger: ({ children, asChild }: any) =>
-    asChild ? children : <div data-testid="tooltip-trigger">{children}</div>,
-  TooltipContent: ({ children, className, ...props }: any) => (
-    <div data-testid="tooltip-content" className={className} {...props}>
-      {children}
-    </div>
-  ),
-}));
+const mockData: ChartDataPoint[] = [
+  makePoint(),
+  makePoint({
+    turnIndex: 2,
+    historyTokens: 7000,
+    preparedPromptTokens: 12000,
+    baselineTokens: 17000,
+    netTokensSaved: 5000,
+    softBudgetExceeded: true,
+  }),
+];
 
 vi.mock('recharts', () => ({
   BarChart: ({ children, data, ...props }: any) => (
@@ -55,22 +39,26 @@ vi.mock('recharts', () => ({
       {children}
     </div>
   ),
-  Bar: ({ name, dataKey, ...props }: any) => (
+  Bar: ({ name, dataKey, stackId, xAxisId, ...props }: any) => (
     <div
       data-testid={`recharts-bar-${dataKey}`}
       data-name={name}
       data-datakey={dataKey}
+      data-stackid={stackId}
+      data-xaxisid={xAxisId}
       {...props}
     />
   ),
-  XAxis: ({ dataKey, ...props }: any) => (
-    <div data-testid="recharts-xaxis" data-datakey={dataKey} {...props} />
+  XAxis: ({ dataKey, xAxisId, hide, ...props }: any) => (
+    <div
+      data-testid={xAxisId ? `recharts-xaxis-${xAxisId}` : 'recharts-xaxis'}
+      data-datakey={dataKey}
+      data-hidden={hide ? 'true' : undefined}
+      {...props}
+    />
   ),
   YAxis: ({ ...props }: any) => <div data-testid="recharts-yaxis" {...props} />,
   CartesianGrid: () => <div data-testid="recharts-cartesian-grid" />,
-  Label: ({ value, ...props }: any) => (
-    <div data-testid="recharts-label" data-value={value} {...props} />
-  ),
   ResponsiveContainer: ({ children }: any) => (
     <div data-testid="responsive-container">{children}</div>
   ),
@@ -85,10 +73,20 @@ describe('BarChart', () => {
     expect(screen.getByTestId('recharts-bar-chart')).toBeInTheDocument();
   });
 
+  it('exposes an accessible name on the chart root', () => {
+    render(<BarChart data={mockData} />);
+
+    const chart = screen.getByTestId('token-counts-by-turn-chart');
+    expect(chart).toHaveAttribute('role', 'img');
+    expect(chart.getAttribute('aria-label')).toMatch(/2 turns/);
+  });
+
   it('renders empty state when no data', () => {
     render(<BarChart data={[]} />);
 
-    expect(screen.getByText('No data to display. Select a conversation to view metrics.')).toBeInTheDocument();
+    expect(
+      screen.getByText('No data to display. Select a conversation to view metrics.'),
+    ).toBeInTheDocument();
     expect(screen.queryByTestId('recharts-bar-chart')).not.toBeInTheDocument();
   });
 
@@ -106,97 +104,97 @@ describe('BarChart', () => {
     expect(screen.queryByText('Token Counts by Turn')).not.toBeInTheDocument();
   });
 
-  it('transforms chart data correctly', () => {
+  it('stacks only the three prepared-prompt segments on one stackId', () => {
     render(<BarChart data={mockData} />);
 
-    const dataEl = screen.getByTestId('recharts-data');
-    const transformedData = JSON.parse(dataEl.getAttribute('data-testid') ? dataEl.textContent || '[]' : '[]');
+    const segments = ['system', 'history', 'workingMemory'];
+    for (const key of segments) {
+      expect(screen.getByTestId(`recharts-bar-${key}`)).toHaveAttribute('data-stackid', 'prompt');
+    }
 
-    // Verify the transformed data includes recharts keys
-    expect(transformedData.length).toBe(2);
-    expect(transformedData[0]).toHaveProperty('turnIndex', 1);
-    expect(transformedData[0]).toHaveProperty('prompt');
-    expect(transformedData[0]).toHaveProperty('system');
-    expect(transformedData[0]).toHaveProperty('compressed');
-    expect(transformedData[0]).toHaveProperty('overhead');
-    expect(transformedData[0]).toHaveProperty('baseline');
+    // The old chart double-counted the prompt via extra prompt/overhead segments.
+    expect(screen.queryByTestId('recharts-bar-prompt')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('recharts-bar-overhead')).not.toBeInTheDocument();
   });
 
-  it('renders chart legend', () => {
+  it('emits segment values that sum to the prepared prompt', () => {
     render(<BarChart data={mockData} />);
 
-    // The legend items are rendered by ChartLegend component
-    // Check that the legend container exists
-    const legendContainer = document.querySelector('div.flex.flex-wrap.items-center.justify-center');
-    expect(legendContainer).toBeInTheDocument();
+    const rows = JSON.parse(screen.getByTestId('recharts-data').textContent || '[]');
+    for (const row of rows) {
+      expect(row.system + row.history + row.workingMemory).toBe(row.preparedPromptTokens);
+    }
   });
 
-  it('renders with multiple data points', () => {
-    const largeData: ChartDataPoint[] = Array.from({ length: 10 }, (_, i) => ({
-      turnIndex: i + 1,
-      model: 'gpt-4',
-      promptTokens: 5000 + i * 1000,
-      systemTokens: 3000 + i * 500,
-      compressedTokens: 2000 + i * 300,
-      overheadTokens: 500 + i * 100,
-      baselineTokens: 10000 + i * 2000,
-      workingMemoryVersion: i % 3,
-      totalCompressed: 10500 + i * 1500,
-      netTokensSaved: -500 + i * 200,
-      savingsRatio: 0.05 + i * 0.02,
-      softBudgetExceeded: i % 3 === 0,
-      hardBudgetExceeded: i % 5 === 0,
-    }));
+  it('emits a zero working memory segment before the first version exists', () => {
+    render(
+      <BarChart
+        data={[
+          makePoint({
+            workingMemoryVersion: null,
+            workingMemoryTokens: 0,
+            historyTokens: 7000,
+          }),
+        ]}
+      />,
+    );
 
-    render(<BarChart data={largeData} />);
-
-    expect(screen.getByText('Token Counts by Turn')).toBeInTheDocument();
-    expect(screen.getByTestId('recharts-bar-chart')).toBeInTheDocument();
+    const rows = JSON.parse(screen.getByTestId('recharts-data').textContent || '[]');
+    expect(rows[0].workingMemory).toBe(0);
   });
 
-  it('renders all bar segments', () => {
+  it('renders the ghost bar outside the stack on its own hidden axis', () => {
     render(<BarChart data={mockData} />);
 
-    expect(screen.getByTestId('recharts-bar-prompt')).toBeInTheDocument();
-    expect(screen.getByTestId('recharts-bar-system')).toBeInTheDocument();
-    expect(screen.getByTestId('recharts-bar-compressed')).toBeInTheDocument();
-    expect(screen.getByTestId('recharts-bar-overhead')).toBeInTheDocument();
+    const ghost = screen.getByTestId('recharts-bar-baseline');
+    expect(ghost).toHaveAttribute('data-xaxisid', 'ghost');
+    expect(ghost).not.toHaveAttribute('data-stackid', 'prompt');
+
+    const ghostAxis = screen.getByTestId('recharts-xaxis-ghost');
+    expect(ghostAxis).toHaveAttribute('data-hidden', 'true');
+    expect(ghostAxis).toHaveAttribute('data-datakey', 'turnIndex');
+  });
+
+  it('declares the ghost bar before the stacked segments so it paints behind them', () => {
+    render(<BarChart data={mockData} />);
+
+    const bars = Array.from(document.querySelectorAll('[data-testid^="recharts-bar-"]')).map((el) =>
+      el.getAttribute('data-datakey'),
+    );
+
+    expect(bars.indexOf('baseline')).toBeLessThan(bars.indexOf('system'));
   });
 
   it('renders XAxis with correct dataKey', () => {
     render(<BarChart data={mockData} />);
 
-    const xAxis = screen.getByTestId('recharts-xaxis');
-    expect(xAxis).toHaveAttribute('data-datakey', 'turnIndex');
+    expect(screen.getByTestId('recharts-xaxis')).toHaveAttribute('data-datakey', 'turnIndex');
   });
 
-  it('renders YAxis', () => {
+  it('renders YAxis and grid', () => {
     render(<BarChart data={mockData} />);
 
     expect(screen.getByTestId('recharts-yaxis')).toBeInTheDocument();
+    expect(screen.getByTestId('recharts-cartesian-grid')).toBeInTheDocument();
   });
 
-  it('renders CartesianGrid', () => {
+  it('renders legend items for the segments plus the ghost', () => {
     render(<BarChart data={mockData} />);
 
-    expect(screen.getByTestId('recharts-cartesian-grid')).toBeInTheDocument();
+    expect(screen.getByText('System')).toBeInTheDocument();
+    expect(screen.getByText('History + tools')).toBeInTheDocument();
+    expect(screen.getByText('Compressed WM')).toBeInTheDocument();
+    expect(screen.getByText('Baseline (ghost)')).toBeInTheDocument();
+    expect(screen.queryByText('Overhead')).not.toBeInTheDocument();
+    expect(screen.queryByText('Prompt')).not.toBeInTheDocument();
   });
 
   it('renders footer note', () => {
     render(<BarChart data={mockData} />);
 
     expect(
-      screen.getByText(/Hover over bars to see detailed token counts per turn/),
+      screen.getByText(/prompt Comprexy actually prepared for each turn/),
     ).toBeInTheDocument();
-  });
-
-  it('renders GhostBar with baseline dataKey', () => {
-    render(<BarChart data={mockData} />);
-
-    // GhostBar renders a Bar with dataKey="baseline"
-    const ghostBar = screen.getByTestId('recharts-bar-baseline');
-    expect(ghostBar).toBeInTheDocument();
-    expect(ghostBar).toHaveAttribute('data-datakey', 'baseline');
   });
 
   it('renders ResponsiveContainer', () => {
@@ -205,64 +203,25 @@ describe('BarChart', () => {
     expect(screen.getByTestId('responsive-container')).toBeInTheDocument();
   });
 
-  it('renders chart title', () => {
+  it('renders chart title as a heading', () => {
     render(<BarChart data={mockData} />);
 
-    const title = screen.getByRole('heading', { level: 3 });
-    expect(title).toHaveTextContent('Token Counts by Turn');
+    expect(screen.getByRole('heading', { level: 3 })).toHaveTextContent('Token Counts by Turn');
   });
 
-  it('renders legend items with correct labels', () => {
-    render(<BarChart data={mockData} />);
+  it('handles a single data point', () => {
+    render(<BarChart data={[mockData[0]]} />);
 
-    expect(screen.getByText('Prompt')).toBeInTheDocument();
-    expect(screen.getByText('System')).toBeInTheDocument();
-    expect(screen.getByText('Compressed WM')).toBeInTheDocument();
-    expect(screen.getByText('Overhead')).toBeInTheDocument();
-    expect(screen.getByText('Baseline (ghost)')).toBeInTheDocument();
-  });
-
-  it('handles single data point', () => {
-    const singleData: ChartDataPoint[] = [mockData[0]];
-
-    render(<BarChart data={singleData} />);
-
-    expect(screen.getByText('Token Counts by Turn')).toBeInTheDocument();
     expect(screen.getByTestId('recharts-bar-chart')).toBeInTheDocument();
   });
 
-  it('renders with data having null workingMemoryVersion', () => {
-    const noVersionData: ChartDataPoint[] = [
-      {
-        ...mockData[0],
-        workingMemoryVersion: null,
-      },
-    ];
+  it('renders with many data points', () => {
+    const largeData = Array.from({ length: 10 }, (_, i) =>
+      makePoint({ turnIndex: i + 1, workingMemoryVersion: i % 3 }),
+    );
 
-    render(<BarChart data={noVersionData} />);
+    render(<BarChart data={largeData} />);
 
-    expect(screen.getByText('Token Counts by Turn')).toBeInTheDocument();
     expect(screen.getByTestId('recharts-bar-chart')).toBeInTheDocument();
-  });
-
-  it('passes correct width and height to ResponsiveContainer', () => {
-    render(<BarChart data={mockData} />);
-
-    const container = screen.getByTestId('responsive-container');
-    expect(container).toBeInTheDocument();
-  });
-
-  it('renders empty state without loading text', () => {
-    render(<BarChart data={[]} isLoading={false} />);
-
-    expect(screen.getByText('No data to display. Select a conversation to view metrics.')).toBeInTheDocument();
-    expect(screen.queryByText('Loading chart data...')).not.toBeInTheDocument();
-  });
-
-  it('renders chart container with space-y-4 class', () => {
-    render(<BarChart data={mockData} />);
-
-    const chartContainer = document.querySelector('div.space-y-4');
-    expect(chartContainer).toBeInTheDocument();
   });
 });

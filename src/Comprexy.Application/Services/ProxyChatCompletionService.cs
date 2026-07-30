@@ -1557,9 +1557,11 @@ public class ProxyChatCompletionService
                 Stream = false,
                 ReplaceMessages = true,
                 Purpose = UpstreamRequestPurpose.Compression,
-                OriginalClientRequest = ClientRequestToolStripper.WithoutTools(
+                // Keep live tools[] for provider KV (tools often render early in the chat template).
+                // Disable further tool use via tool_choice/function_call = none.
+                OriginalClientRequest = ClientRequestToolStripper.ForInlineWrapUp(
                     prepared.UpstreamRequest.OriginalClientRequest),
-                RewrittenClientRequest = ClientRequestToolStripper.WithoutTools(
+                RewrittenClientRequest = ClientRequestToolStripper.ForInlineWrapUp(
                     prepared.UpstreamRequest.RewrittenClientRequest)
             };
 

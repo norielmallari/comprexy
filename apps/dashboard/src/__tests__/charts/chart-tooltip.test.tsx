@@ -1,30 +1,18 @@
 import { render, screen } from '@testing-library/react';
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 
 import { ChartTooltip } from '@/components/charts/chart-tooltip';
 import type { ChartDataPoint } from '@/types/chart';
 
-vi.mock('@/components/ui/tooltip', () => ({
-  Tooltip: ({ children }: any) => <div data-testid="tooltip-root">{children}</div>,
-  TooltipTrigger: ({ children, asChild }: any) =>
-    asChild ? children : <div data-testid="tooltip-trigger">{children}</div>,
-  TooltipContent: ({ children, className, ...props }: any) => (
-    <div data-testid="tooltip-content" className={className} {...props}>
-      {children}
-    </div>
-  ),
-}));
-
 const mockDataPoint: ChartDataPoint = {
   turnIndex: 1,
   model: 'gpt-4',
-  promptTokens: 5000,
   systemTokens: 3000,
-  compressedTokens: 2000,
-  overheadTokens: 500,
-  baselineTokens: 10000,
+  historyTokens: 5000,
+  workingMemoryTokens: 2000,
+  preparedPromptTokens: 10000,
+  baselineTokens: 10500,
   workingMemoryVersion: 2,
-  totalCompressed: 10500,
   netTokensSaved: -500,
   savingsRatio: 0.05,
   softBudgetExceeded: false,
@@ -35,163 +23,117 @@ describe('ChartTooltip', () => {
   it('renders active tooltip with data', () => {
     render(<ChartTooltip data={mockDataPoint} active={true} />);
 
-    expect(screen.getByTestId('tooltip-content')).toBeInTheDocument();
+    expect(screen.getByTestId('chart-tooltip')).toBeInTheDocument();
     expect(screen.getByText('Turn 1')).toBeInTheDocument();
     expect(screen.getByText('gpt-4')).toBeInTheDocument();
   });
 
   it('does not render when inactive', () => {
-    const { container } = render(<ChartTooltip data={mockDataPoint} active={false} />);
+    render(<ChartTooltip data={mockDataPoint} active={false} />);
 
-    const content = container.querySelector('[data-testid="tooltip-content"]');
-    expect(content).not.toBeInTheDocument();
+    expect(screen.queryByTestId('chart-tooltip')).not.toBeInTheDocument();
   });
 
   it('does not render when data is null', () => {
-    const { container } = render(<ChartTooltip data={null} active={true} />);
+    render(<ChartTooltip data={null} active={true} />);
 
-    const content = container.querySelector('[data-testid="tooltip-content"]');
-    expect(content).not.toBeInTheDocument();
+    expect(screen.queryByTestId('chart-tooltip')).not.toBeInTheDocument();
   });
 
-  it('does not render when both inactive and null data', () => {
-    const { container } = render(<ChartTooltip data={null} active={false} />);
-
-    const content = container.querySelector('[data-testid="tooltip-content"]');
-    expect(content).not.toBeInTheDocument();
-  });
-
-  it('formats prompt tokens using formatCompactNumber', () => {
-    render(<ChartTooltip data={mockDataPoint} active={true} />);
-
-    expect(screen.getByText('5.0K')).toBeInTheDocument();
-  });
-
-  it('formats system tokens using formatCompactNumber', () => {
+  it('formats each prepared-prompt segment', () => {
     render(<ChartTooltip data={mockDataPoint} active={true} />);
 
     expect(screen.getByText('3.0K')).toBeInTheDocument();
-  });
-
-  it('formats compressed tokens using formatCompactNumber', () => {
-    render(<ChartTooltip data={mockDataPoint} active={true} />);
-
+    expect(screen.getByText('5.0K')).toBeInTheDocument();
     expect(screen.getByText('2.0K')).toBeInTheDocument();
   });
 
-  it('formats overhead tokens using formatCompactNumber', () => {
-    render(<ChartTooltip data={mockDataPoint} active={true} />);
-
-    expect(screen.getByText('500.0')).toBeInTheDocument();
-  });
-
-  it('formats total compressed using formatCompactNumber', () => {
-    render(<ChartTooltip data={mockDataPoint} active={true} />);
-
-    expect(screen.getByText('10.5K')).toBeInTheDocument();
-  });
-
-  it('formats baseline tokens using formatCompactNumber', () => {
+  it('formats prepared prompt and baseline totals', () => {
     render(<ChartTooltip data={mockDataPoint} active={true} />);
 
     expect(screen.getByText('10.0K')).toBeInTheDocument();
+    expect(screen.getByText('10.5K')).toBeInTheDocument();
   });
 
-  it('formats net tokens saved using formatCompactNumber', () => {
+  it('formats net tokens saved without a plus sign when negative', () => {
     render(<ChartTooltip data={mockDataPoint} active={true} />);
 
-    // -500 should show as "-500.0" (negative, no plus sign)
     expect(screen.getByText('-500.0')).toBeInTheDocument();
   });
 
-  it('formats net tokens saved with plus sign when positive', () => {
-    const positiveData = { ...mockDataPoint, netTokensSaved: 500 };
-    render(<ChartTooltip data={positiveData} active={true} />);
+  it('formats net tokens saved with a plus sign when positive', () => {
+    render(<ChartTooltip data={{ ...mockDataPoint, netTokensSaved: 500 }} active={true} />);
 
     expect(screen.getByText('+500.0')).toBeInTheDocument();
   });
 
-  it('formats percentage using formatPercentage', () => {
+  it('formats the savings ratio as a percentage', () => {
     render(<ChartTooltip data={mockDataPoint} active={true} />);
 
     expect(screen.getByText('5.0%')).toBeInTheDocument();
   });
 
-  it('renders soft budget exceeded flag', () => {
-    const budgetData = { ...mockDataPoint, softBudgetExceeded: true };
-    render(<ChartTooltip data={budgetData} active={true} />);
-
-    expect(screen.getByText('Soft Budget')).toBeInTheDocument();
-  });
-
-  it('renders hard budget exceeded flag', () => {
-    const budgetData = { ...mockDataPoint, hardBudgetExceeded: true };
-    render(<ChartTooltip data={budgetData} active={true} />);
-
-    expect(screen.getByText('Hard Budget')).toBeInTheDocument();
-  });
-
-  it('renders both budget flags when both exceeded', () => {
-    const budgetData = { ...mockDataPoint, softBudgetExceeded: true, hardBudgetExceeded: true };
-    render(<ChartTooltip data={budgetData} active={true} />);
+  it('renders soft and hard budget flags', () => {
+    render(
+      <ChartTooltip
+        data={{ ...mockDataPoint, softBudgetExceeded: true, hardBudgetExceeded: true }}
+        active={true}
+      />,
+    );
 
     expect(screen.getByText('Soft Budget')).toBeInTheDocument();
     expect(screen.getByText('Hard Budget')).toBeInTheDocument();
   });
 
-  it('does not render budget flags when neither exceeded', () => {
-    const { container } = render(<ChartTooltip data={mockDataPoint} active={true} />);
+  it('does not render budget flags when neither is exceeded', () => {
+    render(<ChartTooltip data={mockDataPoint} active={true} />);
 
-    const budgetFlags = container.querySelectorAll('span.rounded-full');
-    expect(budgetFlags).toHaveLength(0);
+    expect(
+      screen.getByTestId('chart-tooltip').querySelectorAll('span.rounded-full'),
+    ).toHaveLength(0);
   });
 
-  it('renders working memory version', () => {
+  it('renders the working memory version', () => {
     render(<ChartTooltip data={mockDataPoint} active={true} />);
 
     expect(screen.getByText('WM v2')).toBeInTheDocument();
   });
 
-  it('does not render working memory version when null', () => {
-    const noVersionData = { ...mockDataPoint, workingMemoryVersion: null };
-    const { container } = render(<ChartTooltip data={noVersionData} active={true} />);
+  it('says no working memory exists yet instead of showing a zero WM version', () => {
+    render(<ChartTooltip data={{ ...mockDataPoint, workingMemoryVersion: null }} active={true} />);
 
-    const wmText = container.querySelector('[data-testid="tooltip-content"]')?.textContent;
-    expect(wmText).not?.toContain('WM v');
+    expect(screen.getByText('No working memory yet')).toBeInTheDocument();
+    expect(screen.getByText('none yet')).toBeInTheDocument();
+    expect(screen.getByTestId('chart-tooltip').textContent).not.toContain('WM v');
   });
 
-  it('renders all label-value pairs in tooltip', () => {
+  it('renders all label rows', () => {
     render(<ChartTooltip data={mockDataPoint} active={true} />);
 
-    const content = screen.getByTestId('tooltip-content');
-    expect(content).toHaveTextContent('Prompt');
+    const content = screen.getByTestId('chart-tooltip');
     expect(content).toHaveTextContent('System');
+    expect(content).toHaveTextContent('History + tools');
     expect(content).toHaveTextContent('Compressed WM');
-    expect(content).toHaveTextContent('Overhead');
-    expect(content).toHaveTextContent('Total Compressed');
+    expect(content).toHaveTextContent('Prepared prompt');
     expect(content).toHaveTextContent('Baseline (ghost)');
     expect(content).toHaveTextContent('Net Saved');
     expect(content).toHaveTextContent('Savings Ratio');
+    expect(content).not.toHaveTextContent('Overhead');
   });
 
   it('applies emerald color for positive net tokens saved', () => {
-    const positiveData = { ...mockDataPoint, netTokensSaved: 500 };
-    const { container } = render(<ChartTooltip data={positiveData} active={true} />);
+    render(<ChartTooltip data={{ ...mockDataPoint, netTokensSaved: 500 }} active={true} />);
 
-    const content = container.querySelector('[data-testid="tooltip-content"]');
-    // Net Saved row has a plus sign and emerald color
-    expect(content?.textContent).toContain('+500.0');
-    // The emerald span should be present
-    const emeraldSpans = content?.querySelectorAll('span.text-emerald-600');
-    expect(emeraldSpans && emeraldSpans.length > 0).toBe(true);
+    expect(
+      screen.getByTestId('chart-tooltip').querySelectorAll('span.text-emerald-600').length,
+    ).toBeGreaterThan(0);
   });
 
   it('applies red color for negative net tokens saved', () => {
-    const { container } = render(<ChartTooltip data={mockDataPoint} active={true} />);
+    render(<ChartTooltip data={mockDataPoint} active={true} />);
 
-    const content = container.querySelector('[data-testid="tooltip-content"]');
-    const netSavedSpans = content?.querySelectorAll('span.font-mono.font-medium');
-    const hasRed = Array.from(netSavedSpans || []).some((s) => s.className.includes('text-red-600'));
-    expect(hasRed).toBe(true);
+    expect(
+      screen.getByTestId('chart-tooltip').querySelectorAll('span.text-red-600').length,
+    ).toBeGreaterThan(0);
   });
 });

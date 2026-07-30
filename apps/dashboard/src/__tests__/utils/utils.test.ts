@@ -9,6 +9,7 @@ import {
   encodeConversationId,
   decodeConversationId,
   getMaxWorkingMemoryVersion,
+  getAverageCompressionRatio,
   getBestCompressionRatio,
   getWmColor,
   transformTurnsToChartData,
@@ -323,6 +324,9 @@ const makeTurn = (
   model: 'gpt-4',
   rawInputTokensEstimated: 5000,
   compressedInputTokensEstimated: 2000,
+  systemPromptTokensEstimated: 300,
+  workingMemoryTokensEstimated: 700,
+  historyAndToolsTokensEstimated: 1000,
   actualPromptTokens: 1000,
   actualCompletionTokens: 500,
   baselineTotalTokensEstimated: 5000,
@@ -349,28 +353,52 @@ describe('transformTurnsToChartData()', () => {
 
     expect(point.turnIndex).toBe(1);
     expect(point.model).toBe('gpt-4');
-    expect(point.promptTokens).toBe(1000);
-    expect(point.systemTokens).toBe(4000); // rawInput - actualPrompt
-    expect(point.compressedTokens).toBe(2000);
+    expect(point.systemTokens).toBe(300);
+    expect(point.historyTokens).toBe(1000);
+    expect(point.workingMemoryTokens).toBe(700);
+    expect(point.preparedPromptTokens).toBe(2000);
     expect(point.baselineTokens).toBe(5000);
     expect(point.workingMemoryVersion).toBe(1);
-    expect(point.totalCompressed).toBe(3000);
     expect(point.netTokensSaved).toBe(1000);
     expect(point.savingsRatio).toBe(0.2);
     expect(point.softBudgetExceeded).toBe(false);
     expect(point.hardBudgetExceeded).toBe(false);
   });
 
-  it('handles null/undefined token fields (uses ?? 0)', () => {
-    const turn = makeTurn({
-      actualPromptTokens: null,
-      compressedInputTokensEstimated: undefined,
-    });
-    const result = transformTurnsToChartData([turn]);
+  it('stacks segments that sum to the prepared prompt', () => {
+    const point = transformTurnsToChartData([makeTurn()])[0];
 
-    const point = result[0] as ChartDataPoint;
-    expect(point.promptTokens).toBe(0);
-    expect(point.compressedTokens).toBe(0);
+    expect(point.systemTokens + point.historyTokens + point.workingMemoryTokens).toBe(
+      point.preparedPromptTokens,
+    );
+  });
+
+  it('leaves the working memory segment empty before the first version exists', () => {
+    const turn = makeTurn({
+      workingMemoryVersionUsed: null,
+      workingMemoryTokensEstimated: 0,
+      historyAndToolsTokensEstimated: 1700,
+    });
+
+    const point = transformTurnsToChartData([turn])[0];
+
+    expect(point.workingMemoryVersion).toBeNull();
+    expect(point.workingMemoryTokens).toBe(0);
+    expect(point.systemTokens + point.historyTokens).toBe(point.preparedPromptTokens);
+  });
+
+  it('holds the system segment constant across turns', () => {
+    const points = transformTurnsToChartData([
+      makeTurn({ turnIndex: 1, historyAndToolsTokensEstimated: 1000 }),
+      makeTurn({
+        turnIndex: 2,
+        compressedInputTokensEstimated: 9000,
+        historyAndToolsTokensEstimated: 8000,
+        actualPromptTokens: 8500,
+      }),
+    ]);
+
+    expect(points.map((p) => p.systemTokens)).toEqual([300, 300]);
   });
 
   it('handles multiple turns', () => {
@@ -380,17 +408,6 @@ describe('transformTurnsToChartData()', () => {
     expect(result).toHaveLength(2);
     expect(result[0].turnIndex).toBe(1);
     expect(result[1].turnIndex).toBe(2);
-  });
-
-  it('computes overhead correctly (Math.max(0, ...))', () => {
-    // When totalCompressed is less than the sum of components, overhead should be 0
-    const turn = makeTurn({
-      compressedTotalTokensEstimated: 100, // very small
-    });
-    const result = transformTurnsToChartData([turn]);
-
-    const point = result[0] as ChartDataPoint;
-    expect(point.overheadTokens).toBe(0);
   });
 
   it('maps all fields correctly', () => {
@@ -454,6 +471,28 @@ describe('getMaxWorkingMemoryVersion()', () => {
         makeTurn({ workingMemoryVersionUsed: 2 }),
       ]),
     ).toBe(3);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// getAverageCompressionRatio()
+// ---------------------------------------------------------------------------
+
+describe('getAverageCompressionRatio()', () => {
+  it('returns null for empty or missing turns', () => {
+    expect(getAverageCompressionRatio(undefined)).toBeNull();
+    expect(getAverageCompressionRatio(null)).toBeNull();
+    expect(getAverageCompressionRatio([])).toBeNull();
+  });
+
+  it('returns the simple mean of per-turn savings ratios', () => {
+    expect(
+      getAverageCompressionRatio([
+        makeTurn({ netTokenSavingsRatio: 0.1 }),
+        makeTurn({ netTokenSavingsRatio: 0.5 }),
+        makeTurn({ netTokenSavingsRatio: 0.9 }),
+      ]),
+    ).toBeCloseTo(0.5);
   });
 });
 

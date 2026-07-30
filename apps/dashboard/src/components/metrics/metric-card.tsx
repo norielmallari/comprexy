@@ -20,7 +20,7 @@ export function MetricCard({
 }: MetricCardProps) {
   return (
     <div
-      className="rounded-lg border bg-white px-6 py-5 dark:border-slate-700 dark:bg-slate-800"
+      className="h-full rounded-lg border bg-white px-6 py-5 dark:border-slate-700 dark:bg-slate-800"
       role="region"
       aria-label={title}
     >

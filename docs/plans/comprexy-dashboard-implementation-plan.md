@@ -109,14 +109,20 @@ apps/dashboard/
 
 #### `ConversationTurnMetricDto` → Bar Chart Segments
 
+The three stacked segments are disjoint slices of the prepared prompt and always sum to
+`CompressedInputTokensEstimated`. The control-api derives them read-side (no extra columns).
+
 | Chart Segment | DTO Field | Description |
 |--------------|-----------|-------------|
-| **Prompt tokens** | `ActualPromptTokens` | Prompt segment of the turn |
-| **System tokens** | Derived | `ActualCompletionTokens` — or use `CompressedInputTokensEstimated` as compressed input segment |
-| **WM segments** | `WorkingMemoryVersionUsed` | Per-turn WM version for color coding |
-| **Overhead** | Derived | `CompressedTotalTokensEstimated - (ActualPromptTokens + CompressedInputTokensEstimated)` |
-| **Ghost bar** | `BaselineTotalTokensEstimated` | Uncompressed reference |
-| **Completion/output** | `ActualCompletionTokens` | Assistant output tokens |
+| **System** | `SystemPromptTokensEstimated` | Conversation `SystemPrompt` estimated once; constant across turns |
+| **History + tools** | `HistoryAndToolsTokensEstimated` | Remainder: `CompressedInputTokensEstimated - System - WM` |
+| **Compressed WM** | `WorkingMemoryTokensEstimated` | `WorkingMemory.TokenCount` for `WorkingMemoryVersionUsed`; `0` when no WM exists yet |
+| **Ghost bar** | `BaselineTotalTokensEstimated` | Uncompressed reference, drawn behind the stack on a hidden `xAxisId` |
+| **Completion/output** | `ActualCompletionTokens` | Assistant output tokens (tooltip only, not stacked) |
+
+There is no per-turn Overhead segment. Compression overhead is only tracked as a
+conversation-level total (`TotalCompressionOverheadTokens`) on the summary, so plotting it
+per turn would render as a constant zero.
 
 ### 4.3 MCP Telemetry Tools (Optional, for future enhancement)
 
@@ -176,12 +182,12 @@ apps/dashboard/
 #### `BarChart`
 - **Props:** `turns: TurnMetric[]`
 - **Chart type:** Stacked horizontal bar chart (or vertical bars along x-axis)
-- **Segments per turn (bottom to top):**
-  1. Prompt tokens — light gray
-  2. System tokens — light gray
+- **Segments per turn (bottom to top), one `stackId="prompt"`:**
+  1. System — light gray
+  2. History + tools — slate
   3. Compressed WM — blue gradients by version (v0 lightest → v3 darkest)
-  4. Overhead — amber
-- **Ghost bar:** Full-height column behind stacked segments
+- **Ghost bar:** Baseline column behind the stack, rendered on a hidden second `xAxisId` so
+  recharts overlaps it instead of placing it side by side; declared first so it paints behind
 - **Interaction:** Hover reveals tooltip with turn details
 - **Scroll:** Horizontal scroll for many turns
 
@@ -191,7 +197,7 @@ apps/dashboard/
 - **Behavior:** Follows cursor on hover
 
 #### `ChartLegend`
-- **Content:** Segment color keys (prompt, system, WM versions, overhead, ghost)
+- **Content:** Segment color keys (system, history + tools, compressed WM, ghost)
 - **Layout:** Horizontal legend below chart
 
 ### 5.4 UI Primitives (shadcn/ui)
@@ -328,25 +334,25 @@ export async function fetchTurns(conversationId: string): Promise<ConversationTu
 
 ### 8.2 Chart Data Transformation
 
+The segments are read straight off the DTO — the dashboard must not re-derive them, because
+only the server knows the system prompt text and the stored WM token counts.
+
 ```typescript
 // Transform turn metrics into chart-ready data
 function transformTurnsToChartData(turns: ConversationTurnMetricDto[]): ChartDataPoint[] {
   return turns.map((turn) => ({
-    turnIndex: turn.TurnIndex,
-    model: turn.Model,
-    segments: {
-      prompt: turn.ActualPromptTokens ?? 0,
-      system: turn.ActualCompletionTokens ?? 0, // or derived
-      wm: turn.CompressedInputTokensEstimated ?? 0,
-      wmVersion: turn.WorkingMemoryVersionUsed ?? 0,
-      overhead: Math.max(0, turn.CompressedTotalTokensEstimated - (turn.ActualPromptTokens ?? 0) - (turn.CompressedInputTokensEstimated ?? 0)),
-    },
-    ghost: turn.BaselineTotalTokensEstimated,
-    budget: {
-      soft: turn.SoftBudgetExceeded,
-      hard: turn.HardBudgetExceeded,
-      trimmed: turn.TrimTriggered,
-    },
+    turnIndex: turn.turnIndex,
+    model: turn.model,
+    systemTokens: turn.systemPromptTokensEstimated,
+    historyTokens: turn.historyAndToolsTokensEstimated,
+    workingMemoryTokens: turn.workingMemoryTokensEstimated,
+    preparedPromptTokens: turn.compressedInputTokensEstimated,
+    baselineTokens: turn.rawInputTokensEstimated,
+    workingMemoryVersion: turn.workingMemoryVersionUsed,
+    netTokensSaved: turn.netTokensSaved,
+    savingsRatio: turn.netTokenSavingsRatio,
+    softBudgetExceeded: turn.softBudgetExceeded,
+    hardBudgetExceeded: turn.hardBudgetExceeded,
   }));
 }
 ```
@@ -377,36 +383,26 @@ const WM_COLORS = {
 ┌─────────────────────────────────────────────────────────────┐
 │  Y-axis: Token count (scales to max ghost bar height)       │
 │                                                             │
-│  ┌───┐  ┌───┐  ┌───┐  ┌───┐  ┌───┐  ┌───┐  ┌───┐         │
-│  │   │  │   │  │   │  │   │  │   │  │   │  │   │         │
-│  │ O │  │ O │  │ O │  │ O │  │ O │  │ O │  │ O │         │  ← Overhead (amber)
-│  │ v │  │ v │  │ v │  │ v │  │ v │  │ v │  │ v │         │
-│  │ e │  │ e │  │ e │  │ e │  │ e │  │ e │  │ e │         │
-│  │ r │  │ r │  │ r │  │ r │  │ r │  │ r │  │ r │         │
-│  │ h │  │ h │  │ h │  │ h │  │ h │  │ h │  │ h │         │
-│  ├───┤  ├───┤  ├───┤  ├───┤  ├───┤  ├───┤  ├───┤         │
-│  │ W │  │ W │  │ W │  │ W │  │ W │  │ W │  │ W │         │  ← WM (blue by version)
-│  │ M │  │ M │  │ M │  │ W │  │ W │  │ W │  │ W │         │
-│  │   │  │   │  │   │  │ M │  │ M │  │ M │  │ M │         │
-│  ├───┤  ├───┤  ├───┤  ├───┤  ├───┤  ├───┤  ├───┤         │
-│  │ S │  │ S │  │ S │  │ S │  │ S │  │ S │  │ S │         │  ← System (light gray)
-│  │ y │  │ y │  │ y │  │ y │  │ y │  │ y │  │ y │         │
-│  │ s │  │ s │  │ s │  │ s │  │ s │  │ s │  │ s │         │
-│  │ t │  │ t │  │ t │  │ t │  │ t │  │ t │  │ t │         │
-│  ├───┤  ├───┤  ├───┤  ├───┤  ├───┤  ├───┤  ├───┤         │
-│  │ P │  │ P │  │ P │  │ P │  │ P │  │ P │  │ P │         │  ← Prompt (light gray)
-│  │ r │  │ r │  │ r │  │ r │  │ r │  │ r │  │ r │         │
-│  │ o │  │ o │  │ o │  │ o │  │ o │  │ o │  │ o │         │
-│  │ m │  │ m │  │ m │  │ m │  │ m │  │ m │  │ m │         │
-│  │ p │  │ p │  │ p │  │ p │  │ p │  │ p │  │ p │         │
-│  └───┘  └───┘  └───┘  └───┘  └───┘  └───┘  └───┘         │
+│  ┌╌╌╌┐  ┌╌╌╌┐  ┌╌╌╌┐  ┌╌╌╌┐  ┌╌╌╌┐  ┌╌╌╌┐  ┌╌╌╌┐         │  ← Ghost = baseline
+│  ╎   ╎  ╎   ╎  ╎   ╎  ╎   ╎  ╎   ╎  ╎   ╎  ╎   ╎         │    (dashed, behind,
+│  ╎   ╎  ╎   ╎  ╎   ╎  ╎   ╎  ╎   ╎  ╎   ╎  ╎   ╎         │     grows every turn)
+│  ╎   ╎  ╎   ╎  ╎   ╎  ╎   ╎  ╎   ╎  ╎   ╎  ╎   ╎         │
+│  ╎   ╎  ╎   ╎  ╎   ╎  ╎┌─┐╎  ╎┌─┐╎  ╎┌─┐╎  ╎   ╎         │
+│  ╎   ╎  ╎   ╎  ╎   ╎  ╎│W│╎  ╎│W│╎  ╎│W│╎  ╎   ╎         │  ← Compressed WM
+│  ╎┌─┐╎  ╎┌─┐╎  ╎┌─┐╎  ╎├─┤╎  ╎├─┤╎  ╎├─┤╎  ╎┌─┐╎         │    (blue by version,
+│  ╎│H│╎  ╎│H│╎  ╎│H│╎  ╎│H│╎  ╎│H│╎  ╎│H│╎  ╎│H│╎         │     absent until v1)
+│  ╎│i│╎  ╎│i│╎  ╎│i│╎  ╎│i│╎  ╎│i│╎  ╎│i│╎  ╎│i│╎         │
+│  ╎│s│╎  ╎│s│╎  ╎│s│╎  ╎│s│╎  ╎│s│╎  ╎│s│╎  ╎│s│╎         │  ← History + tools
+│  ╎├─┤╎  ╎├─┤╎  ╎├─┤╎  ╎├─┤╎  ╎├─┤╎  ╎├─┤╎  ╎├─┤╎         │    (slate, resets on
+│  ╎│S│╎  ╎│S│╎  ╎│S│╎  ╎│S│╎  ╎│S│╎  ╎│S│╎  ╎│S│╎         │     each WM rollover)
+│  ╎│y│╎  ╎│y│╎  ╎│y│╎  ╎│y│╎  ╎│y│╎  ╎│y│╎  ╎│y│╎         │  ← System (constant)
+│  └╌┴─┴╌┘└╌┴─┴╌┘└╌┴─┴╌┘└╌┴─┴╌┘└╌┴─┴╌┘└╌┴─┴╌┘└╌┴─┴╌┘        │
 │     T1       T2       T3       T4       T5       T6         │
-│                                                             │
-│  ─ ─ ─ Ghost bar (dashed, behind) ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─  │
 │                                                             │
 │  X-axis: Turn index (1, 2, 3, ...)                          │
 │                                                             │
-│  Legend: [● Prompt] [● System] [● WM v0] [● WM v1] ...     │
+│  Legend: [● System] [● History + tools] [● Compressed WM]   │
+│          [○ Baseline (ghost)]                               │
 └─────────────────────────────────────────────────────────────┘
 ```
 

@@ -1,6 +1,7 @@
 using Comprexy.Application.Abstractions;
 using Comprexy.Application.Models.Telemetry;
 using Comprexy.Application.Services;
+using Comprexy.Domain.Entities;
 using Moq;
 
 namespace Comprexy.Application.Tests.Services;
@@ -92,6 +93,8 @@ public class ConversationMetricsTelemetryTests
     private readonly Mock<IConversationMetricsSummaryRepository> _summaries = new();
     private readonly Mock<IConversationTurnMetricRepository> _turns = new();
     private readonly Mock<IConversationRepository> _conversations = new();
+    private readonly Mock<IWorkingMemoryRepository> _workingMemories = new();
+    private readonly Mock<ITokenEstimator> _tokenEstimator = new();
 
     [Fact]
     public async Task GetPhaseBreakdownAsync_SplitsOnlyOnWorkingMemoryOrTrimTransitions()
@@ -390,11 +393,78 @@ public class ConversationMetricsTelemetryTests
             property => property.Name.Contains("Hash", StringComparison.OrdinalIgnoreCase));
     }
 
+    [Fact]
+    public async Task ListTurnContextBreakdownsAsync_HoldsSystemConstantAndKeepsWorkingMemoryZeroUntilFirstVersion()
+    {
+        var id = Guid.NewGuid();
+        var conversation = Conversation.Create("key", DateTimeOffset.UnixEpoch);
+        conversation.CaptureSystemPromptIfAbsent("system prompt");
+
+        _conversations
+            .Setup(x => x.FindByIdAsync(id, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(conversation);
+        _tokenEstimator.Setup(x => x.CountTokens("system prompt")).Returns(300);
+        _workingMemories
+            .Setup(x => x.ListVersionTokenCountsAsync(id, It.IsAny<CancellationToken>()))
+            .ReturnsAsync([new WorkingMemoryVersionTokens { Version = 1, TokenCount = 800 }]);
+        _turns
+            .Setup(x => x.ListByConversationIdAsync(id, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(
+            [
+                TelemetryTestData.TurnMetric(id, 1, compressedInput: 5_000, workingMemoryVersion: null),
+                TelemetryTestData.TurnMetric(id, 2, compressedInput: 4_000, workingMemoryVersion: 1)
+            ]);
+
+        var breakdowns = await CreateService().ListTurnContextBreakdownsAsync(id, CancellationToken.None);
+
+        Assert.Collection(
+            breakdowns,
+            first =>
+            {
+                Assert.Equal(300, first.SystemPromptTokensEstimated);
+                Assert.Equal(0, first.WorkingMemoryTokensEstimated);
+                Assert.Equal(4_700, first.HistoryAndToolsTokensEstimated);
+            },
+            second =>
+            {
+                Assert.Equal(300, second.SystemPromptTokensEstimated);
+                Assert.Equal(800, second.WorkingMemoryTokensEstimated);
+                Assert.Equal(2_900, second.HistoryAndToolsTokensEstimated);
+            });
+    }
+
+    [Fact]
+    public async Task ListTurnContextBreakdownsAsync_SegmentsSumToPreparedPrompt()
+    {
+        var id = Guid.NewGuid();
+        _conversations
+            .Setup(x => x.FindByIdAsync(id, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Conversation.Create("key", DateTimeOffset.UnixEpoch));
+        _tokenEstimator.Setup(x => x.CountTokens(ContextBuilder.DefaultSystemPrompt)).Returns(7);
+        _workingMemories
+            .Setup(x => x.ListVersionTokenCountsAsync(id, It.IsAny<CancellationToken>()))
+            .ReturnsAsync([new WorkingMemoryVersionTokens { Version = 2, TokenCount = 1_200 }]);
+        _turns
+            .Setup(x => x.ListByConversationIdAsync(id, It.IsAny<CancellationToken>()))
+            .ReturnsAsync([TelemetryTestData.TurnMetric(id, 9, compressedInput: 12_345, workingMemoryVersion: 2)]);
+
+        var breakdown = Assert.Single(
+            await CreateService().ListTurnContextBreakdownsAsync(id, CancellationToken.None));
+
+        Assert.Equal(
+            12_345,
+            breakdown.SystemPromptTokensEstimated
+                + breakdown.WorkingMemoryTokensEstimated
+                + breakdown.HistoryAndToolsTokensEstimated);
+    }
+
     private ConversationMetricsQueryService CreateService() =>
         new(
             _summaries.Object,
             _turns.Object,
             _conversations.Object,
+            _workingMemories.Object,
+            _tokenEstimator.Object,
             new EvidenceMarkdownService(),
             new RegressionDetector());
 
@@ -455,6 +525,30 @@ internal static class TelemetryTestData
             SentMessageCount = sentMessages,
             CreatedAt = DateTimeOffset.UnixEpoch.AddMinutes(turn)
         };
+
+    public static ConversationTurnMetric TurnMetric(
+        Guid conversationId,
+        int turn,
+        int compressedInput,
+        int? workingMemoryVersion) =>
+        ConversationTurnMetric.Create(
+            conversationId,
+            turn,
+            DateTimeOffset.UnixEpoch.AddMinutes(turn),
+            "test-model",
+            rawInputTokensEstimated: compressedInput * 2,
+            compressedInputTokensEstimated: compressedInput,
+            actualPromptTokens: compressedInput,
+            actualCompletionTokens: 0,
+            softBudgetExceeded: false,
+            hardBudgetExceeded: false,
+            trimTriggered: false,
+            workingMemoryVersionUsed: workingMemoryVersion,
+            rawMessageCount: 10,
+            sentMessageCount: 5,
+            requestHash: string.Empty,
+            sentPayloadHash: string.Empty,
+            createdAt: DateTimeOffset.UnixEpoch.AddMinutes(turn));
 
     public static ConversationSummaryRollup Rollup(Guid id) =>
         new()

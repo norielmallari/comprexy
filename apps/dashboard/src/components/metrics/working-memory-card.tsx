@@ -21,11 +21,17 @@ export function WorkingMemoryCard({
 
   if (maxWorkingMemoryVersion == null) {
     return (
-      <div className="rounded-lg border bg-white px-6 py-5 dark:border-slate-700 dark:bg-slate-800">
+      <div
+        className="h-full rounded-lg border bg-white px-6 py-5 dark:border-slate-700 dark:bg-slate-800"
+        role="region"
+        aria-label="Working Memory"
+      >
         <p className="mb-1 text-sm font-medium text-slate-500 dark:text-slate-400">
           Working Memory
         </p>
-        <p className="text-sm text-slate-400 dark:text-slate-500">No data</p>
+        <p className="text-2xl font-semibold text-slate-400 dark:text-slate-500">
+          No data
+        </p>
       </div>
     );
   }
@@ -33,12 +39,17 @@ export function WorkingMemoryCard({
   const color = getWmColor(maxWorkingMemoryVersion, isDark);
 
   return (
-    <div className="rounded-lg border bg-white px-6 py-5 dark:border-slate-700 dark:bg-slate-800">
+    <div
+      className="h-full rounded-lg border bg-white px-6 py-5 dark:border-slate-700 dark:bg-slate-800"
+      role="region"
+      aria-label="Working Memory"
+    >
       <p className="mb-2 text-sm font-medium text-slate-500 dark:text-slate-400">
         Working Memory
       </p>
       <Badge
         variant="default"
+        className="px-3 py-1 text-2xl font-semibold"
         style={{
           backgroundColor: color,
           color: maxWorkingMemoryVersion === 0 ? "#1e293b" : "#ffffff",

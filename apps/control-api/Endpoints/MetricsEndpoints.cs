@@ -52,7 +52,14 @@ public static class MetricsEndpoints
         }
 
         var turns = await metricsQuery.ListTurnMetricsAsync(conversationId, cancellationToken);
-        var dto = turns.Select(ConversationMetricsMapper.ToTurnDto).ToList();
+        var breakdowns = await metricsQuery.ListTurnContextBreakdownsAsync(conversationId, cancellationToken);
+        var breakdownsByTurn = breakdowns.ToDictionary(b => b.TurnIndex);
+
+        var dto = turns
+            .Select(turn => ConversationMetricsMapper.ToTurnDto(
+                turn,
+                breakdownsByTurn.GetValueOrDefault(turn.TurnIndex)))
+            .ToList();
         return TypedResults.Ok(dto);
     }
 }

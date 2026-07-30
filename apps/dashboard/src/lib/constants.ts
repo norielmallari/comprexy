@@ -40,16 +40,28 @@ export const WM_COLORS_DARK = {
 } as const;
 
 // ---------------------------------------------------------------------------
-// Overhead Color (amber)
+// Prepared Prompt Segment Colors
 // ---------------------------------------------------------------------------
 
-export const OVERHEAD_COLOR = '#d69e2e';
+/** Captured system prompt — constant across a conversation */
+export const SYSTEM_SEGMENT_COLOR = '#cbd5e0';
+
+/** Still-unfolded raw turns plus the model-facing tool catalog */
+export const HISTORY_SEGMENT_COLOR = '#94a3b8';
 
 // ---------------------------------------------------------------------------
-// Ghost Bar Color (light gray)
+// Ghost Bar (baseline reference drawn behind the stack)
 // ---------------------------------------------------------------------------
 
-export const GHOST_BAR_COLOR = '#cbd5e0';
+/**
+ * The ghost is an outlined backdrop rather than a solid bar so it stays readable behind the
+ * stacked segments. It must not reuse a segment color.
+ */
+export const GHOST_BAR_FILL_LIGHT = '#64748b';
+export const GHOST_BAR_FILL_DARK = '#475569';
+export const GHOST_BAR_STROKE_LIGHT = '#475569';
+export const GHOST_BAR_STROKE_DARK = '#e2e8f0';
+export const GHOST_BAR_FILL_OPACITY = 0.18;
 
 // ---------------------------------------------------------------------------
 // Working Memory Version Labels

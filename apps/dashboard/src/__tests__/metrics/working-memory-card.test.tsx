@@ -38,6 +38,20 @@ describe('WorkingMemoryCard', () => {
     expect(screen.getByText('No data')).toBeInTheDocument();
   });
 
+  it('exposes a Working Memory region when populated', () => {
+    render(<WorkingMemoryCard maxWorkingMemoryVersion={1} />);
+    expect(
+      screen.getByRole('region', { name: 'Working Memory' }),
+    ).toBeInTheDocument();
+  });
+
+  it('exposes a Working Memory region in the no-data state', () => {
+    render(<WorkingMemoryCard maxWorkingMemoryVersion={null} />);
+    expect(
+      screen.getByRole('region', { name: 'Working Memory' }),
+    ).toBeInTheDocument();
+  });
+
   it('does not render version badge when null', () => {
     render(<WorkingMemoryCard maxWorkingMemoryVersion={null} />);
     expect(screen.queryByText(/v\d/)).not.toBeInTheDocument();
@@ -47,6 +61,7 @@ describe('WorkingMemoryCard', () => {
     render(<WorkingMemoryCard maxWorkingMemoryVersion={1} />);
     expect(screen.getByText('Working Memory')).toBeInTheDocument();
   });
+
 
   it('renders badge element with version text', () => {
     render(<WorkingMemoryCard maxWorkingMemoryVersion={2} />);
