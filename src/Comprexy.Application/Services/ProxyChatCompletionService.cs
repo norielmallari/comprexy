@@ -1,6 +1,7 @@
 using System.Text.Json;
 using Comprexy.Application.Abstractions;
 using Comprexy.Application.Configuration;
+using Comprexy.Application.Mapping;
 using Comprexy.Application.Models;
 using Comprexy.Application.Services.CacheAlignment;
 using Comprexy.Application.Tracing;
@@ -317,6 +318,7 @@ public class ProxyChatCompletionService
             ? 0
             : storedMessages.Max(m => m.Sequence) + 1;
         var newlyPersisted = new List<ConversationMessage>();
+        var virtualToolsInboundApplied = false;
         if (_toolSchemaOrchestrator.ShouldAttemptActivation(_proxyOptions.PassThrough))
         {
             var historyForValidation = storedMessages
@@ -351,6 +353,7 @@ public class ProxyChatCompletionService
                 clientSyncedPrefix,
                 cancellationToken,
                 replacedClientToolNames);
+            virtualToolsInboundApplied = true;
 
             foreach (var message in inboundRewrite.Messages)
             {
@@ -434,15 +437,30 @@ public class ProxyChatCompletionService
             ?? throw new InvalidOperationException("Unable to resolve a current non-system message for this request.");
 
         // Ensure the outgoing tip is the client's latest non-system message (sync-repair).
+        // Virtual Tools inbound rewrite intentionally changes tip wire (IR call_* / distilled body vs
+        // client cur_* / native body). Re-persisting the client tip would leak replaced tool results
+        // into the IR transcript — typically the last result in a parallel batch.
+        var keepIrTipAfterVirtualInbound = false;
         if (allMessages.Count == 0 || !IsSameTip(allMessages[^1], requestTip))
         {
-            _logger.LogWarning(
-                "Conversation {ConversationId} tip mismatch with client history; persisting request tip.",
-                conversation.Id);
-            var repaired = PersistMessage(conversation.Id, nextSequence++, requestTip, now);
-            newlyPersisted.Add(repaired);
-            allMessages.Add(repaired);
-            conversation.SetSyncedMessageCount(request.Messages.Count, now);
+            if (virtualToolsInboundApplied &&
+                IsVirtualToolsExpectedTipMismatch(requestTip, nonSystemNewMessages))
+            {
+                keepIrTipAfterVirtualInbound = true;
+                _logger.LogDebug(
+                    "Conversation {ConversationId} tip wire differs after Virtual Tools inbound rewrite; keeping IR tip.",
+                    conversation.Id);
+            }
+            else
+            {
+                _logger.LogWarning(
+                    "Conversation {ConversationId} tip mismatch with client history; persisting request tip.",
+                    conversation.Id);
+                var repaired = PersistMessage(conversation.Id, nextSequence++, requestTip, now);
+                newlyPersisted.Add(repaired);
+                allMessages.Add(repaired);
+                conversation.SetSyncedMessageCount(request.Messages.Count, now);
+            }
         }
 
         if (allMessages.Count == 0)
@@ -451,8 +469,11 @@ public class ProxyChatCompletionService
         }
 
         var currentMessageEntity = allMessages[^1];
-        // Prefer the live request tip so wire JSON / tool payloads match what the client just sent.
-        var currentUserMessage = requestTip;
+        // Prefer the live request tip so wire JSON / tool payloads match what the client just sent,
+        // except after Virtual Tools distill/swallow where the IR tip is authoritative.
+        var currentUserMessage = keepIrTipAfterVirtualInbound
+            ? ConversationMessageMapper.ToChatMessage(currentMessageEntity)
+            : requestTip;
 
         var workingMemory = await _workingMemoryRepository.GetLatestAsync(conversation.Id, cancellationToken);
         if (metricsPrepare is not null)
@@ -1219,6 +1240,30 @@ public class ProxyChatCompletionService
         }
 
         return string.Equals(persisted.Content, incoming.Content, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// True when <paramref name="requestTip"/> was an input to Virtual Tools inbound rewrite.
+    /// Distill/swallow already accounted for it; tip sync must not re-stage native client wire.
+    /// </summary>
+    private static bool IsVirtualToolsExpectedTipMismatch(
+        ChatMessage requestTip,
+        IReadOnlyList<ChatMessage> nonSystemNewMessages)
+    {
+        if (requestTip.Role is not (MessageRole.Tool or MessageRole.Assistant))
+        {
+            return false;
+        }
+
+        for (var i = 0; i < nonSystemNewMessages.Count; i++)
+        {
+            if (ReferenceEquals(nonSystemNewMessages[i], requestTip))
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private void LogContextBudget(

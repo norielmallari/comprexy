@@ -307,7 +307,7 @@ public class ConversationIdentityResolverTests
         var messages1 = new List<ChatMessage>
         {
             new(MessageRole.System, "You are a helpful assistant."),
-            new(MessageRole.User, "Load the project personas and continue."),
+            new(MessageRole.User, "Load the docs and continue."),
             new(MessageRole.Assistant, "…"),
             new(MessageRole.User, toolEchoA),
             new(MessageRole.User, "continue the roleplay")
@@ -316,7 +316,7 @@ public class ConversationIdentityResolverTests
         var messages2 = new List<ChatMessage>
         {
             new(MessageRole.System, "You are a helpful assistant."),
-            new(MessageRole.User, "Load the project personas and continue."),
+            new(MessageRole.User, "Load the docs and continue."),
             new(MessageRole.Assistant, "…"),
             new(MessageRole.User, toolEchoB),
             new(MessageRole.Assistant, "…"),
@@ -335,7 +335,7 @@ public class ConversationIdentityResolverTests
         var withEcho = new List<ChatMessage>
         {
             new(MessageRole.System, "You are a helpful assistant."),
-            new(MessageRole.User, "Load the project personas and continue."),
+            new(MessageRole.User, "Load the docs and continue."),
             new(MessageRole.Assistant, "…"),
             new(MessageRole.User, "Called the Bash tool with the following input: {\"command\":\"cat x\"}"),
             new(MessageRole.User, "Also add tests.")
@@ -344,7 +344,7 @@ public class ConversationIdentityResolverTests
         var plainOnly = new List<ChatMessage>
         {
             new(MessageRole.System, "You are a helpful assistant."),
-            new(MessageRole.User, "Load the project personas and continue."),
+            new(MessageRole.User, "Load the docs and continue."),
             new(MessageRole.Assistant, "…"),
             new(MessageRole.User, "Also add tests.")
         };

@@ -98,7 +98,7 @@ public class ToolIrPlannerTests
         var call = new ParsedToolCall(
             "call_2",
             ToolSchemaConstants.DirListToolName,
-            """{"path":"/workspace/repo/personas"}""");
+            """{"path":"/workspace/repo/docs"}""");
 
         var items = planner.Plan(Guid.NewGuid(), [call], mapping);
 
@@ -108,7 +108,7 @@ public class ToolIrPlannerTests
         using var args = JsonDocument.Parse(items[0].ClientArgumentsJson!);
         Assert.Equal("*", args.RootElement.GetProperty("pattern").GetString());
         Assert.Equal(
-            "/workspace/repo/personas",
+            "/workspace/repo/docs",
             args.RootElement.GetProperty("path").GetString());
         Assert.False(args.RootElement.TryGetProperty("glob_pattern", out _));
         Assert.False(args.RootElement.TryGetProperty("target_directory", out _));

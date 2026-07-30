@@ -576,7 +576,7 @@ public class ProxyChatCompletionServiceTests
 
         var stored = new List<ConversationMessage>
         {
-            ConversationMessage.Create(conversation.Id, 0, MessageRole.User, "load personas", 5, now),
+            ConversationMessage.Create(conversation.Id, 0, MessageRole.User, "load docs", 5, now),
             ConversationMessage.Create(
                 conversation.Id, 1, MessageRole.Assistant, "[tool_calls: comprexy_read_file_range]", 5, now, irAssistantWire),
             ConversationMessage.Create(conversation.Id, 2, MessageRole.Tool, irObservation, 5, now, irToolWire)
@@ -613,7 +613,7 @@ public class ProxyChatCompletionServiceTests
             messages = new object[]
             {
                 new { role = "system", content = "You are helpful." },
-                new { role = "user", content = "load personas" },
+                new { role = "user", content = "load docs" },
                 new
                 {
                     role = "assistant",
@@ -744,7 +744,7 @@ public class ProxyChatCompletionServiceTests
             messages = new object[]
             {
                 new { role = "system", content = "You are helpful." },
-                new { role = "user", content = "load personas" },
+                new { role = "user", content = "load docs" },
                 new
                 {
                     role = "assistant",
@@ -787,7 +787,7 @@ public class ProxyChatCompletionServiceTests
             addedMessages,
             m => m.Role == MessageRole.Tool &&
                  (m.Content?.Contains("<path>", StringComparison.Ordinal) ?? false));
-        Assert.Contains(addedMessages, m => m.Role == MessageRole.User && m.Content == "load personas");
+        Assert.Contains(addedMessages, m => m.Role == MessageRole.User && m.Content == "load docs");
         Assert.Contains(addedMessages, m => m.Role == MessageRole.User && m.Content == "summarize");
 
         Assert.NotNull(forwarded);
@@ -3032,6 +3032,201 @@ public class ProxyChatCompletionServiceTests
         Assert.DoesNotContain(_callIdMapRepo.Rows, r => r.ClientCallId == clientCallId);
         Assert.True(_mapSaveChangesCount >= 1);
         Assert.Contains(addedMessages, m => m.Role == MessageRole.Tool && m.Content.Contains("passthrough", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task HandleAsync_VirtualInboundParallelReads_DoesNotTipRepairNativeClientWire()
+    {
+        // Regression: after distill, IsSameTip fails (IR call_* vs client cur_*). Tip sync must not
+        // re-persist the last native tool result into the IR transcript.
+        _toolSchemaOptions = new ToolSchemaOptions { Mode = ToolSchemaMode.Virtual };
+        _estimatedTokensToReturn = 10;
+        const string irA = "call_ir_a";
+        const string irB = "call_ir_b";
+        const string irC = "call_ir_c";
+        const string curA = "cur_client_a_aaaaaaaaaaaaaaaaaaaaaaaa";
+        const string curB = "cur_client_b_bbbbbbbbbbbbbbbbbbbbbbbb";
+        const string curC = "cur_client_c_cccccccccccccccccccccccc";
+        const string pathA = "docs/a.md";
+        const string pathB = "docs/b.md";
+        const string pathC = "docs/c.md";
+        var now = DateTimeOffset.UtcNow;
+
+        var conversation = Conversation.Create("header:tip-repair-leak", now);
+        conversation.CaptureSystemPromptIfAbsent("You are helpful.");
+        // Client synced: system + user + remapped native assistant (3 reads).
+        conversation.SetSyncedMessageCount(3, now);
+
+        var irAssistantWire =
+            "{\"role\":\"assistant\",\"content\":\"\\n\\n\",\"tool_calls\":[" +
+            "{\"id\":\"" + irA + "\",\"type\":\"function\",\"function\":{\"name\":\"" +
+            ToolSchemaConstants.FileManifestToolName +
+            "\",\"arguments\":\"{\\\"path\\\":\\\"" + pathA + "\\\"}\"}}," +
+            "{\"id\":\"" + irB + "\",\"type\":\"function\",\"function\":{\"name\":\"" +
+            ToolSchemaConstants.FileManifestToolName +
+            "\",\"arguments\":\"{\\\"path\\\":\\\"" + pathB + "\\\"}\"}}," +
+            "{\"id\":\"" + irC + "\",\"type\":\"function\",\"function\":{\"name\":\"" +
+            ToolSchemaConstants.FileManifestToolName +
+            "\",\"arguments\":\"{\\\"path\\\":\\\"" + pathC + "\\\"}\"}}]}";
+
+        var stored = new List<ConversationMessage>
+        {
+            ConversationMessage.Create(conversation.Id, 0, MessageRole.User, "Read the three docs.", 5, now),
+            ConversationMessage.Create(
+                conversation.Id,
+                1,
+                MessageRole.Assistant,
+                "[tool_calls: comprexy_read_file_manifest, comprexy_read_file_manifest, comprexy_read_file_manifest]",
+                5,
+                now,
+                irAssistantWire)
+        };
+
+        var addedMessages = new List<ConversationMessage>();
+        _conversationRepository.Setup(r => r.FindByKeyAsync("header:tip-repair-leak", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(conversation);
+        _messageRepository.Setup(r => r.GetByConversationIdAsync(conversation.Id, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(() => stored.Concat(addedMessages).OrderBy(m => m.Sequence).ToList());
+        _workingMemoryRepository.Setup(r => r.GetLatestAsync(conversation.Id, It.IsAny<CancellationToken>()))
+            .ReturnsAsync((WorkingMemory?)null);
+        _messageRepository.Setup(r => r.Add(It.IsAny<ConversationMessage>()))
+            .Callback<ConversationMessage>(m => addedMessages.Add(m));
+
+        SetupCompressionMapperForReadFileAndBash();
+        UpstreamRequest? forwarded = null;
+        _chatCompletionClient
+            .Setup(c => c.CompleteAsync(
+                It.IsAny<ProviderEndpoint>(),
+                It.Is<UpstreamRequest>(r => r.Purpose == UpstreamRequestPurpose.Chat),
+                It.IsAny<CancellationToken>()))
+            .Callback<ProviderEndpoint, UpstreamRequest, CancellationToken>((_, request, _) => forwarded = request)
+            .ReturnsAsync(new UpstreamChatResult("ack", "stop", 10, 2));
+
+        var service = CreateService();
+        void SeedPending(string irId, string curId, string path) =>
+            _callIdMapRepo.Add(ConversationToolCallMap.CreatePending(
+                conversation.Id,
+                irId,
+                curId,
+                ToolSchemaConstants.FileManifestToolName,
+                "read",
+                "{\"path\":\"" + path + "\"}",
+                "{\"filePath\":\"" + path + "\"}",
+                "direct",
+                path,
+                null,
+                null,
+                now));
+
+        SeedPending(irA, curA, pathA);
+        SeedPending(irB, curB, pathB);
+        SeedPending(irC, curC, pathC);
+
+        var payload = new
+        {
+            model = "client-model",
+            tools = new object[]
+            {
+                new
+                {
+                    type = "function",
+                    function = new
+                    {
+                        name = "read",
+                        description = "Read a file.",
+                        parameters = new
+                        {
+                            type = "object",
+                            properties = new { filePath = new { type = "string" } },
+                            required = new[] { "filePath" }
+                        }
+                    }
+                },
+                new
+                {
+                    type = "function",
+                    function = new
+                    {
+                        name = "bash",
+                        description = "Run a shell command.",
+                        parameters = new
+                        {
+                            type = "object",
+                            properties = new { command = new { type = "string" } },
+                            required = new[] { "command" }
+                        }
+                    }
+                }
+            },
+            messages = new object[]
+            {
+                new { role = "system", content = "You are helpful." },
+                new { role = "user", content = "Read the three docs." },
+                new
+                {
+                    role = "assistant",
+                    content = "\n\n",
+                    tool_calls = new object[]
+                    {
+                        new
+                        {
+                            id = curA,
+                            type = "function",
+                            function = new { name = "read", arguments = "{\"filePath\":\"" + pathA + "\"}" }
+                        },
+                        new
+                        {
+                            id = curB,
+                            type = "function",
+                            function = new { name = "read", arguments = "{\"filePath\":\"" + pathB + "\"}" }
+                        },
+                        new
+                        {
+                            id = curC,
+                            type = "function",
+                            function = new { name = "read", arguments = "{\"filePath\":\"" + pathC + "\"}" }
+                        }
+                    }
+                },
+                new
+                {
+                    role = "tool",
+                    tool_call_id = curA,
+                    content = "<path>/workspace/repo/" + pathA + "</path><type>file</type><content>\n1: # A\n</content>"
+                },
+                new
+                {
+                    role = "tool",
+                    tool_call_id = curB,
+                    content = "<path>/workspace/repo/" + pathB + "</path><type>file</type><content>\n1: # B\n</content>"
+                },
+                new
+                {
+                    role = "tool",
+                    tool_call_id = curC,
+                    content = "<path>/workspace/repo/" + pathC + "</path><type>file</type><content>\n1: # C\n</content>"
+                }
+            }
+        };
+        using var document = JsonDocument.Parse(JsonSerializer.Serialize(payload));
+        var request = Comprexy.Api.Mapping.ChatCompletionRequestParser.Parse(
+            document.RootElement.Clone(),
+            "tip-repair-leak");
+
+        await service.HandleAsync(request, CancellationToken.None);
+
+        var addedTools = addedMessages.Where(m => m.Role == MessageRole.Tool).ToList();
+        Assert.Equal(3, addedTools.Count);
+        Assert.All(addedTools, m => Assert.Contains("\"type\":\"file_manifest\"", m.Content, StringComparison.Ordinal));
+        Assert.DoesNotContain(addedTools, m => m.Content.Contains("<path>", StringComparison.Ordinal));
+        Assert.DoesNotContain(
+            addedTools,
+            m => m.RawWireJson != null && m.RawWireJson.Contains(curC, StringComparison.Ordinal));
+
+        Assert.NotNull(forwarded);
+        var forwardedTools = forwarded!.Messages.Where(m => m.Role == MessageRole.Tool).Select(m => m.Content).ToList();
+        Assert.Equal(3, forwardedTools.Count);
+        Assert.DoesNotContain(forwardedTools, c => c != null && c.Contains("<path>", StringComparison.Ordinal));
     }
 
     [Fact]

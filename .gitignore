@@ -20,6 +20,7 @@ internal/
 **/appsettings.Local.json
 .cursor/agent-state/**
 !.cursor/agent-state/README.md
+.cursor/rules/*privacy.mdc
 
 # Next.js dashboard
 apps/dashboard/.next/
