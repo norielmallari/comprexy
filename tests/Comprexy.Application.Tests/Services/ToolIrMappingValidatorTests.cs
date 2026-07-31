@@ -444,6 +444,191 @@ public class ToolIrMappingValidatorTests
     }
 
     [Fact]
+    public void Validate_ReportsEveryBindingError_NotJustTheFirst()
+    {
+        const string hash = "abc";
+        var json = MappingJson(
+            hash,
+            [
+                Capability("Read"),
+                Capability("Shell", "SHELL_BACKEND")
+            ],
+            [
+                new
+                {
+                    comprexy_tool = "comprexy_read_file_search",
+                    primary_client_tool = "Read",
+                    strategy = "direct",
+                    arg_map = new { query = "pattern" }
+                },
+                new
+                {
+                    comprexy_tool = "comprexy_shell",
+                    primary_client_tool = "Shell",
+                    strategy = "read_then_slice",
+                    arg_map = new { command = "command" }
+                }
+            ]);
+
+        var result = ToolIrMappingValidator.Validate(json, Catalog, hash);
+
+        Assert.False(result.IsValid);
+        Assert.Contains("comprexy_read_file_search", result.Error);
+        Assert.Contains("requires strategy 'direct'", result.Error);
+    }
+
+    [Fact]
+    public void Validate_WhenCapabilityMismatch_NamesRebindCandidates()
+    {
+        const string hash = "abc";
+        var catalog = new HashSet<string>(StringComparer.Ordinal) { "read", "glob" };
+        var json = MappingJson(
+            hash,
+            [
+                Capability("read"),
+                Capability("glob", "FILE_SEARCH_BACKEND")
+            ],
+            [
+                new
+                {
+                    comprexy_tool = "comprexy_dir_list",
+                    primary_client_tool = "read",
+                    strategy = "direct",
+                    arg_map = new { path = "filePath" }
+                }
+            ]);
+
+        var result = ToolIrMappingValidator.Validate(json, catalog, hash);
+
+        Assert.False(result.IsValid);
+        Assert.Contains("Rebind to one of: glob (FILE_SEARCH_BACKEND)", result.Error);
+    }
+
+    [Fact]
+    public void Validate_WhenNoCompatibleCandidate_TellsMapperToOmitBinding()
+    {
+        const string hash = "abc";
+        var catalog = new HashSet<string>(StringComparer.Ordinal) { "read" };
+        var json = MappingJson(
+            hash,
+            [Capability("read")],
+            [
+                new
+                {
+                    comprexy_tool = "comprexy_dir_list",
+                    primary_client_tool = "read",
+                    strategy = "direct",
+                    arg_map = new { path = "filePath" }
+                }
+            ]);
+
+        var result = ToolIrMappingValidator.Validate(json, catalog, hash);
+
+        Assert.False(result.IsValid);
+        Assert.Contains("omit this binding", result.Error);
+    }
+
+    [Fact]
+    public void TrySalvage_DropsInvalidBinding_AndKeepsTheRest()
+    {
+        const string hash = "abc";
+        var catalog = new HashSet<string>(StringComparer.Ordinal) { "read", "grep", "glob", "bash" };
+        var json = MappingJson(
+            hash,
+            [
+                Capability("read"),
+                Capability("grep", "FILE_SEARCH_BACKEND"),
+                Capability("glob", "FILE_SEARCH_BACKEND"),
+                Capability("bash", "SHELL_BACKEND")
+            ],
+            [
+                new
+                {
+                    comprexy_tool = "comprexy_read_file_range",
+                    primary_client_tool = "read",
+                    strategy = "direct",
+                    arg_map = new { path = "filePath" }
+                },
+                new
+                {
+                    comprexy_tool = "comprexy_read_file_search",
+                    primary_client_tool = "grep",
+                    strategy = "direct",
+                    arg_map = new { query = "pattern" }
+                },
+                new
+                {
+                    comprexy_tool = "comprexy_dir_list",
+                    primary_client_tool = "read",
+                    strategy = "direct",
+                    arg_map = new { path = "filePath" }
+                },
+                new
+                {
+                    comprexy_tool = "comprexy_shell",
+                    primary_client_tool = "bash",
+                    strategy = "direct",
+                    arg_map = new { command = "command" }
+                }
+            ]);
+
+        var result = ToolIrMappingValidator.TrySalvage(json, catalog, hash);
+
+        Assert.True(result.IsValid, result.Error);
+        Assert.Equal(["comprexy_dir_list"], result.DroppedBindings);
+        Assert.DoesNotContain(
+            result.Document!.Bindings,
+            binding => binding.ComprexyTool == "comprexy_dir_list");
+        Assert.Equal(3, result.Document.Bindings.Count);
+    }
+
+    [Fact]
+    public void TrySalvage_RefusesWhenDropWouldStrandAReplacedCapability()
+    {
+        const string hash = "abc";
+        var catalog = new HashSet<string>(StringComparer.Ordinal) { "read", "bash" };
+        var json = MappingJson(
+            hash,
+            [
+                Capability("read"),
+                Capability("bash", "SHELL_BACKEND")
+            ],
+            [
+                new
+                {
+                    comprexy_tool = "comprexy_read_file_range",
+                    primary_client_tool = "read",
+                    strategy = "direct",
+                    arg_map = new { path = "filePath" }
+                },
+                new
+                {
+                    comprexy_tool = "comprexy_shell",
+                    primary_client_tool = "bash",
+                    strategy = "read_then_slice",
+                    arg_map = new { command = "command" }
+                }
+            ]);
+
+        var result = ToolIrMappingValidator.TrySalvage(json, catalog, hash);
+
+        Assert.False(result.IsValid);
+        Assert.Contains("SHELL_BACKEND", result.Error);
+    }
+
+    [Fact]
+    public void TrySalvage_RefusesDocumentLevelFailure()
+    {
+        const string hash = "abc";
+        var json = MappingJson(hash, [Capability("Read")]);
+
+        var result = ToolIrMappingValidator.TrySalvage(json, Catalog, "different-hash");
+
+        Assert.False(result.IsValid);
+        Assert.Contains("schema_hash mismatch", result.Error);
+    }
+
+    [Fact]
     public void VirtualToolRegistry_IncludesFileAndShellFamilies()
     {
         Assert.True(VirtualToolRegistry.IsVirtual(ToolSchemaConstants.FileRangeToolName));

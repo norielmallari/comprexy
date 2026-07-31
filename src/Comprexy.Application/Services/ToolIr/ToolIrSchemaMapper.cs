@@ -55,6 +55,7 @@ public class ToolIrSchemaMapper
         var endpoint = _endpointResolver.ResolveCompression().WithPreferredModel(preferredModel);
         var maxAttempts = Math.Max(1, 1 + _options.MappingMaxRetries);
         ToolIrMappingValidator.ValidationResult? last = null;
+        string? lastJson = null;
 
         for (var attempt = 1; attempt <= maxAttempts; attempt++)
         {
@@ -68,6 +69,7 @@ public class ToolIrSchemaMapper
                     catalogHash,
                     fullDefinitionsByName,
                     last?.Error,
+                    attempt,
                     cancellationToken);
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
@@ -83,6 +85,11 @@ public class ToolIrSchemaMapper
             }
 
             var json = ExtractJsonObject(rawContent);
+            if (!string.IsNullOrWhiteSpace(json))
+            {
+                lastJson = json;
+            }
+
             last = ToolIrMappingValidator.Validate(
                 json ?? string.Empty,
                 catalogNames,
@@ -106,6 +113,25 @@ public class ToolIrSchemaMapper
                 last.Error);
         }
 
+        if (!string.IsNullOrWhiteSpace(lastJson))
+        {
+            var salvaged = ToolIrMappingValidator.TrySalvage(
+                lastJson,
+                catalogNames,
+                catalogHash,
+                fullDefinitionsByName);
+            if (salvaged.IsValid && salvaged.Document is not null)
+            {
+                _logger.LogWarning(
+                    "Tool IR mapping salvaged for schema_hash {CatalogHash} after {MaxAttempts} attempts by dropping " +
+                    "invalid bindings: {DroppedBindings}. Remaining Virtual tools stay active.",
+                    catalogHash,
+                    maxAttempts,
+                    string.Join(", ", salvaged.DroppedBindings ?? []));
+                return salvaged;
+            }
+        }
+
         return last ?? new ToolIrMappingValidator.ValidationResult(false, null, "Mapper produced no output.");
     }
 
@@ -115,6 +141,7 @@ public class ToolIrSchemaMapper
         string catalogHash,
         IReadOnlyDictionary<string, string> fullDefinitionsByName,
         string? previousError,
+        int attempt,
         CancellationToken cancellationToken)
     {
         if (!endpoint.HasConfiguredModel)
@@ -139,7 +166,7 @@ public class ToolIrSchemaMapper
                 messages,
                 Stream: false,
                 OriginalClientRequest: null,
-                CallOptions: new ChatCompletionCallOptions(Temperature: _compressionOptions.Temperature),
+                CallOptions: new ChatCompletionCallOptions(Temperature: ResolveTemperature(attempt)),
                 ReplaceMessages: true,
                 Purpose: UpstreamRequestPurpose.Compression),
             cancellationToken);
@@ -147,6 +174,15 @@ public class ToolIrSchemaMapper
         await RecordMapperOverheadAsync(conversationId, messages, result, cancellationToken);
         return result.Content ?? string.Empty;
     }
+
+    /// <summary>
+    /// Deterministic first attempt, then widen sampling so a retry is a different roll rather than
+    /// a re-run of the mapping the validator just rejected.
+    /// </summary>
+    private double ResolveTemperature(int attempt) =>
+        attempt <= 1
+            ? 0d
+            : Math.Min(1d, _compressionOptions.Temperature + (0.2d * (attempt - 2)));
 
     private async Task RecordMapperOverheadAsync(
         Guid conversationId,

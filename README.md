@@ -288,7 +288,7 @@ Client tools[] → catalog hash + mapper → model IR tools
 | Shell family | Bound `comprexy_shell` replaces native Shell/bash backends |
 | Denylist | `ExcludeFromModelTools` omits listed client tools from the model catalog |
 | Meta | `comprexy_get_current_conversation_id` runs proxy-locally |
-| Failure | Mapper exhaustion sets `ToolIrDisabled` for that catalog hash and forwards client tools unchanged; compression/budgets stay on |
+| Failure | Mapper exhaustion drops only the bindings that failed validation and keeps the rest; if nothing usable survives, `ToolIrDisabled` is set for that catalog hash and client tools are forwarded unchanged. Compression/budgets stay on either way |
 
 Runtime detail: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md#tool-schema-virtual-tools). Options: [`docs/SETTINGS.md`](docs/SETTINGS.md#toolschema).
 
@@ -317,7 +317,7 @@ Settings load from `appsettings.json`, environment overlays, and optional gitign
 - After working memory exists, the system prompt captured on the first turn is reused when rebuilding context.
 - `Proxy:PassThrough` disables context management entirely.
 - Soft Inline wrap-up and the conversation gate are process-local; they are not shared across multiple API instances.
-- Virtual Tools mapping is best-effort per catalog hash; on mapper exhaustion Comprexy OSS sets `ToolIrDisabled` and forwards native tools for that hash (compression stays on).
+- Virtual Tools mapping is best-effort per catalog hash. A catalog with no tool the mapper can bind to a given Virtual tool loses that Virtual tool only; when nothing usable survives, Comprexy OSS sets `ToolIrDisabled` and forwards native tools for that hash (compression stays on).
 - `ExcludeFromModelTools` hides tools from the model only; they remain in the client catalog. Already-persisted transcript turns are not scrubbed.
 - Token and cost intelligence is estimate-based. Actual provider billing may differ because of model-specific tokenization, prompt caching, output volume, provider pricing, local hardware utilization, and workflow shape.
 

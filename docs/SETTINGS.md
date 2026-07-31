@@ -50,7 +50,7 @@ Optional separate endpoint/model for ToolSchema mapping and Inline wrap-up promp
 | `ApiKey` | `null` | Compression API key. Falls back to `Provider:ApiKey`. |
 | `Model` | `null` | Compression model. Falls back to `Provider:Model`, then the client chat model. |
 | `TimeoutSeconds` | `600` | Compression-endpoint timeout. When null/omitted, falls back to `Provider:TimeoutSeconds`. |
-| `Temperature` | `0.6` | Sampling temperature for Compression-endpoint calls. |
+| `Temperature` | `0.6` | Sampling temperature for Compression-endpoint calls. The Virtual Tools mapper runs its first attempt at `0` and widens from this value on each retry. |
 | `EnableThinking` | `false` | When false, sends `chat_template_kwargs.enable_thinking=false` on Compression-endpoint calls. |
 | `InlineInstructionFile` | `Prompts/compression-inline.md` | Inline follow-up wrap-up **user** prompt (return-only WM). |
 | `WorkingMemoryTemplateFile` | `Prompts/working-memory-template.md` | Shared `# Working Memory` markdown skeleton appended to Inline wrap-up prompts. |
@@ -93,7 +93,7 @@ Virtual Tools (Tool IR) is a primary Comprexy capability for OpenAI-compatible `
 | Key | Default | Description |
 | --- | --- | --- |
 | `Mode` | `Virtual` | `Off` or `Virtual`. |
-| `MappingMaxRetries` | `2` | Extra mapper attempts after the first on invalid MappingJson (total attempts = 1 + this value). Invalid maps are never persisted. |
+| `MappingMaxRetries` | `2` | Extra mapper attempts after the first on invalid MappingJson (total attempts = 1 + this value). Invalid maps are never persisted. After the last attempt, bindings that failed validation are dropped and the rest are kept; Tool IR is disabled for the hash only when nothing usable survives. |
 | `MaxRangeLines` | `250` | Cap for `comprexy_read_file_range` observations (`truncated: true` when capped). |
 | `MaxSearchMatches` | `40` | Cap for `comprexy_read_file_search` hits. |
 | `MaxDirListEntries` | `200` | Cap for `comprexy_dir_list` entries. |

@@ -16,7 +16,23 @@ public static class ToolIrMappingValidator
         PropertyNameCaseInsensitive = true
     };
 
-    public sealed record ValidationResult(bool IsValid, ToolIrMappingDocument? Document, string? Error);
+    public sealed record ValidationResult(
+        bool IsValid,
+        ToolIrMappingDocument? Document,
+        string? Error,
+        IReadOnlyList<string>? DroppedBindings = null);
+
+    /// <summary>One rejected binding, kept with its index so salvage can drop exactly that entry.</summary>
+    private sealed record BindingIssue(int Index, string ComprexyTool, string Message);
+
+    /// <summary>
+    /// Document errors reject the whole mapping; binding issues reject only their own entry.
+    /// <c>Document</c> is null only when the payload could not be parsed.
+    /// </summary>
+    private sealed record Analysis(
+        ToolIrMappingDocument? Document,
+        List<string> DocumentErrors,
+        List<BindingIssue> BindingIssues);
 
     public static ValidationResult Validate(
         string mappingJson,
@@ -24,9 +40,89 @@ public static class ToolIrMappingValidator
         string expectedSchemaHash,
         IReadOnlyDictionary<string, string>? fullDefinitionsByName = null)
     {
+        var analysis = Analyze(mappingJson, catalogToolNames, expectedSchemaHash, fullDefinitionsByName);
+        var errors = analysis.DocumentErrors
+            .Concat(analysis.BindingIssues.Select(issue => issue.Message))
+            .ToList();
+
+        if (errors.Count > 0 || analysis.Document is null)
+        {
+            return new ValidationResult(false, null, string.Join("\n", errors));
+        }
+
+        return new ValidationResult(true, analysis.Document, null);
+    }
+
+    /// <summary>
+    /// Last-resort recovery once mapper retries are exhausted: keep the bindings that validate and
+    /// drop the ones that do not, so a single unbindable Virtual tool does not disable Tool IR for
+    /// the conversation. Refuses to salvage document-level failures, an empty binding set, or a drop
+    /// that would leave replaced client tools hidden with no Virtual replacement.
+    /// </summary>
+    public static ValidationResult TrySalvage(
+        string mappingJson,
+        IReadOnlySet<string> catalogToolNames,
+        string expectedSchemaHash,
+        IReadOnlyDictionary<string, string>? fullDefinitionsByName = null)
+    {
+        var analysis = Analyze(mappingJson, catalogToolNames, expectedSchemaHash, fullDefinitionsByName);
+        if (analysis.Document is null || analysis.DocumentErrors.Count > 0)
+        {
+            var errors = analysis.DocumentErrors
+                .Concat(analysis.BindingIssues.Select(issue => issue.Message))
+                .ToList();
+            return new ValidationResult(false, null, string.Join("\n", errors));
+        }
+
+        if (analysis.BindingIssues.Count == 0)
+        {
+            return new ValidationResult(true, analysis.Document, null);
+        }
+
+        var document = analysis.Document;
+        var droppedIndexes = analysis.BindingIssues.Select(issue => issue.Index).ToHashSet();
+        var kept = document.Bindings
+            .Where((_, index) => !droppedIndexes.Contains(index))
+            .ToList();
+        var dropped = analysis.BindingIssues
+            .Select(issue => string.IsNullOrWhiteSpace(issue.ComprexyTool) ? "(unnamed)" : issue.ComprexyTool)
+            .ToList();
+
+        if (kept.Count == 0)
+        {
+            return new ValidationResult(
+                false,
+                null,
+                $"No binding survived validation (dropped: {string.Join(", ", dropped)}).");
+        }
+
+        var uncovered = FindUncoveredReplacedCapabilities(document, kept);
+        if (uncovered.Count > 0)
+        {
+            return new ValidationResult(
+                false,
+                null,
+                $"Dropping invalid bindings ({string.Join(", ", dropped)}) would hide client tools with " +
+                $"capability {string.Join(", ", uncovered)} and no Virtual replacement.");
+        }
+
+        document.Bindings = kept;
+        return new ValidationResult(true, document, null, dropped);
+    }
+
+    private static Analysis Analyze(
+        string mappingJson,
+        IReadOnlySet<string> catalogToolNames,
+        string expectedSchemaHash,
+        IReadOnlyDictionary<string, string>? fullDefinitionsByName)
+    {
+        var documentErrors = new List<string>();
+        var bindingIssues = new List<BindingIssue>();
+
         if (string.IsNullOrWhiteSpace(mappingJson))
         {
-            return new ValidationResult(false, null, "MappingJson is empty.");
+            documentErrors.Add("MappingJson is empty.");
+            return new Analysis(null, documentErrors, bindingIssues);
         }
 
         ToolIrMappingDocument document;
@@ -37,25 +133,23 @@ public static class ToolIrMappingValidator
         }
         catch (JsonException ex)
         {
-            return new ValidationResult(false, null, $"MappingJson is not valid JSON: {ex.Message}");
+            documentErrors.Add($"MappingJson is not valid JSON: {ex.Message}");
+            return new Analysis(null, documentErrors, bindingIssues);
         }
 
         if (string.IsNullOrWhiteSpace(document.SchemaHash))
         {
-            return new ValidationResult(false, null, "schema_hash is required.");
+            documentErrors.Add("schema_hash is required.");
         }
-
-        if (!string.Equals(document.SchemaHash, expectedSchemaHash, StringComparison.Ordinal))
+        else if (!string.Equals(document.SchemaHash, expectedSchemaHash, StringComparison.Ordinal))
         {
-            return new ValidationResult(
-                false,
-                null,
+            documentErrors.Add(
                 $"schema_hash mismatch: mapping={document.SchemaHash}, expected={expectedSchemaHash}.");
         }
 
         if (document.ClientCapabilities.Count == 0)
         {
-            return new ValidationResult(false, null, "client_capabilities must be non-empty.");
+            documentErrors.Add("client_capabilities must be non-empty.");
         }
 
         var capabilityTools = new HashSet<string>(StringComparer.Ordinal);
@@ -63,128 +157,157 @@ public static class ToolIrMappingValidator
         {
             if (string.IsNullOrWhiteSpace(capability.ClientTool))
             {
-                return new ValidationResult(false, null, "client_capabilities[].client_tool is required.");
+                documentErrors.Add("client_capabilities[].client_tool is required.");
+                continue;
             }
 
             if (!catalogToolNames.Contains(capability.ClientTool))
             {
-                return new ValidationResult(
-                    false,
-                    null,
-                    $"Unknown client_tool '{capability.ClientTool}' not in inbound catalog.");
+                documentErrors.Add($"Unknown client_tool '{capability.ClientTool}' not in inbound catalog.");
+                continue;
             }
 
             if (!capabilityTools.Add(capability.ClientTool))
             {
-                return new ValidationResult(
-                    false,
-                    null,
-                    $"Duplicate client_capabilities entry for '{capability.ClientTool}'.");
+                documentErrors.Add($"Duplicate client_capabilities entry for '{capability.ClientTool}'.");
             }
 
             if (string.IsNullOrWhiteSpace(capability.Capability) ||
                 !ToolIrCapabilities.Allowed.Contains(capability.Capability))
             {
-                return new ValidationResult(
-                    false,
-                    null,
+                documentErrors.Add(
                     $"Unknown or missing capability '{capability.Capability}' for '{capability.ClientTool}'.");
             }
         }
 
-        foreach (var catalogTool in catalogToolNames)
+        foreach (var catalogTool in catalogToolNames.OrderBy(name => name, StringComparer.Ordinal))
         {
             if (!capabilityTools.Contains(catalogTool))
             {
-                return new ValidationResult(
-                    false,
-                    null,
-                    $"Missing client_capabilities entry for catalog tool '{catalogTool}'.");
+                documentErrors.Add($"Missing client_capabilities entry for catalog tool '{catalogTool}'.");
             }
         }
 
         var boundComprexy = new HashSet<string>(StringComparer.Ordinal);
-        foreach (var binding in document.Bindings)
+        for (var index = 0; index < document.Bindings.Count; index++)
         {
-            if (string.IsNullOrWhiteSpace(binding.ComprexyTool) ||
-                !ToolSchemaConstants.IsVirtualTool(binding.ComprexyTool))
+            var binding = document.Bindings[index];
+            var issue = FindBindingIssue(
+                binding,
+                document,
+                catalogToolNames,
+                fullDefinitionsByName,
+                boundComprexy);
+            if (issue is not null)
             {
-                return new ValidationResult(
-                    false,
-                    null,
-                    $"Unknown comprexy_tool '{binding.ComprexyTool}'.");
-            }
-
-            if (!boundComprexy.Add(binding.ComprexyTool))
-            {
-                return new ValidationResult(
-                    false,
-                    null,
-                    $"Duplicate binding for '{binding.ComprexyTool}'.");
-            }
-
-            if (string.IsNullOrWhiteSpace(binding.PrimaryClientTool) ||
-                !catalogToolNames.Contains(binding.PrimaryClientTool))
-            {
-                return new ValidationResult(
-                    false,
-                    null,
-                    $"Binding '{binding.ComprexyTool}' references unknown primary_client_tool '{binding.PrimaryClientTool}'.");
-            }
-
-            if (string.IsNullOrWhiteSpace(binding.Strategy) ||
-                !ToolIrStrategies.Allowed.Contains(binding.Strategy))
-            {
-                return new ValidationResult(
-                    false,
-                    null,
-                    $"Unknown strategy '{binding.Strategy}' for '{binding.ComprexyTool}'.");
-            }
-
-            if (VirtualToolRegistry.TryGet(binding.ComprexyTool, out var virtualSpec) &&
-                string.Equals(virtualSpec.Family, VirtualToolFamilies.Shell, StringComparison.Ordinal) &&
-                !string.Equals(binding.Strategy, ToolIrStrategies.Direct, StringComparison.Ordinal))
-            {
-                return new ValidationResult(
-                    false,
-                    null,
-                    $"Binding '{binding.ComprexyTool}' requires strategy 'direct' (got '{binding.Strategy}').");
-            }
-
-            var primaryCapability = document.ClientCapabilities.FirstOrDefault(c =>
-                string.Equals(c.ClientTool, binding.PrimaryClientTool, StringComparison.Ordinal));
-            var allowedCaps = ToolIrCapabilities.AllowedForVirtualTool(binding.ComprexyTool);
-            if (allowedCaps is not null &&
-                (primaryCapability is null || !allowedCaps.Contains(primaryCapability.Capability)))
-            {
-                return new ValidationResult(
-                    false,
-                    null,
-                    $"Binding '{binding.ComprexyTool}' primary_client_tool '{binding.PrimaryClientTool}' " +
-                    $"has capability '{primaryCapability?.Capability ?? "(missing)"}'; expected one of: {string.Join(", ", allowedCaps)}.");
-            }
-
-            if (fullDefinitionsByName is not null)
-            {
-                if (!fullDefinitionsByName.TryGetValue(binding.PrimaryClientTool, out var definitionJson) ||
-                    string.IsNullOrWhiteSpace(definitionJson))
-                {
-                    return new ValidationResult(
-                        false,
-                        null,
-                        $"Binding '{binding.ComprexyTool}' primary_client_tool '{binding.PrimaryClientTool}' " +
-                        "has no catalog definition for schema-required coverage validation.");
-                }
-
-                var coverageError = ValidateSchemaRequiredCoverage(binding, definitionJson);
-                if (coverageError is not null)
-                {
-                    return new ValidationResult(false, null, coverageError);
-                }
+                bindingIssues.Add(new BindingIssue(index, binding.ComprexyTool, issue));
             }
         }
 
-        return new ValidationResult(true, document, null);
+        return new Analysis(document, documentErrors, bindingIssues);
+    }
+
+    private static string? FindBindingIssue(
+        ToolIrBinding binding,
+        ToolIrMappingDocument document,
+        IReadOnlySet<string> catalogToolNames,
+        IReadOnlyDictionary<string, string>? fullDefinitionsByName,
+        HashSet<string> boundComprexy)
+    {
+        if (string.IsNullOrWhiteSpace(binding.ComprexyTool) ||
+            !ToolSchemaConstants.IsVirtualTool(binding.ComprexyTool))
+        {
+            return $"Unknown comprexy_tool '{binding.ComprexyTool}'.";
+        }
+
+        if (!boundComprexy.Add(binding.ComprexyTool))
+        {
+            return $"Duplicate binding for '{binding.ComprexyTool}'.";
+        }
+
+        if (string.IsNullOrWhiteSpace(binding.PrimaryClientTool) ||
+            !catalogToolNames.Contains(binding.PrimaryClientTool))
+        {
+            return $"Binding '{binding.ComprexyTool}' references unknown primary_client_tool '{binding.PrimaryClientTool}'.";
+        }
+
+        if (string.IsNullOrWhiteSpace(binding.Strategy) ||
+            !ToolIrStrategies.Allowed.Contains(binding.Strategy))
+        {
+            return $"Unknown strategy '{binding.Strategy}' for '{binding.ComprexyTool}'.";
+        }
+
+        if (VirtualToolRegistry.TryGet(binding.ComprexyTool, out var virtualSpec) &&
+            string.Equals(virtualSpec.Family, VirtualToolFamilies.Shell, StringComparison.Ordinal) &&
+            !string.Equals(binding.Strategy, ToolIrStrategies.Direct, StringComparison.Ordinal))
+        {
+            return $"Binding '{binding.ComprexyTool}' requires strategy 'direct' (got '{binding.Strategy}').";
+        }
+
+        var primaryCapability = FindCapability(document, binding.PrimaryClientTool);
+        var allowedCaps = ToolIrCapabilities.AllowedForVirtualTool(binding.ComprexyTool);
+        if (allowedCaps is not null &&
+            (primaryCapability is null || !allowedCaps.Contains(primaryCapability.Capability)))
+        {
+            return $"Binding '{binding.ComprexyTool}' primary_client_tool '{binding.PrimaryClientTool}' " +
+                   $"has capability '{primaryCapability?.Capability ?? "(missing)"}'; " +
+                   $"expected one of: {string.Join(", ", allowedCaps)}. " +
+                   DescribeRebindCandidates(document, allowedCaps);
+        }
+
+        if (fullDefinitionsByName is null)
+        {
+            return null;
+        }
+
+        if (!fullDefinitionsByName.TryGetValue(binding.PrimaryClientTool, out var definitionJson) ||
+            string.IsNullOrWhiteSpace(definitionJson))
+        {
+            return $"Binding '{binding.ComprexyTool}' primary_client_tool '{binding.PrimaryClientTool}' " +
+                   "has no catalog definition for schema-required coverage validation.";
+        }
+
+        return ValidateSchemaRequiredCoverage(binding, definitionJson);
+    }
+
+    /// <summary>
+    /// Names the client tools that would satisfy the binding so a retry is a lookup, not a guess.
+    /// </summary>
+    private static string DescribeRebindCandidates(
+        ToolIrMappingDocument document,
+        IReadOnlySet<string> allowedCaps)
+    {
+        var candidates = document.ClientCapabilities
+            .Where(capability => allowedCaps.Contains(capability.Capability))
+            .Select(capability => $"{capability.ClientTool} ({capability.Capability})")
+            .ToList();
+
+        return candidates.Count > 0
+            ? $"Rebind to one of: {string.Join(", ", candidates)}."
+            : "No client tool in client_capabilities has a compatible capability — omit this binding.";
+    }
+
+    /// <summary>
+    /// Replaced capabilities present in the catalog that no surviving binding covers. Their client
+    /// tools are hidden from the model, so leaving one uncovered strands that capability.
+    /// </summary>
+    private static List<string> FindUncoveredReplacedCapabilities(
+        ToolIrMappingDocument document,
+        IReadOnlyList<ToolIrBinding> keptBindings)
+    {
+        var covered = keptBindings
+            .Select(binding => FindCapability(document, binding.PrimaryClientTool)?.Capability)
+            .OfType<string>()
+            .ToHashSet(StringComparer.Ordinal);
+
+        return document.ClientCapabilities
+            .Select(capability => capability.Capability)
+            .Where(capability =>
+                ToolIrCapabilities.ReplacedByVirtualTools.Contains(capability) &&
+                !covered.Contains(capability))
+            .Distinct(StringComparer.Ordinal)
+            .OrderBy(capability => capability, StringComparer.Ordinal)
+            .ToList();
     }
 
     /// <summary>
