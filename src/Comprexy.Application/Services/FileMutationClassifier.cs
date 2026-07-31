@@ -74,7 +74,16 @@ public static class FileMutationClassifier
         return TryExtractStringProperty(argumentsJson, OldStringPropertyNames);
     }
 
-    public static string NormalizePath(string path) => FileReadPathExtractor.Normalize(path);
+    public static string NormalizePath(string path)
+    {
+        var trimmed = path.Trim().Replace('\\', '/');
+        while (trimmed.Contains("//", StringComparison.Ordinal))
+        {
+            trimmed = trimmed.Replace("//", "/", StringComparison.Ordinal);
+        }
+
+        return trimmed;
+    }
 
     public static string NormalizeOldStringKey(string? oldString) =>
         string.IsNullOrEmpty(oldString) ? string.Empty : oldString.Replace("\r\n", "\n").Trim();

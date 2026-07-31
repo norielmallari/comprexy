@@ -515,6 +515,13 @@ public class ProxyChatCompletionService
                 recentRaw,
                 currentUserMessage);
         }
+
+        outgoing = EnsureOutgoingEndsAtTip(
+            conversation.Id,
+            outgoing,
+            currentUserMessage,
+            currentMessageEntity.Sequence);
+
         var toolSchema = await TryPrepareToolSchemaAsync(
             conversation.Id,
             outgoing,
@@ -640,8 +647,17 @@ public class ProxyChatCompletionService
                 _cacheAlignment.Invalidate(conversation.Id);
             }
 
+            // Bake the failed-edit wire omit into the frozen Prefix instead of re-applying it every
+            // turn during materialize: recentRaw excludes the tip, so the omit cannot drop the newest
+            // message, and warm turns reuse stable Prefix bytes instead of rebuilding them.
+            var frontierSource = ApplyLiveDuplicateFailedEditDedupe(
+                conversation.Id,
+                recentRaw,
+                allMessages,
+                currentMessageEntity.Sequence);
+
             if (!WrapUpReadiness.TryEnsureWrapUpReady(
-                    recentRaw,
+                    frontierSource,
                     out var prefixFrontier,
                     out var excluded))
             {
@@ -651,7 +667,7 @@ public class ProxyChatCompletionService
                 return _contextBuilder.Build(
                     conversation.SystemPrompt,
                     workingMemory,
-                    recentRaw,
+                    frontierSource,
                     currentUserMessage);
             }
 
@@ -678,7 +694,7 @@ public class ProxyChatCompletionService
                 return _contextBuilder.Build(
                     conversation.SystemPrompt,
                     workingMemory,
-                    recentRaw,
+                    frontierSource,
                     currentUserMessage);
             }
 
@@ -688,6 +704,8 @@ public class ProxyChatCompletionService
                 .Distinct()
                 .ToList();
             // Also include any unfolded messages after watermark not in Prefix (open tips).
+            // Omitted duplicates above the watermark come back here by design: completeness wins
+            // over savings outside the frozen Prefix.
             foreach (var message in allMessages.Where(m =>
                          !m.IsFolded &&
                          m.Sequence > watermark &&
@@ -721,24 +739,9 @@ public class ProxyChatCompletionService
             _cacheAlignment.ReplaceSuffix(conversation.Id, suffixIds);
         }
 
-        var tipSequence = currentMessageEntity.Sequence;
-        return _cacheAlignment.MaterializeLive(
-            conversation.Id,
-            messagesById,
-            corpus => ApplyEphemeralLiveDedupe(conversation.Id, corpus.ToList(), allMessages, tipSequence));
-    }
-
-    /// <summary>
-    /// Ephemeral wire-omit for Cache Alignment MaterializeLive — must not mutate stored Prefix/Suffix.
-    /// </summary>
-    private List<ConversationMessage> ApplyEphemeralLiveDedupe(
-        Guid conversationId,
-        List<ConversationMessage> corpus,
-        IReadOnlyList<ConversationMessage> allMessages,
-        int tipSequence)
-    {
-        var list = ApplyLiveDuplicateFileReadDedupe(conversationId, corpus, allMessages, tipSequence);
-        return ApplyLiveDuplicateFailedEditDedupe(conversationId, list, allMessages, tipSequence);
+        // No materialize-time omit: Prefix ⊕ Suffix goes out verbatim so the tip is always present
+        // and frozen Prefix bytes are never rewritten mid-conversation.
+        return _cacheAlignment.MaterializeLive(conversation.Id, messagesById);
     }
 
     private async Task<PreparedRequest> BuildPreparedRequestAsync(
@@ -864,9 +867,9 @@ public class ProxyChatCompletionService
     /// <summary>
     /// Repairs unfolded context so tool turns always follow an assistant/tool predecessor:
     /// restore a folded parent assistant when the live tip is a tool result, then drop any
-    /// remaining orphan tools. Optionally omits older duplicate file-read and identical
-    /// failed-edit tool turns from the wire (does not mark folded). Logs when recovery or
-    /// live dedupe runs so bad retain folds stay visible.
+    /// remaining orphan tools. Optionally omits older identical failed-edit tool turns from the
+    /// wire (does not mark folded); Cache Alignment omits them at Prefix build instead. Logs when
+    /// recovery or live dedupe runs so bad retain folds stay visible.
     /// </summary>
     private List<ConversationMessage> PrepareRecentRawForChatTemplate(
         Guid conversationId,
@@ -904,69 +907,15 @@ public class ProxyChatCompletionService
             return list;
         }
 
-        list = ApplyLiveDuplicateFileReadDedupe(conversationId, list, allMessages, tipSequence);
         return ApplyLiveDuplicateFailedEditDedupe(conversationId, list, allMessages, tipSequence);
-    }
-
-    /// <summary>
-    /// Wire-only: drop older same-path file reads from the outgoing retain window so repeated
-    /// agent Read loops do not stack identical tool results in model context. Does not
-    /// <c>MarkFoldedInto</c> — soft compression still owns durable folding. Includes the tip
-    /// entity in the corpus so a tip that re-reads a path can displace older copies, then
-    /// strips the tip again (<see cref="ContextBuilder.Build"/> appends it).
-    /// </summary>
-    private List<ConversationMessage> ApplyLiveDuplicateFileReadDedupe(
-        Guid conversationId,
-        List<ConversationMessage> recentRaw,
-        IReadOnlyList<ConversationMessage> allMessages,
-        int tipSequence)
-    {
-        if (!_policy.DedupeDuplicateFileReads || recentRaw.Count == 0)
-        {
-            return recentRaw;
-        }
-
-        var tipEntity = allMessages.FirstOrDefault(m => m.Sequence == tipSequence);
-        IReadOnlyList<ConversationMessage> corpus = recentRaw;
-        if (tipEntity is not null && recentRaw.TrueForAll(m => m.Sequence != tipSequence))
-        {
-            corpus = recentRaw.Append(tipEntity).OrderBy(m => m.Sequence).ToList();
-        }
-
-        var dedupe = DuplicateFileReadDeduper.Apply(corpus, corpus, tipSequence);
-        if (!dedupe.DroppedAny)
-        {
-            return recentRaw;
-        }
-
-        _logger.LogInformation(
-            "duplicate_file_read_dedupe conversationId={ConversationId} phase=live_chat droppedCount={DroppedCount} keptPaths={KeptPaths} droppedSequences={DroppedSequences}",
-            conversationId,
-            dedupe.DroppedSequences.Count,
-            string.Join(',', dedupe.KeptPaths),
-            string.Join(',', dedupe.DroppedSequences));
-
-        var keptPrior = dedupe.Retain
-            .Where(m => m.Sequence < tipSequence)
-            .OrderBy(m => m.Sequence)
-            .ToList();
-
-        var (sanitized, orphanDropped) = ChatTemplateMessageOrder.RemoveOrphanToolMessages(keptPrior);
-        if (orphanDropped > 0)
-        {
-            _logger.LogWarning(
-                "Dropped {DroppedCount} orphan tool message(s) after live duplicate-file-read dedupe for conversation {ConversationId}.",
-                orphanDropped,
-                conversationId);
-        }
-
-        return sanitized as List<ConversationMessage> ?? sanitized.ToList();
     }
 
     /// <summary>
     /// Wire-only: drop older identical failed file-edit tool results (path + old_string
     /// last-wins) from the outgoing retain window so StrReplace failure loops do not stack.
-    /// Does not <c>MarkFoldedInto</c>. Same tip-include/strip pattern as file-read dedupe.
+    /// Does not <c>MarkFoldedInto</c>. The tip entity joins the corpus so a re-failing tip can
+    /// displace older copies, then rows from the tip onward are stripped — callers own the tip
+    /// (<see cref="ContextBuilder.Build"/> appends it; Cache Alignment carries it in the Suffix).
     /// </summary>
     private List<ConversationMessage> ApplyLiveDuplicateFailedEditDedupe(
         Guid conversationId,
@@ -1225,6 +1174,49 @@ public class ProxyChatCompletionService
 
         _messageRepository.Add(entity);
         return entity;
+    }
+
+    /// <summary>
+    /// Every wire projection (retain omit, Prefix ⊕ Suffix materialize) must still end at the tip.
+    /// A dropped tip hides the client's newest turn from the model — typically a mid-chain
+    /// interrupt — so surface it and re-append instead of forwarding a truncated turn.
+    /// </summary>
+    private IReadOnlyList<ChatMessage> EnsureOutgoingEndsAtTip(
+        Guid conversationId,
+        IReadOnlyList<ChatMessage> outgoing,
+        ChatMessage tip,
+        int tipSequence)
+    {
+        var lastNonSystem = outgoing.LastOrDefault(m => m.Role != MessageRole.System);
+        if (lastNonSystem is not null && IsSameChatMessage(lastNonSystem, tip))
+        {
+            return outgoing;
+        }
+
+        _logger.LogWarning(
+            "Outgoing context for conversation {ConversationId} did not end at tip sequence {TipSequence}; re-appending the tip.",
+            conversationId,
+            tipSequence);
+
+        var repaired = new List<ChatMessage>(outgoing.Count + 1);
+        repaired.AddRange(outgoing);
+        repaired.Add(tip);
+        return repaired;
+    }
+
+    private static bool IsSameChatMessage(ChatMessage left, ChatMessage right)
+    {
+        if (left.Role != right.Role)
+        {
+            return false;
+        }
+
+        if (left.RawWireMessage is { } leftRaw && right.RawWireMessage is { } rightRaw)
+        {
+            return string.Equals(leftRaw.GetRawText(), rightRaw.GetRawText(), StringComparison.Ordinal);
+        }
+
+        return string.Equals(left.Content, right.Content, StringComparison.Ordinal);
     }
 
     private static bool IsSameTip(ConversationMessage persisted, ChatMessage incoming)
@@ -1492,9 +1484,7 @@ public class ProxyChatCompletionService
             foldUniverse = foldUniverse.OrderBy(m => m.Sequence).ToList();
         }
 
-        var keepRecent = _recentContextSelector
-            .Select(foldUniverse, maxMessagesOverride: _policy.CompressionRetainMessageCount)
-            .ToList();
+        var keepRecent = _recentContextSelector.Select(foldUniverse).ToList();
         var keepIds = keepRecent.Select(m => m.Id).ToHashSet();
         // When later failed edits on path P remain unfolded, pin the last successful mutation
         // group for P so fold does not erase the post-edit tip the next hop needs.

@@ -28,20 +28,11 @@ public class ContextPolicyOptions
     public int CompressionRetainMessageCount { get; set; } = 1;
 
     /// <summary>
-    /// Token budget for the Inline fold retain window (newest-first).
-    /// </summary>
-    public int MaxRecentRawTokens { get; set; } = 24_000;
-
-    /// <summary>
-    /// When true (default), drop older duplicate file tool reads (path-keyed last-wins) from the
-    /// live chat outgoing retain window (wire-only omit; does not mark folded).
-    /// </summary>
-    public bool DedupeDuplicateFileReads { get; set; } = true;
-
-    /// <summary>
     /// When true (default), drop older identical failed file-edit tool results (path +
     /// <c>old_string</c> last-wins) from the live chat outgoing retain window so StrReplace
-    /// failure loops do not stack (wire-only omit; does not mark folded).
+    /// failure loops do not stack. Wire-only (never marks folded), and applied while the retain
+    /// window is built — under Cache Alignment the omit is baked into the frozen Prefix rather
+    /// than re-applied per turn.
     /// </summary>
     public bool DedupeDuplicateFailedEdits { get; set; } = true;
 

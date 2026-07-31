@@ -6,10 +6,11 @@ using Microsoft.Extensions.Options;
 namespace Comprexy.Application.Services;
 
 /// <summary>
-/// Selects which unfolded messages to keep raw when Inline wrap-up folds (message-count and
-/// token-budget retain window). Assistant + following tool results stay atomic so chat
-/// templates never see orphaned tool messages. Not used when assembling chat requests after
-/// compression — those include all remaining unfolded messages.
+/// Selects which unfolded messages to keep raw when Inline wrap-up folds, newest-first up to
+/// <see cref="ContextPolicyOptions.CompressionRetainMessageCount"/>. Assistant + following tool
+/// results stay atomic so chat templates never see orphaned tool messages, which is why the
+/// newest group is admitted whole even when it exceeds the count. Not used when assembling chat
+/// requests after compression — those include all remaining unfolded messages.
 /// </summary>
 public class RecentContextSelector
 {
@@ -21,11 +22,9 @@ public class RecentContextSelector
     }
 
     public IReadOnlyList<ConversationMessage> Select(
-        IReadOnlyList<ConversationMessage> unfoldedExcludingCurrent,
-        int? maxMessagesOverride = null)
+        IReadOnlyList<ConversationMessage> unfoldedExcludingCurrent)
     {
-        var maxMessages = maxMessagesOverride ?? _policy.CompressionRetainMessageCount;
-        var maxTokens = Math.Max(0, _policy.MaxRecentRawTokens);
+        var maxMessages = _policy.CompressionRetainMessageCount;
 
         if (maxMessages <= 0 || unfoldedExcludingCurrent.Count == 0)
         {
@@ -37,24 +36,19 @@ public class RecentContextSelector
         // Unpinned may be empty or yield no retainable groups.
         var groups = BuildAtomicGroups(ordered);
         var selectedGroups = new List<IReadOnlyList<ConversationMessage>>();
-        var tokens = 0;
         var messageCount = 0;
 
         for (var i = groups.Count - 1; i >= 0; i--)
         {
             var group = groups[i];
-            var groupTokens = group.Sum(m => Math.Max(0, m.TokenCount));
-            var groupCount = group.Count;
 
-            if (selectedGroups.Count > 0 &&
-                (messageCount + groupCount > maxMessages || tokens + groupTokens > maxTokens))
+            if (selectedGroups.Count > 0 && messageCount + group.Count > maxMessages)
             {
                 break;
             }
 
             selectedGroups.Add(group);
-            tokens += groupTokens;
-            messageCount += groupCount;
+            messageCount += group.Count;
         }
 
         selectedGroups.Reverse();

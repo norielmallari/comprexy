@@ -59,16 +59,14 @@ Optional separate endpoint/model for ToolSchema mapping and Inline wrap-up promp
 
 ## ContextPolicy
 
-Soft token budget and Inline fold retain windows.
+Soft token budget and the Inline fold retain window.
 
 | Key | Default | Description |
 | --- | --- | --- |
 | `SoftLimitTokens` | `32000` | Above this after a successful reply: Inline follow-up wrap-up on eligible turns (closed stored tool chain + cooldown). |
 | `MinTurnsBetweenGenerations` | `6` | Assistant turns after a successful Inline generation before another follow-up wrap-up. |
-| `CompressionRetainMessageCount` | `1` | Inline fold tip: trailing unfolded messages kept raw (atomic assistant+tool groups). `1` = tip only. |
-| `MaxRecentRawTokens` | `24000` | Token budget for the Inline fold retain window (newest-first). |
-| `DedupeDuplicateFileReads` | `true` | Live chat: wire-only omit older same-path file-read tool results from the outgoing retain window so Read loops do not stack identical tool results. |
-| `DedupeDuplicateFailedEdits` | `true` | Live chat: wire-only omit older identical failed file-edit tool results (path + `old_string` last-wins) so StrReplace failure loops do not stack. |
+| `CompressionRetainMessageCount` | `1` | Inline fold retain window: trailing unfolded messages kept raw, newest-first. Atomic assistant+tool groups count as one unit and the newest group is kept whole even if larger. `1` = tip only. |
+| `DedupeDuplicateFailedEdits` | `true` | Live chat: wire-only omit older identical failed file-edit tool results (path + `old_string` last-wins) so StrReplace failure loops do not stack. Applied to the retain window (baked into the Cache Alignment Prefix), never to the tip. |
 | `TokenizerEncoding` | `cl100k_base` | Tiktoken encoding for token estimates. |
 
 Inline wrap-up reuses live sampling / `chat_template_*` and keeps the live `tools` / `functions` catalog for provider KV alignment; it sets `tool_choice` / `function_call` to `none` so wrap-up cannot continue the agent loop. A wrap-up that still returns `tool_calls` soft-fails as `wrapup_tool_calls`. Soft-pressure eligible turns hold the streaming tail until wrap-up finishes (success or soft-fail): `[DONE]` on stop turns, and the whole real `tool_calls` tail on mid-chain turns so the client starts tools only after the checkpoint attempt resolves. When unfolded history still has failed edits on a path, Inline fold **pins** the last successful mutation atomic group for that path into the retain set (in addition to `CompressionRetainMessageCount`) so the post-edit tip is not erased.

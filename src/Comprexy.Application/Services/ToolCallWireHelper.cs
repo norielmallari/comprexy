@@ -1,6 +1,9 @@
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using System.Text.RegularExpressions;
 using Comprexy.Application.Models;
+using Comprexy.Domain.Entities;
+using Comprexy.Domain.Enums;
 
 namespace Comprexy.Application.Services;
 
@@ -14,6 +17,10 @@ public sealed record ParsedToolCall(
 /// </summary>
 public static class ToolCallWireHelper
 {
+    private static readonly Regex ToolCallIdProperty = new(
+        @"[""']tool_call_id[""']\s*:\s*[""'](?<id>[^""']+)[""']",
+        RegexOptions.CultureInvariant | RegexOptions.Compiled);
+
     public static IReadOnlyList<ParsedToolCall> ParseAssistantToolCalls(string? assistantMessageJson)
     {
         if (string.IsNullOrWhiteSpace(assistantMessageJson))
@@ -89,6 +96,86 @@ public static class ToolCallWireHelper
 
     public static bool HasToolCalls(string? assistantMessageJson) =>
         ParseAssistantToolCalls(assistantMessageJson).Count > 0;
+
+    /// <summary>
+    /// Returns the <c>tool_call_id</c> on a stored tool result. Truncated / corrupt wire still
+    /// resolves via a property scan so chain bookkeeping does not lose the id.
+    /// </summary>
+    public static string? TryExtractToolCallId(ConversationMessage message)
+    {
+        if (message.Role != MessageRole.Tool || string.IsNullOrWhiteSpace(message.RawWireJson))
+        {
+            return null;
+        }
+
+        try
+        {
+            using var document = JsonDocument.Parse(message.RawWireJson);
+            if (document.RootElement.ValueKind == JsonValueKind.Object &&
+                document.RootElement.TryGetProperty("tool_call_id", out var id) &&
+                id.ValueKind == JsonValueKind.String)
+            {
+                var value = id.GetString();
+                return string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+            }
+        }
+        catch (JsonException)
+        {
+            var match = ToolCallIdProperty.Match(message.RawWireJson);
+            if (match.Success)
+            {
+                var value = match.Groups["id"].Value.Trim();
+                return string.IsNullOrWhiteSpace(value) ? null : value;
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Returns every announced tool_call id on a stored assistant message, including calls without
+    /// a <c>function.name</c> (unlike <see cref="ParseAssistantToolCalls"/>) so open-chain
+    /// bookkeeping sees the whole batch. Empty when none / unparseable.
+    /// </summary>
+    public static IReadOnlyList<string> GetAssistantToolCallIds(ConversationMessage message)
+    {
+        if (message.Role != MessageRole.Assistant || string.IsNullOrWhiteSpace(message.RawWireJson))
+        {
+            return [];
+        }
+
+        try
+        {
+            using var document = JsonDocument.Parse(message.RawWireJson);
+            if (document.RootElement.ValueKind != JsonValueKind.Object ||
+                !document.RootElement.TryGetProperty("tool_calls", out var toolCalls) ||
+                toolCalls.ValueKind != JsonValueKind.Array)
+            {
+                return [];
+            }
+
+            var ids = new List<string>();
+            foreach (var call in toolCalls.EnumerateArray())
+            {
+                if (call.ValueKind == JsonValueKind.Object &&
+                    call.TryGetProperty("id", out var id) &&
+                    id.ValueKind == JsonValueKind.String)
+                {
+                    var value = id.GetString();
+                    if (!string.IsNullOrWhiteSpace(value))
+                    {
+                        ids.Add(value.Trim());
+                    }
+                }
+            }
+
+            return ids;
+        }
+        catch (JsonException)
+        {
+            return [];
+        }
+    }
 
     /// <summary>
     /// True when a streaming SSE chunk carries a non-empty <c>choices[].delta.tool_calls</c>

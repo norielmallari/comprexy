@@ -41,7 +41,7 @@ public static class ToolCallChainState
                     continue;
                 }
 
-                var ids = FileReadPathExtractor.GetAssistantToolCallIds(message);
+                var ids = ToolCallWireHelper.GetAssistantToolCallIds(message);
                 if (ids.Count == 0)
                 {
                     unparseableToolCallAssistants++;
@@ -62,7 +62,7 @@ public static class ToolCallChainState
 
             if (message.Role == MessageRole.Tool)
             {
-                var toolCallId = FileReadPathExtractor.TryExtractToolCallId(message);
+                var toolCallId = ToolCallWireHelper.TryExtractToolCallId(message);
                 if (toolCallId is not null)
                 {
                     closed.Add(toolCallId);

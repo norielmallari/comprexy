@@ -164,7 +164,7 @@ If you need routing, spend tracking, or broad agent wrappers, tools like LiteLLM
 
 Comprexy OSS persists completed conversation turns as the durable record. Working memory is a derived, versioned representation used to construct bounded upstream prompts. Compression marks messages as folded; it does not delete or replace them.
 
-Soft pressure above `SoftLimitTokens` triggers a blocking Inline wrap-up on eligible turns. The wrap-up folds older unfolded messages into a new working-memory version while retaining a tip window (`CompressionRetainMessageCount` / `MaxRecentRawTokens`).
+Soft pressure above `SoftLimitTokens` triggers a blocking Inline wrap-up on eligible turns. The wrap-up folds older unfolded messages into a new working-memory version while retaining a tip window (`CompressionRetainMessageCount`).
 
 ## Agentic workflow
 

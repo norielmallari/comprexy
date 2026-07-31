@@ -1424,7 +1424,7 @@ public class ToolSchemaOrchestrator
         {
             if (message.Role == MessageRole.Assistant)
             {
-                foreach (var id in FileReadPathExtractor.GetAssistantToolCallIds(message))
+                foreach (var id in ToolCallWireHelper.GetAssistantToolCallIds(message))
                 {
                     announced.Add(id);
                 }
@@ -1434,7 +1434,7 @@ public class ToolSchemaOrchestrator
 
             if (message.Role == MessageRole.Tool)
             {
-                var toolCallId = FileReadPathExtractor.TryExtractToolCallId(message);
+                var toolCallId = ToolCallWireHelper.TryExtractToolCallId(message);
                 if (toolCallId is not null)
                 {
                     closed.Add(toolCallId);

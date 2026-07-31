@@ -3294,10 +3294,178 @@ public class ProxyChatCompletionServiceTests
             It.IsAny<int>(),
             It.IsAny<int>(),
             It.IsAny<string?>()), Times.Once);
+        // Live materialize forwards Prefix ⊕ Suffix verbatim: no omit callback, so the tip cannot be
+        // dropped and frozen Prefix bytes are never rewritten.
         spy.Verify(s => s.MaterializeLive(
             It.IsAny<Guid>(),
             It.IsAny<IReadOnlyDictionary<Guid, ConversationMessage>>(),
-            It.IsAny<Func<IReadOnlyList<ConversationMessage>, IReadOnlyList<ConversationMessage>>?>()), Times.Once);
+            null), Times.Once);
+    }
+
+    [Fact]
+    public async Task HandleAsync_MaterializeLiveDropsTip_ReAppendsTipBeforeUpstream()
+    {
+        _estimatedTokensToReturn = 10;
+        var spy = new Mock<ICacheAlignmentService>();
+        spy.Setup(s => s.GetSnapshot(It.IsAny<Guid>())).Returns((CacheAlignmentSnapshot?)null);
+        spy.Setup(s => s.TryStorePrefix(
+                It.IsAny<Guid>(),
+                It.IsAny<IReadOnlyList<ChatMessage>>(),
+                It.IsAny<IReadOnlyList<Guid>>(),
+                It.IsAny<int>(),
+                It.IsAny<int>(),
+                It.IsAny<string?>()))
+            .Returns(true);
+        // Projection that loses the newest turn — the failure this guard exists for.
+        spy.Setup(s => s.MaterializeLive(
+                It.IsAny<Guid>(),
+                It.IsAny<IReadOnlyDictionary<Guid, ConversationMessage>>(),
+                It.IsAny<Func<IReadOnlyList<ConversationMessage>, IReadOnlyList<ConversationMessage>>?>()))
+            .Returns(new List<ChatMessage>
+            {
+                new(MessageRole.System, "You are helpful."),
+                new(MessageRole.Assistant, "mid-chain"),
+                new(MessageRole.Tool, "Wrote file successfully.")
+            });
+
+        _conversationRepository.Setup(r => r.FindByKeyAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((Conversation?)null);
+        _workingMemoryRepository.Setup(r => r.GetLatestAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((WorkingMemory?)null);
+
+        UpstreamRequest? forwarded = null;
+        _chatCompletionClient
+            .Setup(c => c.CompleteAsync(It.IsAny<ProviderEndpoint>(), It.IsAny<UpstreamRequest>(), It.IsAny<CancellationToken>()))
+            .Callback<ProviderEndpoint, UpstreamRequest, CancellationToken>((_, request, _) => forwarded = request)
+            .ReturnsAsync(new UpstreamChatResult("ok", "stop", 10, 2));
+
+        var service = CreateService(cacheAlignment: spy.Object);
+        await service.HandleAsync(
+            BuildRequest(conversationHeader: "ca-tip-guard", userContent: "Stop. Explain first."),
+            CancellationToken.None);
+
+        Assert.NotNull(forwarded);
+        Assert.Equal(MessageRole.User, forwarded!.Messages[^1].Role);
+        Assert.Equal("Stop. Explain first.", forwarded.Messages[^1].Content);
+    }
+
+    [Theory]
+    [InlineData(true, 1)]
+    [InlineData(false, 2)]
+    public async Task HandleAsync_DuplicateFailedEdit_OmitsOlderFailureAndKeepsUserTip(
+        bool dedupeEnabled,
+        int expectedFailureRows)
+    {
+        _policy.DedupeDuplicateFailedEdits = dedupeEnabled;
+        _estimatedTokensToReturn = 10;
+        var now = DateTimeOffset.UtcNow;
+
+        var conversation = Conversation.Create("header:failed-edit-omit", now);
+        conversation.CaptureSystemPromptIfAbsent("You are helpful.");
+        // Client already synced system + user + two failed edit rounds (6 messages); only the tip is new.
+        conversation.SetSyncedMessageCount(6, now);
+
+        const string failure = "Could not find oldString in the file.";
+        static string EditAssistantWire(string callId) =>
+            "{\"role\":\"assistant\",\"content\":\"\",\"tool_calls\":[{\"id\":\"" + callId +
+            "\",\"type\":\"function\",\"function\":{\"name\":\"edit\",\"arguments\":" +
+            "\"{\\\"filePath\\\":\\\"scripts/app.ps1\\\",\\\"oldString\\\":\\\"switch block\\\"}\"}}]}";
+        static string ToolWire(string callId) =>
+            "{\"role\":\"tool\",\"tool_call_id\":\"" + callId + "\",\"content\":\"" +
+            "Could not find oldString in the file.\"}";
+
+        var stored = new List<ConversationMessage>
+        {
+            ConversationMessage.Create(conversation.Id, 0, MessageRole.User, "add the bench command", 5, now),
+            ConversationMessage.Create(
+                conversation.Id, 1, MessageRole.Assistant, string.Empty, 5, now, EditAssistantWire("call_older")),
+            ConversationMessage.Create(
+                conversation.Id, 2, MessageRole.Tool, failure, 5, now, ToolWire("call_older")),
+            ConversationMessage.Create(
+                conversation.Id, 3, MessageRole.Assistant, string.Empty, 5, now, EditAssistantWire("call_newer")),
+            ConversationMessage.Create(
+                conversation.Id, 4, MessageRole.Tool, failure, 5, now, ToolWire("call_newer"))
+        };
+
+        _conversationRepository.Setup(r => r.FindByKeyAsync("header:failed-edit-omit", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(conversation);
+        _messageRepository.Setup(r => r.GetByConversationIdAsync(conversation.Id, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(stored);
+        _workingMemoryRepository.Setup(r => r.GetLatestAsync(conversation.Id, It.IsAny<CancellationToken>()))
+            .ReturnsAsync((WorkingMemory?)null);
+
+        UpstreamRequest? forwarded = null;
+        _chatCompletionClient
+            .Setup(c => c.CompleteAsync(It.IsAny<ProviderEndpoint>(), It.IsAny<UpstreamRequest>(), It.IsAny<CancellationToken>()))
+            .Callback<ProviderEndpoint, UpstreamRequest, CancellationToken>((_, request, _) => forwarded = request)
+            .ReturnsAsync(new UpstreamChatResult("ok", "stop", 10, 2));
+
+        var payload = new
+        {
+            model = "client-model",
+            messages = new object[]
+            {
+                new { role = "system", content = "You are helpful." },
+                new { role = "user", content = "add the bench command" },
+                new
+                {
+                    role = "assistant",
+                    content = string.Empty,
+                    tool_calls = new object[]
+                    {
+                        new
+                        {
+                            id = "call_older",
+                            type = "function",
+                            function = new
+                            {
+                                name = "edit",
+                                arguments = "{\"filePath\":\"scripts/app.ps1\",\"oldString\":\"switch block\"}"
+                            }
+                        }
+                    }
+                },
+                new { role = "tool", tool_call_id = "call_older", content = failure },
+                new
+                {
+                    role = "assistant",
+                    content = string.Empty,
+                    tool_calls = new object[]
+                    {
+                        new
+                        {
+                            id = "call_newer",
+                            type = "function",
+                            function = new
+                            {
+                                name = "edit",
+                                arguments = "{\"filePath\":\"scripts/app.ps1\",\"oldString\":\"switch block\"}"
+                            }
+                        }
+                    }
+                },
+                new { role = "tool", tool_call_id = "call_newer", content = failure },
+                new { role = "user", content = "Stop. Why are we editing that file?" }
+            }
+        };
+        using var document = JsonDocument.Parse(JsonSerializer.Serialize(payload));
+        var request = Comprexy.Api.Mapping.ChatCompletionRequestParser.Parse(
+            document.RootElement.Clone(),
+            "failed-edit-omit");
+
+        var service = CreateService();
+        await service.HandleAsync(request, CancellationToken.None);
+
+        Assert.NotNull(forwarded);
+        Assert.Equal(MessageRole.User, forwarded!.Messages[^1].Role);
+        Assert.Equal("Stop. Why are we editing that file?", forwarded.Messages[^1].Content);
+        Assert.Equal(
+            expectedFailureRows,
+            forwarded.Messages.Count(m => m.Role == MessageRole.Tool && m.Content == failure));
+
+        var carriesOlderCall = forwarded.Messages.Any(m =>
+            m.RawWireMessage is { } raw && raw.GetRawText().Contains("call_older", StringComparison.Ordinal));
+        Assert.Equal(!dedupeEnabled, carriesOlderCall);
     }
 
     [Fact]
@@ -3332,9 +3500,9 @@ public class ProxyChatCompletionServiceTests
     }
 
     [Fact]
-    public async Task HandleAsync_TwoPrepares_EphemeralOmitDoesNotChangeStoredPrefix()
+    public async Task HandleAsync_TwoPrepares_PrefixBytesStayFrozen()
     {
-        _policy.DedupeDuplicateFileReads = true;
+        _policy.DedupeDuplicateFailedEdits = true;
         _estimatedTokensToReturn = 10;
         var alignment = new CacheAlignmentService(Options.Create(_cacheAlignmentOptions));
         var conversation = Conversation.Create("header:ca-omit", DateTimeOffset.UtcNow);

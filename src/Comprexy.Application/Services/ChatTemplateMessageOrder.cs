@@ -77,7 +77,7 @@ public static class ChatTemplateMessageOrder
         var parent = allMessages
             .Where(m => m.Sequence < tipSequence && m.Role == MessageRole.Assistant)
             .OrderByDescending(m => m.Sequence)
-            .FirstOrDefault(m => FileReadPathExtractor.GetAssistantToolCallIds(m).Contains(toolCallId));
+            .FirstOrDefault(m => ToolCallWireHelper.GetAssistantToolCallIds(m).Contains(toolCallId));
 
         if (parent is null)
         {

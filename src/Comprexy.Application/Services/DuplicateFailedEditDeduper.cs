@@ -66,7 +66,7 @@ public static class DuplicateFailedEditDeduper
 
         var keptToolCallIds = messages
             .Where(m => m.Role == MessageRole.Tool && !dropSequences.Contains(m.Sequence))
-            .Select(FileReadPathExtractor.TryExtractToolCallId)
+            .Select(ToolCallWireHelper.TryExtractToolCallId)
             .Where(id => id is not null)
             .Select(id => id!)
             .ToHashSet(StringComparer.Ordinal);
@@ -83,7 +83,7 @@ public static class DuplicateFailedEditDeduper
                 continue;
             }
 
-            var parentIds = FileReadPathExtractor.GetAssistantToolCallIds(message);
+            var parentIds = ToolCallWireHelper.GetAssistantToolCallIds(message);
             if (parentIds.Count == 0)
             {
                 continue;

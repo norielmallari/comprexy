@@ -91,7 +91,7 @@ public static class WrapUpReadiness
         {
             if (message.Role == MessageRole.Assistant)
             {
-                var ids = FileReadPathExtractor.GetAssistantToolCallIds(message);
+                var ids = ToolCallWireHelper.GetAssistantToolCallIds(message);
                 if (ids.Count == 0 && assessment.UnmatchedCount > assessment.OpenToolCallIds.Count)
                 {
                     // Unparseable tool_calls assistant — fail-closed exclusion.
@@ -109,7 +109,7 @@ public static class WrapUpReadiness
 
             if (message.Role == MessageRole.Tool)
             {
-                var toolCallId = FileReadPathExtractor.TryExtractToolCallId(message);
+                var toolCallId = ToolCallWireHelper.TryExtractToolCallId(message);
                 if (toolCallId is not null && openIds.Contains(toolCallId))
                 {
                     excludeIds.Add(message.Id);
@@ -124,7 +124,7 @@ public static class WrapUpReadiness
             // Unparseable-only open: drop trailing assistants with non-empty tool_calls.
             foreach (var message in ordered.Where(m => m.Role == MessageRole.Assistant).Reverse())
             {
-                if (FileReadPathExtractor.GetAssistantToolCallIds(message).Count == 0
+                if (ToolCallWireHelper.GetAssistantToolCallIds(message).Count == 0
                     && !string.IsNullOrWhiteSpace(message.RawWireJson)
                     && message.RawWireJson.Contains("tool_calls", StringComparison.Ordinal))
                 {

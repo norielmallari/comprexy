@@ -55,7 +55,7 @@ public static class FileMutationEditIndexer
                 continue;
             }
 
-            var toolCallId = FileReadPathExtractor.TryExtractToolCallId(message);
+            var toolCallId = ToolCallWireHelper.TryExtractToolCallId(message);
             if (toolCallId is null || !announced.TryGetValue(toolCallId, out var announcedCall))
             {
                 continue;
