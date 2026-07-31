@@ -21,6 +21,7 @@ internal/
 .cursor/agent-state/**
 !.cursor/agent-state/README.md
 .cursor/rules/*privacy.mdc
+.kilo/rules/*privacy.md
 
 # Next.js dashboard
 apps/dashboard/.next/

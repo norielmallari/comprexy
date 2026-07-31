@@ -1,0 +1,28 @@
+<!-- Generated from .cursor/rules/architecture-context.mdc — edit the source, not this file. -->
+
+# Architecture context
+
+Before implementing, reviewing, or explaining behavior in this repository, **read** [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) with the Read tool (or re-read it if your session has not loaded it yet).
+
+Treat that document as the map for:
+
+- Layer boundaries (Api / Application / Domain / Infrastructure)
+- Chat prepare → upstream → complete flow
+- Working memory, soft Inline wrap-up (stop-turn + mid-chain), closed tool-chain gate
+- Conversation exclusive gate, SQLite persistence
+
+## Do
+
+- Prefer changes that preserve the documented dependency direction and ownership table
+- Update `docs/ARCHITECTURE.md` in the same change when you alter structural behavior (new major path, ownership shift, persistence contract)
+- Point operators at the README for config tables; keep architecture prose structural, not a second config dump
+- Use EF Core abstractions and LINQ for all database access, including read-only and analytical queries
+- Treat `IUnitOfWork.SaveChangesAsync` as owned only by `ProxyChatCompletionService`; dual-id map persistence uses an isolated map UoW (see `.cursor/rules/ef.mdc` § SaveChanges / Unit of Work ownership)
+
+## Do not
+
+- Invent parallel gateways, shared multi-instance queues, or cross-cutting frameworks the architecture explicitly excludes
+- Bypass Application ports from Api straight into Infrastructure persistence helpers
+- Assume fingerprint identity or PassThrough semantics without checking the architecture + README limitations
+- Write raw SQL, SQL views, stored procedures, Dapper queries, or `FromSql*` calls unless the user explicitly instructs you to use SQL
+- Call `SaveChangesAsync` from Application leaf services (including ToolIr/ToolSchema helpers) on the chat-scoped unit of work; do not flush the request DbContext to commit a single aggregate mid-prepare

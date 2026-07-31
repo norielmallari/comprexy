@@ -1,0 +1,180 @@
+<!-- Generated from .cursor/rules/ef.mdc — edit the source, not this file. -->
+
+# EF Core
+
+_Scope: `**/Persistence/**/*.cs`, `**/*Repository*.cs`, `**/*DbContext*.cs`, `**/Entities/**/*.cs`, `**/*Configuration*.cs`, `**/Services/**/*.cs`, `**/Abstractions/**/*UnitOfWork*.cs`, `**/DependencyInjection/**/*.cs`_
+
+Follow current EF Core performance practice: prefer lean queries, explicit loading shape, and tracking only when `SaveChanges` must see mutations.
+
+## SaveChanges / Unit of Work ownership
+
+Before adding or moving `SaveChangesAsync` / `IUnitOfWork` / `DbContext.SaveChanges*` calls, read `docs/ARCHITECTURE.md` § Persistence (Unit of Work ownership) and `internal/plans/uow-boundary.md`.
+
+### Who may flush
+
+| Owner | Unit | Allowed when |
+| --- | --- | --- |
+| `ProxyChatCompletionService` (and prepare helpers it owns) | Request-scoped chat `IUnitOfWork` | Complete; Inline phase 1/2; CatalogMutated; snapshot rewind; inbound distill commit before dual-id Complete |
+| Dual-id map (`ToolIrCallIdMapService`) | **Isolated** `IToolIrCallIdMapUnitOfWork` from `IToolIrCallIdMapUnitOfWorkFactory` only | Register / Complete / Clear / Sweep |
+
+### Dual-id rule
+
+- Pending IR↔client map rows use a **short-lived DbContext** — never the chat-scoped context.
+- Register must still commit **before** client-facing `tool_calls` leave the proxy.
+- Do not inject chat `IUnitOfWork` into `ToolIrCallIdMapService`.
+
+### Forbidden
+
+- Application leaf services / repositories calling `SaveChangesAsync` “because they mutated something”
+- Nested chat-context flushes inside ToolSchema / ToolIr helpers
+- Staging `ConversationToolCallMap` on the request-scoped `ComprexyDbContext`
+- New early flushes without documenting them in `docs/ARCHITECTURE.md` in the same change
+
+### Do
+
+- Stage in repositories; commit only at a named owner boundary
+- When adding a flush boundary: update ARCHITECTURE with a one-line reason
+- Prefer `await using` on map UoW from the factory; dispose owns the factory-created context only
+
+### Do not
+
+- Dispose the request-scoped `ComprexyDbContext` / chat `IUnitOfWork` from a leaf service
+- Shorten `ConversationRequestGate` by moving exclusive lease into map helpers
+- “Just flush” to make tests green when dirtiness spans multiple aggregates
+
+## Keys and clustering (SQL Server–ready)
+
+Persisted entities inherit a shared base (`EntityBase` once introduced):
+
+| Column | Order | Role |
+| --- | --- | --- |
+| `ClusterId` (`long`) | 0 (first) | **Clustered index only** — sequential append key. **Not** the PK. DB-generated; never used as domain identity. |
+| `Id` (`Guid`) | 1 (second) | **Primary key** — nonclustered on SQL Server. App identity and FKs. |
+
+```csharp
+// ✅ Shared EntityBaseConfiguration.ConfigureKeys — ClusterId col 0, Id col 1
+EntityBaseConfiguration.ConfigureKeys(builder);
+builder.HasKey(e => e.Id);
+// SQL Server: PK nonclustered; ClusterId unique clustered + identity/value-generated
+
+// ❌ Do not make ClusterId / long the primary key
+// ❌ Do not cluster on random Guid Id on SQL Server
+// ❌ Do not set HasColumnOrder for Id/ClusterId outside EntityBaseConfiguration
+```
+
+- Factories assign `Id = Guid.NewGuid()`; leave `ClusterId` to the database.
+- FKs reference `Guid Id` (e.g. `ConversationId`), never `ClusterId`.
+- Use shared `EntityBaseConfiguration.ConfigureKeys` for every `EntityBase` table; table configs add only table-specific indexes and columns.
+- Prefer a plain abstract base class (shared columns), **not** EF TPH, for Conversation / Message / WorkingMemory / CompressionEvent.
+
+## Indexes — required with schema changes
+
+When adding a table, column filter, join, or ordered hot read, define supporting indexes in the **same** change. Escalate if a production-bound heavy read would lack an index.
+
+Minimum patterns already in use (preserve / mirror on new tables):
+
+| Access path | Index |
+| --- | --- |
+| Message window by conversation | UNIQUE `(ConversationId, Sequence)` |
+| Unfolded messages | `(ConversationId, FoldedIntoWorkingMemoryVersion)` |
+| Working memory versions | UNIQUE `(ConversationId, Version)` |
+| Conversation lookup by client key | UNIQUE `ConversationKey` |
+| Row by id | PK on `Id` (GUID) |
+| SQL Server append locality | UNIQUE clustered on `ClusterId` |
+
+```csharp
+// ✅ Natural business key as unique NCI (not a substitute for Guid PK)
+builder.HasIndex(m => new { m.ConversationId, m.Sequence }).IsUnique();
+
+// ❌ Filter/order in hot path with no matching index
+```
+
+- Unique business keys (`ConversationKey`, `(ConversationId, Sequence)`, …) are **additional** unique indexes — they do not replace the GUID PK.
+- Prefer covering considerations only when profiling shows key-lookup cost on wide columns (`Content`, `RawWireJson`).
+
+## AsNoTracking — pure reads only
+
+Use `.AsNoTracking()` on queries that return data for display, context building, or decisions **without** mutating the returned entities before `SaveChanges`.
+
+```csharp
+// ✅ Pure read
+await db.WorkingMemories.AsNoTracking()
+    .Where(w => w.ConversationId == id)
+    .OrderByDescending(w => w.Version)
+    .FirstOrDefaultAsync(ct);
+
+// ❌ Do not AsNoTracking when the entity is mutated then saved
+var conversation = await db.Conversations.FirstAsync(...); // tracked
+conversation.SetSyncedMessageCount(n, now);
+await db.SaveChangesAsync(ct);
+```
+
+- Do **not** add `Update`/`Attach` solely to force no-tracking on write paths. Keep tracking for load-modify-save.
+- Prefer `.AsNoTrackingWithIdentityResolution()` only when a no-tracking graph needs shared related instances deduped.
+- Optional: set `QueryTrackingBehavior.NoTracking` on the DbContext and opt in with `.AsTracking()` on write queries — only if the codebase adopts that consistently.
+
+## Avoid N+1
+
+Never rely on lazy loading in request paths. Load related data in one shot:
+
+- Eager load with `.Include()` / `.ThenInclude()`, or
+- Project to DTOs / anonymous types (preferred for list/read APIs — less data, no tracker).
+
+```csharp
+// ❌ N+1
+foreach (var c in conversations)
+    _ = c.Messages.Count; // extra query per row if lazy
+
+// ✅ Eager or project
+await db.Conversations.AsNoTracking()
+    .Include(c => c.Messages)
+    .ToListAsync(ct);
+```
+
+## AsSplitQuery — multiple collection includes
+
+When a query `.Include`s **two or more collection** navigations, use `.AsSplitQuery()` to avoid cartesian explosion (row multiplication). This is the standard fix alongside eager loading — not a substitute for missing `Include`s.
+
+```csharp
+await db.Blogs.AsNoTracking()
+    .Include(b => b.Posts)
+    .Include(b => b.Tags)
+    .AsSplitQuery()
+    .ToListAsync(ct);
+```
+
+- Global default is `QuerySplittingBehavior.SplitQuery` (set in `AddComprexyInfrastructure`). Use `.AsSingleQuery()` only when a single round-trip is required.
+- Split queries use multiple round-trips; wrap in a transaction only when cross-query consistency is required.
+
+## Server-side queries only — no client evaluation
+
+All filter, order, join, and projection work must translate to SQL. Do **not** materialize then sort/filter in memory.
+
+```csharp
+// ✅ Server-side OrderBy (translates)
+await db.ConversationMetricsSummaries.AsNoTracking()
+    .OrderByDescending(s => s.UpdatedAt)
+    .ToListAsync(ct);
+
+// ❌ Forbidden — client-side sort after materialization
+var rows = await db.ConversationMetricsSummaries.AsNoTracking().ToListAsync(ct);
+return rows.OrderByDescending(s => s.UpdatedAt).ToList();
+```
+
+- Prefer async EF APIs (`ToListAsync`, `FirstOrDefaultAsync`, …).
+- Bound list queries (`.Take` / paging); do not load unbounded graphs on hot paths.
+- Filter, order, and project in LINQ so SQL does the work; never `ToList` / `AsEnumerable` then `Where` / `OrderBy` / `Select` on an EF query result to “work around” translation.
+- If LINQ does not translate, fix the model/provider mapping or rewrite the query — do not silence it with in-memory evaluation.
+
+### DateTimeOffset on SQLite
+
+SQLite cannot `ORDER BY` / compare EF’s default TEXT `DateTimeOffset` mapping in a way that translates reliably. Persist all `DateTimeOffset` / `DateTimeOffset?` as **UTC ticks (`long`)** via `DateTimeOffsetToUtcTicksConverter` / `NullableDateTimeOffsetToUtcTicksConverter` registered in `ComprexyDbContext.ConfigureConventions`. Domain properties stay `DateTimeOffset`; writes use UTC (`IClock.UtcNow`).
+
+### Warnings — throw by default
+
+`AddComprexyInfrastructure` sets `ConfigureWarnings` → `Default(WarningBehavior.Throw)`. Do **not** ignore query/translation warnings to paper over client evaluation or bad SQL shape. Only ignore warnings that are explicitly documented in DI (e.g. multi-provider test noise, sensitive-data logging in local debug, ambient transactions). EF Core 3+ already throws on untranslatable LINQ; throwing on remaining warnings keeps regressions loud.
+
+## Migrations
+
+- Create only via `dotnet ef migrations` — never hand-author a new migration from scratch.
+- SQLite data-preserving rebuilds (column type/order changes) may extend the scaffolded `Up`/`Down` with explicit SQL, matching existing migrations — convert values correctly; do not rely on annotation-only `AlterColumn` when affinity or stored representation changes.

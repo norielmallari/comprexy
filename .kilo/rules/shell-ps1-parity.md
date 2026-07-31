@@ -1,0 +1,46 @@
+<!-- Generated from .cursor/rules/shell-ps1-parity.mdc — edit the source, not this file. -->
+
+# Shell / PowerShell DX parity
+
+_Scope: `**/*.sh`, `**/*.ps1`, `**/*.cmd`_
+
+Repo entrypoints are paired: `comprexy.sh` (Unix) and `comprexy.ps1` + thin `comprexy.cmd` (Windows). Change them together.
+
+## Required parity
+
+When editing any of these files, update the **other** platform script in the **same change**:
+
+| Must match | Examples |
+| --- | --- |
+| Commands | `proxy`, `control-api`/`control`, `dev`, `test`, `build`, `clear-db`, `install-dotnet`, `help` |
+| Behavior | ports, project paths, `COMPREXY_AUTO_INSTALL_DOTNET`, SDK 10+ gate, prompt vs auto-install |
+| Help text | command list and examples (platform invocation differs: `./comprexy.sh` vs `.\comprexy.cmd`) |
+| Docs | README / CONTRIBUTING examples if command surface changes |
+
+```text
+# ✅ Same command surface
+./comprexy.sh clear-db
+.\comprexy.cmd clear-db
+
+# ❌ Add a command only on one side
+```
+
+## Platform shape (do not unify incorrectly)
+
+- **`comprexy.sh`**: bash; `dotnet-install.sh`; install dir `~/.dotnet` (or `$DOTNET_ROOT`).
+- **`comprexy.ps1`**: PowerShell; `dotnet-install.ps1`; install dir `%USERPROFILE%\.dotnet` (or `$env:DOTNET_ROOT`).
+- **`comprexy.cmd`**: **shim only** — invoke `comprexy.ps1` with `-ExecutionPolicy Bypass`. No business logic in `.cmd`.
+
+```bat
+REM ✅ Thin shim
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0comprexy.ps1" %*
+
+REM ❌ Duplicate command parsing / dotnet logic in .cmd
+```
+
+## Checklist before finishing
+
+- [ ] Command set identical on `.sh` and `.ps1`
+- [ ] Shared env vars and exit behavior aligned
+- [ ] `.cmd` still has no logic beyond invoking `.ps1`
+- [ ] README / CONTRIBUTING mention both OS forms if the public command list changed

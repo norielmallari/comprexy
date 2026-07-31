@@ -1,0 +1,28 @@
+<!-- Generated from .cursor/rules/ui-testing.mdc — edit the source, not this file. -->
+
+# UI testing
+
+_Scope: `**/*.tsx`, `**/*.jsx`, `**/*.ts`, `**/playwright.config.*`_
+
+## Locator hierarchy (prefer in order)
+
+1. Role + accessible name
+2. Label text / placeholder only when role is weak
+3. `data-testid` for charts, canvas, and custom widgets where role/label is insufficient
+4. CSS / XPath — last resort; do not make them the primary contract
+
+## Definition of done (touched UI flows)
+
+- Unit/component tests (Vitest/RTL or app-equivalent) cover logic and accessible behavior where practical
+- Committed Playwright smoke for the touched user flow is green under **mocked** APIs
+- Playwright does not replace unit tests; unit tests do not replace Playwright
+
+## Playwright defaults
+
+- Mock control-api / BFF by default (`page.route` or fixtures) — live `:8130` is optional, not merge-default
+- Assert structure and accessible outcomes, not pixels
+- Do not delete assertions or add unconditional waits to force green
+
+## Agents
+
+Orchestrator try loops and Playwright MCP explore/heal runbooks live in `.cursor/agents/` — not in this rule.

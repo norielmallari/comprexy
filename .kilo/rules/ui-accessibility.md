@@ -1,0 +1,22 @@
+<!-- Generated from .cursor/rules/ui-accessibility.mdc — edit the source, not this file. -->
+
+# UI accessibility
+
+_Scope: `**/*.tsx`, `**/*.ts`, `**/*.css`_
+
+## Do
+
+- Give every interactive control an accessible name (visible label, `aria-label`, or labelled-by)
+- Prefer semantic elements and ARIA roles that match behavior (button, link, dialog, tab, etc.)
+- Keep focus order sensible; do not remove focus outlines without an equivalent visible focus style
+- For charts/custom widgets, expose a text alternative or structure (`aria-label`, description, or data table) so the control is not icon-only silence
+
+## Do not
+
+- Rely on color alone to convey state
+- Trap keyboard focus without an escape path on dialogs/overlays
+- Use non-descriptive names (`click here`, `icon`, `chart`) as the only accessible name
+
+## Charts / custom widgets
+
+When role/label is insufficient for structure, add an explicit accessible name on the widget root and a stable test hook (`data-testid`) on that root — not on every internal SVG node.

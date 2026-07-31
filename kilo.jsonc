@@ -1,0 +1,5 @@
+// Kilo Code project config — https://kilo.ai/docs/customize/custom-rules
+// Rules under .kilo/rules/ are generated from .cursor/rules/*.mdc (source of truth).
+{
+  "instructions": [".kilo/rules/*.md"]
+}
