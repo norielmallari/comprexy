@@ -96,7 +96,7 @@ Virtual Tools (Tool IR) is a primary Comprexy capability for OpenAI-compatible `
 | `MaxSearchMatches` | `40` | Cap for `comprexy_read_file_search` hits. |
 | `MaxDirListEntries` | `200` | Cap for `comprexy_dir_list` entries. |
 | `MaxShellObservationChars` | `4000` | Cap for distilled `comprexy_shell` observation content (`truncated: true` when capped). |
-| `ExcludeFromModelTools` | `ReadLints`, `TodoWrite`, `AwaitShell`, `UpdateCurrentStep`, `EditNotebook`, `SwitchMode`, `agent_manager`, `agent_manager_models`, `background_process`, `task`, `kilo_local_recall` | Client tool names omitted from the model-facing `tools[]` when Virtual is active (case-insensitive ordinal match after trim). Still hashed/mapped as part of the inbound catalog; model calls are rejected locally; inbound orphans are swallowed like Virtual-replaced tools. Empty list disables. Ignored when `Mode=Off` or `Proxy:PassThrough`. |
+| `ExcludeFromModelTools` | `ReadLints`, `TodoWrite`, `AwaitShell`, `UpdateCurrentStep`, `EditNotebook`, `SwitchMode`, `agent_manager`, `agent_manager_models`, `background_process`, `kilo_local_recall` | Client tool names omitted from the model-facing `tools[]` when Virtual is active (case-insensitive ordinal match after trim). Still hashed/mapped as part of the inbound catalog; model calls are rejected locally; inbound orphans are swallowed like Virtual-replaced tools. Empty list disables. Ignored when `Mode=Off` or `Proxy:PassThrough`. |
 | `FileCacheAbsoluteExpiration` | `00:20:00` | TTL for in-memory file-body cache entries. |
 | `FileCacheSizeLimit` | `256` | Max cached file bodies (each entry size 1). |
 | `CallIdMapPendingAbsoluteExpiration` | `00:30:00` | TTL for abandoned pending IR↔client call-id map rows (EF + in-memory hot cache). |

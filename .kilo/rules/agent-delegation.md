@@ -1,0 +1,33 @@
+<!-- Generated from .cursor/rules/agent-delegation.mdc — edit the source, not this file. -->
+
+# Agent delegation
+
+This repository ships a roster of specialist agents. Prefer delegating multi-step work to them over doing it inline: each subagent runs in its own context, so plans, reviews, and test output do not accumulate in the parent conversation.
+
+Invoke one with the delegation tool your client exposes — `task` in Kilo Code, `Task` in Cursor — naming the agent to run. Kilo also accepts `@agent-name` in a message.
+
+## Entry points
+
+| You have | Delegate to |
+| --- | --- |
+| A requirement, bug, or finding with no approved plan | `plan-orchestrator` |
+| An approved `plan.md` with `track: backend` | `backend-implementation-orchestrator` |
+| An approved `plan.md` with `track: ui` | `ui-implementation-orchestrator` |
+| An approved `plan.md` with `track: mixed` | backend orchestrator first, then the UI orchestrator |
+
+Orchestrators fan out to their own specialists (`planner`, `plan-reviewer`, `backend-implementer`, `backend-unit-tester`, `backend-code-reviewer`, `ui-implementer`, `ui-unit-tester`, `ui-reviewer`, `ui-simulator`). Do not drive those specialists yourself when an orchestrator owns the stage. Roster and pipeline detail: [`.cursor/README.md`](.cursor/README.md).
+
+For read-only exploration, use the built-in `explore` agent. For open-ended research, use `generalPurpose` in Cursor or `general` in Kilo.
+
+## Do
+
+- Pass the run folder (`.cursor/agent-state/<run-folder>/`) so the subagent reads and writes the shared handoff files
+- Write a self-contained brief — the subagent cannot see this conversation
+- Launch independent delegations in parallel; sequence only when one needs another's output
+- Report the subagent's verdict and artifact paths; do not re-paste what it already wrote to disk
+
+## Do not
+
+- Delegate a trivial single-file edit or a direct question — answer those inline
+- Re-run a stage an orchestrator already owns
+- Start a fourth automatic try after three non-approvals at a gate; stop for human review
