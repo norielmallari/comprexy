@@ -1,5 +1,7 @@
 using System.Diagnostics;
 using System.Reflection;
+using System.Text.Json;
+using Comprexy.Application.Models.Benchmarking;
 using Comprexy.Bench.Cli;
 using Comprexy.Bench.Hosting;
 using Comprexy.Bench.Model;
@@ -60,6 +62,14 @@ internal static class BenchRunCommand
 
         await using var fleet = await BenchHostFleet.StartAsync(options, arms, cancellationToken);
 
+        await BenchRunStatusWriter.WriteProgressAsync(
+            options.RunDirectory,
+            arm: null,
+            conversationName: null,
+            promptsCompleted: null,
+            runPhase: "running",
+            cancellationToken);
+
         foreach (var arm in arms)
         {
             var resolved = HostConfigurationResolver.Resolve(fleet.ArmEnvironment(arm), "Development");
@@ -74,6 +84,14 @@ internal static class BenchRunCommand
 
             foreach (var script in scripts)
             {
+                await BenchRunStatusWriter.WriteProgressAsync(
+                    options.RunDirectory,
+                    arm: arm.Name,
+                    conversationName: script.Name,
+                    promptsCompleted: null,
+                    runPhase: "running",
+                    cancellationToken);
+
                 SurvivalEarlyStop? survival = null;
                 if (options.StopAfterBaselineFailure &&
                     arm.Name == BenchArm.Comprexy &&
@@ -100,6 +118,14 @@ internal static class BenchRunCommand
 
                 Console.Error.WriteLine(
                     $"{run.Status} ({run.PromptsCompleted}/{run.PromptCount} prompts, {run.ConversationWallClockMs / 1000.0:0.0}s, client compaction {(run.ClientCompactionCount is { } fired ? $"x{fired}" : "off")})");
+
+                await BenchRunStatusWriter.WriteProgressAsync(
+                    options.RunDirectory,
+                    arm: arm.Name,
+                    conversationName: script.Name,
+                    promptsCompleted: run.PromptsCompleted,
+                    runPhase: ConversationStatus.IsSuccessfulTerminal(run.Status) ? "run_finished" : "run_failed",
+                    cancellationToken);
 
                 if (run.FailureReason is not null)
                 {
@@ -150,6 +176,7 @@ internal static class BenchRunCommand
                 options.ShellTimeoutSeconds * 1000,
                 options.Seed,
                 0d),
+            CostRates = ResolveCostRates(options),
             Arms = armManifests
         };
 
@@ -185,6 +212,22 @@ internal static class BenchRunCommand
             .ToList();
 
         return selected;
+    }
+
+    private static BenchmarkCostRates? ResolveCostRates(BenchOptions options)
+    {
+        if (string.IsNullOrWhiteSpace(options.CostRatesJson))
+        {
+            return null;
+        }
+
+        var json = options.CostRatesJson.Trim();
+        if (File.Exists(json))
+        {
+            json = File.ReadAllText(json);
+        }
+
+        return JsonSerializer.Deserialize<BenchmarkCostRates>(json, BenchJson.Options);
     }
 
     private static string ResolveMafVersion() =>

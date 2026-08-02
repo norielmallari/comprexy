@@ -88,5 +88,11 @@ internal sealed record BenchOptions
     /// </summary>
     public int SurvivalMarginPrompts { get; init; } = 1;
 
+    /// <summary>Optional JSON file or inline JSON for cost rates stamped into the manifest.</summary>
+    public string? CostRatesJson { get; init; }
+
+    /// <summary>When true, <see cref="RunId"/> is used verbatim (orchestrator-started runs).</summary>
+    public bool ExactRunId { get; init; }
+
     public string RunDirectory => BenchPaths.RunDirectory(RunId);
 }

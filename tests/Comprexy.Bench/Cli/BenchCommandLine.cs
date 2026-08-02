@@ -24,6 +24,7 @@ internal static class BenchCommandLine
         var arms = new List<string>();
         var conversations = new List<string>();
         string? runIdArgument = null;
+        var exactRunId = false;
 
         for (var i = 1; i < args.Length; i++)
         {
@@ -102,6 +103,12 @@ internal static class BenchCommandLine
                 case "--survival-margin":
                     options = options with { SurvivalMarginPrompts = Math.Max(1, RequireInt(args, ref i)) };
                     break;
+                case "--cost-rates":
+                    options = options with { CostRatesJson = RequireValue(args, ref i) };
+                    break;
+                case "--exact-run-id":
+                    exactRunId = true;
+                    break;
                 case "--help" or "-h":
                     return options with { Command = BenchCommand.Help };
                 default:
@@ -117,7 +124,8 @@ internal static class BenchCommandLine
 
         return options with
         {
-            RunId = ResolveRunId(options.Command, runIdArgument),
+            RunId = ResolveRunId(options.Command, runIdArgument, exactRunId),
+            ExactRunId = exactRunId,
             Arms = arms,
             Conversations = conversations
         };
@@ -128,11 +136,16 @@ internal static class BenchCommandLine
     /// only labels it, so a repeat cannot overwrite an earlier run's artifacts. For <c>report</c> and
     /// <c>publish</c> the value is the existing directory name and is used verbatim.
     /// </summary>
-    private static string ResolveRunId(BenchCommand command, string? runIdArgument)
+    private static string ResolveRunId(BenchCommand command, string? runIdArgument, bool exactRunId)
     {
         if (command != BenchCommand.Run)
         {
             return runIdArgument ?? BenchOptions.FormatRunStamp(DateTimeOffset.UtcNow);
+        }
+
+        if (exactRunId && !string.IsNullOrWhiteSpace(runIdArgument))
+        {
+            return runIdArgument.Trim();
         }
 
         var stamp = BenchOptions.FormatRunStamp(DateTimeOffset.UtcNow);

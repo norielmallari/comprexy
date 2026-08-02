@@ -34,7 +34,7 @@ tests/
 | Layer | Responsibility |
 | --- | --- |
 | **Proxy (`apps/proxy`)** | Parse OpenAI-shaped JSON, map errors/status codes, stream SSE, optional API-key gate, composition root for chat |
-| **Control API (`apps/control-api`)** | Operator REST metrics and remote telemetry MCP (Streamable HTTP at `/mcp`); shares Application/Infrastructure and SQLite with the proxy |
+| **Control API (`apps/control-api`)** | Operator REST metrics and remote telemetry MCP (Streamable HTTP at `/mcp`); shares Application/Infrastructure and SQLite with the proxy. Operator control-api also owns local **benchmark orchestration** (`POST /v1/comprexy/benchmarks/runs`, file-backed registry under `reports/bench/`, single active-run lock). |
 | **Dashboard (`apps/dashboard`)** | Optional browser UI for conversation metrics over control-api REST; does not talk to the proxy or SQLite directly |
 | **Application** | Conversation identity, prepare/complete chat, soft-budget decisions, context rebuild, Inline wrap-up, Virtual Tools (ToolSchema / ToolIr), token metrics / telemetry query facade, conversation retrieval (RAG) query facade |
 | **Domain** | `EntityBase`, `Conversation`, `ConversationMessage`, `WorkingMemory`, `CompressionEvent`, `ConversationTurnMetric`, `ConversationMetricsSummary`, `ConversationToolCatalog`, `ConversationToolDefinition`, `ConversationToolCallMap` and related enums |
@@ -60,6 +60,7 @@ flowchart TB
 
 - **Chat path:** `POST /v1/chat/completions` → `ProxyChatCompletionService` (rebuild, soft budget, Inline wrap-up).
 - **Metrics path:** `GET /v1/comprexy/conversations*` on **control-api** (`:8130`) → conversation token proof summaries and per-turn breakdown. Proxy emits/persists metrics; it does not serve query routes. The per-turn prepared-prompt split (system / working memory / history + tools) is derived read-side by `ConversationMetricsQueryService` from `Conversation.SystemPrompt` and stored `WorkingMemory.TokenCount`; nothing extra is persisted per turn, and the three parts sum to `CompressedInputTokensEstimated` so clients render them without re-deriving.
+- **Benchmark path:** operator control-api (`/v1/comprexy/benchmarks/*`) spawns the `Comprexy.Bench` harness CLI, owns outer `status.json` phases and `reports/bench/index.json` for dashboard-started runs, and serves presentation/compare endpoints with separated I/O totals. The harness may write in-run progress fields only (`runPhase`, arm, conversation hints). Bench artifacts stay under `reports/bench/` — not in the product SQLite schema.
 - **Dashboard path:** optional `apps/dashboard` (`:3000`) browser UI over control-api REST (not the proxy). Enable CORS for the dashboard origin on control-api when needed.
 - **Telemetry MCP path:** Streamable HTTP at `/mcp` on **control-api** — same Application read facades as REST (`IConversationMetricsQueryService` for metrics; `IConversationRetrievalQueryService` for message/WM RAG). Tools are `comprexy_*` and require an explicit `conversationId` (from the proxy meta-tool `comprexy_get_current_conversation_id`, response header `X-Comprexy-Conversation-Id`, or operator tooling). Resources use `comprexy://conversation/{conversationId}/…` templates. Stateless transport; no ambient current-conversation header on MCP. Summary totals, weighted/simple average, peak, and final-turn fields are whole-conversation; median and savings regressions are computed from the bounded `TurnIndex`-ordered sample and are marked via `IsPartialTurnSample` when the conversation exceeds the row cap. Retrieval tools search/window `ConversationMessage` by `Sequence` and expose versioned `WorkingMemory` plus open tool-chain status derived via `ToolCallChainState` (same closed-chain rule as Inline wrap-up; `isAwaitingClientToolResults` marks tip-only in-flight batches). Host filtering defaults to loopback (`AllowedHosts`); CORS denies browser origins unless `Cors:AllowedOrigins` lists them.
 - **Passthrough path:** other `/v1/{**path}` → reverse-proxy to `Provider` unchanged.
@@ -208,6 +209,7 @@ Loaded as: `appsettings.json` → environment-specific → host defaults → opt
 | `Proxy` | Pass-through; strip reasoning |
 | `Metrics` | Token ledger capture (default enabled) |
 | `McpTelemetry` | control-api MCP row limits and query timeout (default 100 / max 1000 / 5s) |
+| `BenchOrchestration` | control-api local benchmark harness spawn paths, ports, lock file, `AllowSpawn` |
 | `Auth` | Optional required API key |
 | `AllowedHosts` / `Cors` | control-api host filtering (loopback default) and optional CORS origins (empty = deny browser CORS) |
 | `Trace` | Console payload categories / request audit files |
@@ -228,6 +230,7 @@ Loaded as: `appsettings.json` → environment-specific → host defaults → opt
 | --- | --- |
 | HTTP contract, status codes, streaming (chat) | `apps/proxy` `Endpoints/*`, mappers, streaming |
 | Metrics query HTTP | `apps/control-api` `Endpoints/MetricsEndpoints.cs` |
+| Benchmark orchestration / presentation HTTP | `apps/control-api` `Endpoints/BenchmarkEndpoints.cs`, `Benchmarking/BenchRunOrchestrator.cs` |
 | Metrics dashboard UI | `apps/dashboard` (Next.js; consumes control-api REST) |
 | Telemetry MCP tools/resources | `apps/control-api` `Mcp/` (`ConversationTools`, `ConversationRetrievalTools`, `ConversationResources`, `ConversationRetrievalResources`) |
 | Shared API-key middleware | `Infrastructure/Hosting/ApiKeyAuthMiddleware` |

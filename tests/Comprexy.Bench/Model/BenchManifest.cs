@@ -1,3 +1,5 @@
+using Comprexy.Application.Models.Benchmarking;
+
 namespace Comprexy.Bench.Model;
 
 /// <summary>Terminal state of one conversation run. Only <c>completed</c> pairs into token headlines.</summary>
@@ -53,6 +55,8 @@ internal sealed record BenchManifest
     public required string? Model { get; init; }
 
     public required BenchHarnessSettings Harness { get; init; }
+
+    public BenchmarkCostRates? CostRates { get; init; }
 
     public required IReadOnlyList<BenchArmManifest> Arms { get; init; }
 }

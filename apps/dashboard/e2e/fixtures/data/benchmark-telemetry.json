@@ -1,0 +1,15 @@
+{
+  "totals": {
+    "conversationId": "00000000-0000-4000-8000-000000000001",
+    "turnCount": 3,
+    "inputTokens": 8000,
+    "outputTokens": 2000,
+    "overheadTokens": 200,
+    "totalSentTokens": 10200,
+    "wallClockMs": null,
+    "totalProxyDurationMs": 45000,
+    "totalUpstreamDurationMs": 38000,
+    "totalPrepareDurationMs": 7000
+  },
+  "cost": null
+}

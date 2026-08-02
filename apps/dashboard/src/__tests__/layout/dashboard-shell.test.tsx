@@ -6,6 +6,7 @@ import { DashboardShell, DashboardSkeleton } from '@/components/layout/dashboard
 vi.mock('next/navigation', () => ({
   useRouter: vi.fn(() => ({ push: vi.fn(), replace: vi.fn(), prefetch: vi.fn() })),
   useSearchParams: vi.fn(() => ({ get: vi.fn(() => null), toString: vi.fn(() => '') })),
+  usePathname: vi.fn(() => '/'),
 }));
 
 // Mock react-query so TopBar's useConversations doesn't need a real QueryClient

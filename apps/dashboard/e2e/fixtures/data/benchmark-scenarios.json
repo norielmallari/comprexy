@@ -1,0 +1,10 @@
+[
+  {
+    "name": "fixture-scenario-a",
+    "promptCount": 5
+  },
+  {
+    "name": "fixture-scenario-b",
+    "promptCount": 3
+  }
+]

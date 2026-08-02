@@ -42,6 +42,12 @@ const GHOST_X_AXIS_ID = 'ghost';
 export interface BarChartProps {
   data: ChartDataPoint[];
   isLoading?: boolean;
+  /** When set (e.g. comparison mode), both charts share this Y-axis max. */
+  sharedMaxY?: number;
+  title?: string;
+  compact?: boolean;
+  /** Root test hook; defaults to telemetry single-chart id. */
+  testId?: string;
 }
 
 /**
@@ -88,7 +94,14 @@ function TurnTooltip({
   return <ChartTooltip active={Boolean(active)} data={payload?.[0]?.payload ?? null} />;
 }
 
-export function BarChart({ data, isLoading = false }: BarChartProps) {
+export function BarChart({
+  data,
+  isLoading = false,
+  sharedMaxY,
+  title = 'Token Counts by Turn',
+  compact = false,
+  testId = 'token-counts-by-turn-chart',
+}: BarChartProps) {
   const [isDark] = useState(() => {
     if (typeof window !== 'undefined') {
       return document.documentElement.classList.contains('dark');
@@ -100,12 +113,15 @@ export function BarChart({ data, isLoading = false }: BarChartProps) {
 
   // Both series share one y-axis, so the domain must cover the taller of ghost and stack.
   const yMax = useMemo(() => {
+    if (sharedMaxY !== undefined) {
+      return sharedMaxY;
+    }
     if (data.length === 0) return CHART_Y_AXIS_MAX_DEFAULT;
     const maxVal = Math.max(
       ...data.map((d) => Math.max(d.baselineTokens, d.preparedPromptTokens)),
     );
     return Math.ceil(maxVal * 1.1);
-  }, [data]);
+  }, [data, sharedMaxY]);
 
   const legendItems = useMemo(() => getLegendItems(isDark), [isDark]);
 
@@ -136,7 +152,7 @@ export function BarChart({ data, isLoading = false }: BarChartProps) {
   return (
     <div className="space-y-4">
       <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100">
-        Token Counts by Turn
+        {title}
       </h3>
 
       <ChartLegend items={legendItems} />
@@ -144,7 +160,7 @@ export function BarChart({ data, isLoading = false }: BarChartProps) {
       <div
         role="img"
         aria-label={`Prepared prompt tokens per turn across ${data.length} turns, with an uncompressed baseline reference behind each bar`}
-        data-testid="token-counts-by-turn-chart"
+        data-testid={testId}
       >
         <ResponsiveContainer width="100%" height={CHART_HEIGHT}>
           <RechartsBarChart
@@ -219,11 +235,13 @@ export function BarChart({ data, isLoading = false }: BarChartProps) {
         </ResponsiveContainer>
       </div>
 
-      <p className="text-xs text-gray-500 dark:text-gray-400">
-        Bars show the prompt Comprexy actually prepared for each turn. The dashed ghost behind each
-        bar is the uncompressed prompt estimate for the same turn. Compressed WM stays empty until
-        the first working memory version exists.
-      </p>
+      {!compact && (
+        <p className="text-xs text-gray-500 dark:text-gray-400">
+          Bars show the prompt Comprexy actually prepared for each turn. The dashed ghost behind each
+          bar is the uncompressed prompt estimate for the same turn. Compressed WM stays empty until
+          the first working memory version exists.
+        </p>
+      )}
     </div>
   );
 }

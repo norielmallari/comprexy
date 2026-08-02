@@ -1,17 +1,12 @@
 import { renderHook, act } from '@testing-library/react';
+import { usePathname, useRouter, useSearchParams } from 'next/navigation';
+
 import { useConversationUrl } from '@/hooks/use-conversation-url';
 
 vi.mock('next/navigation', () => ({
   useRouter: vi.fn(),
   useSearchParams: vi.fn(),
-}));
-
-const mockUseRouter = vi.fn();
-const mockUseSearchParams = vi.fn();
-
-vi.doMock('next/navigation', () => ({
-  useRouter: mockUseRouter,
-  useSearchParams: mockUseSearchParams,
+  usePathname: vi.fn(() => '/'),
 }));
 
 describe('useConversationUrl', () => {
@@ -42,49 +37,44 @@ describe('useConversationUrl', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    sessionStorage.clear();
     mockRouter.push.mockClear();
+    mockRouter.replace.mockClear();
+    vi.mocked(useRouter).mockReturnValue(mockRouter as never);
+    vi.mocked(usePathname).mockReturnValue('/');
   });
 
-  it('returns null conversationId when no conv param', async () => {
-    mockUseRouter.mockReturnValue(mockRouter);
-    mockUseSearchParams.mockReturnValue(createSearchParams({}));
+  function mockSearchParams(params: Record<string, string>) {
+    vi.mocked(useSearchParams).mockReturnValue(createSearchParams(params));
+  }
 
-    // Re-import to pick up fresh mocks
-    const { useConversationUrl: freshHook } = await import('@/hooks/use-conversation-url');
-    const { result } = renderHook(() => freshHook());
+  it('returns null conversationId when no conv param', () => {
+    mockSearchParams({});
+    const { result } = renderHook(() => useConversationUrl());
 
     expect(result.current.conversationId).toBeNull();
   });
 
-  it('returns decoded conversationId when conv param exists', async () => {
+  it('returns decoded conversationId when conv param exists', () => {
     const testId = 'abc12345-def6-7890-abcd-ef1234567890';
-    mockUseRouter.mockReturnValue(mockRouter);
-    mockUseSearchParams.mockReturnValue(createSearchParams({ conv: testId }));
-
-    const { useConversationUrl: freshHook } = await import('@/hooks/use-conversation-url');
-    const { result } = renderHook(() => freshHook());
+    mockSearchParams({ conv: testId });
+    const { result } = renderHook(() => useConversationUrl());
 
     expect(result.current.conversationId).toBe(testId);
   });
 
-  it('returns URL-encoded conversationId decoded', async () => {
+  it('returns URL-encoded conversationId decoded', () => {
     const testId = 'abc-123_456';
     const encoded = encodeURIComponent(testId);
-    mockUseRouter.mockReturnValue(mockRouter);
-    mockUseSearchParams.mockReturnValue(createSearchParams({ conv: encoded }));
-
-    const { useConversationUrl: freshHook } = await import('@/hooks/use-conversation-url');
-    const { result } = renderHook(() => freshHook());
+    mockSearchParams({ conv: encoded });
+    const { result } = renderHook(() => useConversationUrl());
 
     expect(result.current.conversationId).toBe(testId);
   });
 
   it('navigates to a conversation when navigateToConversation called', async () => {
-    mockUseRouter.mockReturnValue(mockRouter);
-    mockUseSearchParams.mockReturnValue(createSearchParams({}));
-
-    const { useConversationUrl: freshHook } = await import('@/hooks/use-conversation-url');
-    const { result } = renderHook(() => freshHook());
+    mockSearchParams({});
+    const { result } = renderHook(() => useConversationUrl());
 
     await act(async () => {
       result.current.navigateToConversation('new-conv-id');
@@ -96,11 +86,8 @@ describe('useConversationUrl', () => {
   });
 
   it('clears conversation when navigateToConversation called with null', async () => {
-    mockUseRouter.mockReturnValue(mockRouter);
-    mockUseSearchParams.mockReturnValue(createSearchParams({ conv: 'old-conv-id', other: 'value' }));
-
-    const { useConversationUrl: freshHook } = await import('@/hooks/use-conversation-url');
-    const { result } = renderHook(() => freshHook());
+    mockSearchParams({ conv: 'old-conv-id', other: 'value' });
+    const { result } = renderHook(() => useConversationUrl());
 
     await act(async () => {
       result.current.navigateToConversation(null);
@@ -113,11 +100,8 @@ describe('useConversationUrl', () => {
   });
 
   it('clears conversation when navigateToConversation called with null (no other params)', async () => {
-    mockUseRouter.mockReturnValue(mockRouter);
-    mockUseSearchParams.mockReturnValue(createSearchParams({ conv: 'old-conv-id' }));
-
-    const { useConversationUrl: freshHook } = await import('@/hooks/use-conversation-url');
-    const { result } = renderHook(() => freshHook());
+    mockSearchParams({ conv: 'old-conv-id' });
+    const { result } = renderHook(() => useConversationUrl());
 
     await act(async () => {
       result.current.navigateToConversation(null);
@@ -129,11 +113,8 @@ describe('useConversationUrl', () => {
   });
 
   it('encodes conversation ID when navigating', async () => {
-    mockUseRouter.mockReturnValue(mockRouter);
-    mockUseSearchParams.mockReturnValue(createSearchParams({}));
-
-    const { useConversationUrl: freshHook } = await import('@/hooks/use-conversation-url');
-    const { result } = renderHook(() => freshHook());
+    mockSearchParams({});
+    const { result } = renderHook(() => useConversationUrl());
 
     const testId = 'id with spaces & symbols';
     await act(async () => {
@@ -142,16 +123,13 @@ describe('useConversationUrl', () => {
 
     expect(mockRouter.push).toHaveBeenCalled();
     const callArg = mockRouter.push.mock.calls[0][0] as string;
-    const params = new URLSearchParams(callArg.slice(1));
+    const params = new URLSearchParams(callArg.split('?')[1] ?? '');
     expect(params.get('conv')).toBe(encodeURIComponent(testId));
   });
 
   it('preserves other query parameters when navigating to a conversation', async () => {
-    mockUseRouter.mockReturnValue(mockRouter);
-    mockUseSearchParams.mockReturnValue(createSearchParams({ page: '1', filter: 'active' }));
-
-    const { useConversationUrl: freshHook } = await import('@/hooks/use-conversation-url');
-    const { result } = renderHook(() => freshHook());
+    mockSearchParams({ page: '1', filter: 'active' });
+    const { result } = renderHook(() => useConversationUrl());
 
     await act(async () => {
       result.current.navigateToConversation('new-conv');
@@ -159,28 +137,34 @@ describe('useConversationUrl', () => {
 
     expect(mockRouter.push).toHaveBeenCalled();
     const callArg = mockRouter.push.mock.calls[0][0] as string;
-    const params = new URLSearchParams(callArg.slice(1));
+    const params = new URLSearchParams(callArg.split('?')[1] ?? '');
     expect(params.get('page')).toBe('1');
     expect(params.get('filter')).toBe('active');
     expect(params.get('conv')).toBe(encodeURIComponent('new-conv'));
   });
 
-  it('returns navigateToConversation function', async () => {
-    mockUseRouter.mockReturnValue(mockRouter);
-    mockUseSearchParams.mockReturnValue(createSearchParams({}));
+  it('restores last conversation on metrics when conv param is missing', () => {
+    const savedId = 'stored-conv-id';
+    sessionStorage.setItem('comprexy-dashboard:last-conversation-id', savedId);
+    mockSearchParams({});
 
-    const { useConversationUrl: freshHook } = await import('@/hooks/use-conversation-url');
-    const { result } = renderHook(() => freshHook());
+    renderHook(() => useConversationUrl());
+
+    expect(mockRouter.replace).toHaveBeenCalledWith(
+      `/?conv=${encodeURIComponent(savedId)}`,
+    );
+  });
+
+  it('returns navigateToConversation function', () => {
+    mockSearchParams({});
+    const { result } = renderHook(() => useConversationUrl());
 
     expect(typeof result.current.navigateToConversation).toBe('function');
   });
 
-  it('returns conversationId as string or null', async () => {
-    mockUseRouter.mockReturnValue(mockRouter);
-    mockUseSearchParams.mockReturnValue(createSearchParams({ conv: 'test-id' }));
-
-    const { useConversationUrl: freshHook } = await import('@/hooks/use-conversation-url');
-    const { result } = renderHook(() => freshHook());
+  it('returns conversationId as string or null', () => {
+    mockSearchParams({ conv: 'test-id' });
+    const { result } = renderHook(() => useConversationUrl());
 
     expect(typeof result.current.conversationId).toBe('string');
   });

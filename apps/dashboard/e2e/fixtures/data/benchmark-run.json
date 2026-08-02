@@ -1,0 +1,22 @@
+{
+  "runId": "fixture-run-001",
+  "phase": "completed",
+  "runPhase": "run_finished",
+  "startedAt": "2026-01-15T10:00:00.000Z",
+  "updatedAt": "2026-01-15T10:30:00.000Z",
+  "lastError": null,
+  "arm": "comprexy",
+  "conversationName": "fixture-scenario-a",
+  "promptsCompleted": 5,
+  "promptCount": 5,
+  "conversationNames": ["fixture-scenario-a"],
+  "costRates": {
+    "inputUsdPer1M": 3,
+    "outputUsdPer1M": 15,
+    "compressionInputUsdPer1M": 3,
+    "compressionOutputUsdPer1M": 15,
+    "developerUsdPerHour": 75,
+    "machineUsdPerHour": 0.5,
+    "modelKind": "local"
+  }
+}

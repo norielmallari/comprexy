@@ -26,7 +26,7 @@ import {
 } from '@/lib/utils';
 
 function DashboardContent() {
-  const { conversationId } = useConversationUrl();
+  const { conversationId, isRestoringConversation } = useConversationUrl();
 
   const { isLoading: conversationsLoading } = useConversations();
   const { data: metrics, isLoading: metricsLoading } = useMetricsSummary(conversationId);
@@ -39,7 +39,18 @@ function DashboardContent() {
 
   return (
     <DashboardShell>
-      {isLoading ? (
+      {!conversationId && !isRestoringConversation ? (
+        <div
+          className="flex min-h-[240px] flex-col items-center justify-center rounded-lg border border-dashed border-border bg-card/50 px-6 py-12 text-center"
+          data-testid="metrics-empty-state"
+        >
+          <p className="text-lg font-medium text-foreground">No conversation selected</p>
+          <p className="mt-2 max-w-md text-sm text-muted-foreground">
+            Choose a conversation from the header selector to view compression metrics and turn
+            charts.
+          </p>
+        </div>
+      ) : isRestoringConversation || isLoading ? (
         <DashboardSkeleton />
       ) : (
         <div className="space-y-3">

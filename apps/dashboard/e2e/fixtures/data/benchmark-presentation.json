@@ -1,0 +1,75 @@
+{
+  "totals": {
+    "baseline": {
+      "conversationId": "00000000-0000-4000-8000-000000000001",
+      "turnCount": 5,
+      "inputTokens": 12000,
+      "outputTokens": 3000,
+      "overheadTokens": 400,
+      "totalSentTokens": 15400,
+      "wallClockMs": 120000,
+      "totalProxyDurationMs": 95000,
+      "totalUpstreamDurationMs": 80000,
+      "totalPrepareDurationMs": 15000
+    },
+    "compare": {
+      "conversationId": "00000000-0000-4000-8000-000000000002",
+      "turnCount": 6,
+      "inputTokens": 11000,
+      "outputTokens": 3200,
+      "overheadTokens": 350,
+      "totalSentTokens": 14550,
+      "wallClockMs": 135000,
+      "totalProxyDurationMs": 100000,
+      "totalUpstreamDurationMs": 85000,
+      "totalPrepareDurationMs": 15000
+    },
+    "input": {
+      "baseline": 12000,
+      "compare": 11000,
+      "delta": -1000,
+      "deltaPercent": -8.33
+    },
+    "output": {
+      "baseline": 3000,
+      "compare": 3200,
+      "delta": 200,
+      "deltaPercent": 6.67
+    },
+    "overhead": {
+      "baseline": 400,
+      "compare": 350,
+      "delta": -50,
+      "deltaPercent": -12.5
+    },
+    "turnCount": {
+      "baseline": 5,
+      "compare": 6,
+      "delta": 1,
+      "deltaPercent": 20
+    },
+    "wallClockMs": {
+      "baseline": 120000,
+      "compare": 135000,
+      "delta": 15000,
+      "deltaPercent": 12.5
+    },
+    "proxyDurationMs": {
+      "baseline": 95000,
+      "compare": 100000,
+      "delta": 5000,
+      "deltaPercent": 5.26
+    },
+    "caveats": [
+      "Turn counts differ between arms (hop tax). Totals are not turn-index paired."
+    ]
+  },
+  "cost": null,
+  "baselineConversationId": "00000000-0000-4000-8000-000000000001",
+  "compareConversationId": "00000000-0000-4000-8000-000000000002",
+  "runId": "fixture-run-001",
+  "turnSeriesPaths": [
+    "/tmp/fixture-bench/fixture-run-001/turns-maf-fixture-scenario-a.json",
+    "/tmp/fixture-bench/fixture-run-001/turns-comprexy-fixture-scenario-a.json"
+  ]
+}

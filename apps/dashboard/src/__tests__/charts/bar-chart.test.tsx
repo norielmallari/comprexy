@@ -2,6 +2,7 @@ import { render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 
 import { BarChart } from '@/components/charts/bar-chart';
+import { CHART_Y_AXIS_MIN } from '@/lib/constants';
 import type { ChartDataPoint } from '@/types/chart';
 
 const makePoint = (partial: Partial<ChartDataPoint> = {}): ChartDataPoint => ({
@@ -57,7 +58,13 @@ vi.mock('recharts', () => ({
       {...props}
     />
   ),
-  YAxis: ({ ...props }: any) => <div data-testid="recharts-yaxis" {...props} />,
+  YAxis: ({ domain, ...props }: { domain?: [number, number] }) => (
+    <div
+      data-testid="recharts-yaxis"
+      data-domain={domain ? JSON.stringify(domain) : undefined}
+      {...props}
+    />
+  ),
   CartesianGrid: () => <div data-testid="recharts-cartesian-grid" />,
   ResponsiveContainer: ({ children }: any) => (
     <div data-testid="responsive-container">{children}</div>
@@ -223,5 +230,27 @@ describe('BarChart', () => {
     render(<BarChart data={largeData} />);
 
     expect(screen.getByTestId('recharts-bar-chart')).toBeInTheDocument();
+  });
+
+  it('uses sharedMaxY for Y-axis domain when provided', () => {
+    render(<BarChart data={mockData} sharedMaxY={50_000} />);
+
+    expect(screen.getByTestId('recharts-yaxis')).toHaveAttribute(
+      'data-domain',
+      JSON.stringify([CHART_Y_AXIS_MIN, 50_000]),
+    );
+  });
+
+  it('renders custom title when title prop is set', () => {
+    render(<BarChart data={mockData} title="Baseline chart" />);
+
+    expect(screen.getByRole('heading', { level: 3 })).toHaveTextContent('Baseline chart');
+  });
+
+  it('uses custom testId when testId prop is set', () => {
+    render(<BarChart data={mockData} testId="baseline-token-chart" />);
+
+    expect(screen.getByTestId('baseline-token-chart')).toBeInTheDocument();
+    expect(screen.queryByTestId('token-counts-by-turn-chart')).not.toBeInTheDocument();
   });
 });

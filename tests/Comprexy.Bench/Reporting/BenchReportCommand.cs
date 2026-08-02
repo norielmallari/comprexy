@@ -41,6 +41,10 @@ internal static class BenchReportCommand
         Console.Error.WriteLine(
             $"  paired {metrics.Headline.PairedConversationCount}, survivals {metrics.Headline.SurvivalConversationCount}, excluded {metrics.Headline.ExcludedConversationCount}");
 
+        await PresentationArtifactWriter.WriteAsync(
+            options.RunDirectory, manifest, metrics, controlApi, cancellationToken);
+        Console.Error.WriteLine($"presentation: {Path.Combine(options.RunDirectory, "presentation.json")}");
+
         var interpretation = SummaryComposer.ComposeDeterministicInterpretation(metrics);
         if (!options.NoAgent)
         {

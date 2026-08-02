@@ -339,6 +339,9 @@ const makeTurn = (
   workingMemoryVersionUsed: 1,
   rawMessageCount: 5,
   sentMessageCount: 4,
+  durationMs: null,
+  upstreamDurationMs: null,
+  prepareDurationMs: null,
   createdAt: '2025-07-29T10:00:00Z',
   ...partial,
 });

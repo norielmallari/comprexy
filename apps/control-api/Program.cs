@@ -1,4 +1,5 @@
 using Comprexy.Application.DependencyInjection;
+using Comprexy.ControlApi.Benchmarking;
 using Comprexy.ControlApi.Configuration;
 using Comprexy.ControlApi.Endpoints;
 using Comprexy.ControlApi.Mcp;
@@ -27,6 +28,11 @@ builder.Services.AddComprexyInfrastructure(builder.Configuration);
 builder.Services.AddHttpContextAccessor();
 builder.Services.AddOptions<McpTelemetryOptions>()
     .Bind(builder.Configuration.GetSection(McpTelemetryOptions.SectionName));
+builder.Services.AddOptions<BenchOrchestrationOptions>()
+    .Bind(builder.Configuration.GetSection(BenchOrchestrationOptions.SectionName));
+builder.Services.AddSingleton<IBenchProcessRunner, DotNetBenchProcessRunner>();
+builder.Services.AddSingleton<IBenchRunOrchestrator, BenchRunOrchestrator>();
+builder.Services.AddScoped<BenchmarkPresentationService>();
 builder.Services.AddSingleton<McpToolCallAuditLogger>();
 
 var corsOrigins = builder.Configuration.GetSection("Cors:AllowedOrigins").Get<string[]>() ?? [];
@@ -68,6 +74,7 @@ app.UseMiddleware<ApiKeyAuthMiddleware>();
 
 app.MapHealthEndpoints();
 app.MapMetricsEndpoints();
+app.MapBenchmarkEndpoints();
 app.MapMcp("/mcp");
 
 var startupLogger = app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("Comprexy.ControlApi");

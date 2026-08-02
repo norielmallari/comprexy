@@ -136,6 +136,9 @@ const turns: ConversationTurnMetricDto[] = [
     workingMemoryVersionUsed: null,
     rawMessageCount: 3,
     sentMessageCount: 3,
+    durationMs: 1200,
+    upstreamDurationMs: 900,
+    prepareDurationMs: 300,
     createdAt: '2026-01-15T11:00:10.000Z',
   },
   {
@@ -160,6 +163,9 @@ const turns: ConversationTurnMetricDto[] = [
     workingMemoryVersionUsed: 1,
     rawMessageCount: 7,
     sentMessageCount: 3,
+    durationMs: 1500,
+    upstreamDurationMs: 1100,
+    prepareDurationMs: 400,
     createdAt: '2026-01-15T12:00:10.000Z',
   },
 ];
@@ -168,6 +174,8 @@ beforeEach(() => {
   vi.clearAllMocks();
   mockUseConversationUrl.mockReturnValue({
     conversationId: CONVERSATION_ID,
+    effectiveConversationId: CONVERSATION_ID,
+    isRestoringConversation: false,
     navigateToConversation: vi.fn(),
   });
   mockUseConversations.mockReturnValue(
@@ -178,6 +186,20 @@ beforeEach(() => {
 });
 
 describe('Dashboard page metric composition', () => {
+  it('shows empty state when no conversation is selected', () => {
+    mockUseConversationUrl.mockReturnValue({
+      conversationId: null,
+      effectiveConversationId: null,
+      isRestoringConversation: false,
+      navigateToConversation: vi.fn(),
+    });
+
+    render(<Home />);
+
+    expect(screen.getByTestId('metrics-empty-state')).toBeInTheDocument();
+    expect(screen.queryByTestId('metrics-grid')).not.toBeInTheDocument();
+  });
+
   it('uses a full-width 2x2 metric grid with the requested grouping', () => {
     render(<Home />);
 

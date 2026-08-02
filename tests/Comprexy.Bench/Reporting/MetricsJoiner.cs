@@ -1,3 +1,4 @@
+using Comprexy.Application.Services.Benchmarking;
 using Comprexy.Bench.Hosting;
 using Comprexy.Bench.Model;
 using Comprexy.Bench.Running;
@@ -104,11 +105,19 @@ internal static class MetricsJoiner
                 continue;
             }
 
-            var treatmentCost = treatmentMetrics.CompressedTokensEstimated + treatmentMetrics.CompressionOverheadTokens;
-            var saved = baselineMetrics.CompressedTokensEstimated - treatmentCost;
-            var ratio = baselineMetrics.CompressedTokensEstimated > 0
-                ? Math.Round((double)saved / baselineMetrics.CompressedTokensEstimated, 6)
-                : 0d;
+            var baselineChannels = BenchHeadlineChannelBuilder.FromChannels(
+                baselineMetrics.InputTokens,
+                baselineMetrics.OutputTokens,
+                baselineMetrics.CompressionOverheadTokens,
+                baselineMetrics.TurnCount);
+            var treatmentChannels = BenchHeadlineChannelBuilder.FromChannels(
+                treatmentMetrics.InputTokens,
+                treatmentMetrics.OutputTokens,
+                treatmentMetrics.CompressionOverheadTokens,
+                treatmentMetrics.TurnCount);
+
+            var saved = BenchHeadlineChannelBuilder.TokensSavedVersusBaseline(baselineChannels, treatmentChannels);
+            var ratio = BenchHeadlineChannelBuilder.TokenReductionRatio(baselineChannels, treatmentChannels);
 
             paired.Add(new BenchPairedConversation(
                 baseline.Name,
@@ -182,7 +191,8 @@ internal static class MetricsJoiner
             conversationId,
             summary.TotalTurns,
             summary.TotalBaselineTokensEstimated,
-            summary.TotalActualTokensEstimated,
+            summary.TotalCompressedPromptTokens,
+            summary.TotalCompletionTokens,
             summary.TotalNetTokensSaved,
             summary.AverageTokenSavingsRatio,
             summary.TotalCompressionOverheadTokens,
@@ -212,8 +222,10 @@ internal static class MetricsJoiner
         IReadOnlyList<BenchSurvivalConversation> survivals,
         IReadOnlyList<BenchExcludedConversation> excluded)
     {
-        var baselineTokens = paired.Sum(p => p.MafCompact.CompressedTokensEstimated);
-        var treatmentTokens = paired.Sum(p => p.Comprexy.CompressedTokensEstimated + p.Comprexy.CompressionOverheadTokens);
+        var baselineTokens = paired.Sum(p =>
+            p.MafCompact.InputTokens + p.MafCompact.OutputTokens + p.MafCompact.CompressionOverheadTokens);
+        var treatmentTokens = paired.Sum(p =>
+            p.Comprexy.InputTokens + p.Comprexy.OutputTokens + p.Comprexy.CompressionOverheadTokens);
         var saved = baselineTokens - treatmentTokens;
 
         return new BenchMetrics

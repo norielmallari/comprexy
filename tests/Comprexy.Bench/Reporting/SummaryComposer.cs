@@ -78,13 +78,12 @@ internal static class SummaryComposer
         }
         else
         {
-            builder.AppendLine("| Conversation | Prompts | Sent (maf-compact) | Sent + overhead (comprexy) | Saved | Reduction |");
-            builder.AppendLine("| --- | ---: | ---: | ---: | ---: | ---: |");
+            builder.AppendLine("| Conversation | Prompts | Input (maf) | Output (maf) | Input (cx) | Output (cx) | Overhead (cx) | Saved | Reduction |");
+            builder.AppendLine("| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |");
             foreach (var pair in metrics.Paired)
             {
-                var treatmentCost = pair.Comprexy.CompressedTokensEstimated + pair.Comprexy.CompressionOverheadTokens;
                 builder.AppendLine(
-                    $"| {pair.Name} | {pair.PromptCount} | {Format(pair.MafCompact.CompressedTokensEstimated)} | {Format(treatmentCost)} | {Format(pair.TokensSavedVersusBaseline)} | {Percent(pair.TokenReductionRatio)} |");
+                    $"| {pair.Name} | {pair.PromptCount} | {Format(pair.MafCompact.InputTokens)} | {Format(pair.MafCompact.OutputTokens)} | {Format(pair.Comprexy.InputTokens)} | {Format(pair.Comprexy.OutputTokens)} | {Format(pair.Comprexy.CompressionOverheadTokens)} | {Format(pair.TokensSavedVersusBaseline)} | {Percent(pair.TokenReductionRatio)} |");
             }
 
             builder.AppendLine();
@@ -98,7 +97,7 @@ internal static class SummaryComposer
 
             builder.AppendLine();
             builder.AppendLine(
-                $"Across {metrics.Headline.PairedConversationCount} paired conversation(s): {Format(metrics.Headline.PairedBaselineTokensEstimated)} tokens sent on `maf-compact` versus {Format(metrics.Headline.PairedComprexyTokensEstimated)} on `comprexy` including overhead — {Format(metrics.Headline.PairedTokensSaved)} tokens ({Percent(metrics.Headline.PairedTokenReductionRatio)}).");
+                $"Across {metrics.Headline.PairedConversationCount} paired conversation(s): maf-compact sent {Format(metrics.Headline.PairedBaselineTokensEstimated)} tokens (input+output+overhead) versus comprexy {Format(metrics.Headline.PairedComprexyTokensEstimated)} — {Format(metrics.Headline.PairedTokensSaved)} tokens ({Percent(metrics.Headline.PairedTokenReductionRatio)}).");
             builder.AppendLine();
 
             if (metrics.Headline.PairedMafCompactProxyTurnDurationMs is { } baselineMs &&

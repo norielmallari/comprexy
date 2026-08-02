@@ -204,6 +204,29 @@ Local MCP URL: `http://localhost:8130/mcp`. Any IDE, coding agent, or MCP client
 
 ---
 
+## BenchOrchestration
+
+Operator control-api only. Spawns `tests/Comprexy.Bench` for dashboard-started runs; CLI `./comprexy.sh bench` bypasses the active-run lock.
+
+| Key | Default | Description |
+| --- | --- | --- |
+| `Enabled` | `true` | When false, `POST /v1/comprexy/benchmarks/runs` returns 503. |
+| `AllowSpawn` | `true` | When false, orchestrator refuses to start child processes. |
+| `HarnessProjectPath` | `tests/Comprexy.Bench/Comprexy.Bench.csproj` | Project passed to `dotnet run --project`. |
+| `RunsRootRelative` | `reports/bench` | Run artifacts root relative to repo root. |
+| `LockFileName` | `.active-run.lock` | Exclusive lock file under the runs root (orchestrator-only). |
+| `DatabasePathRelative` | `data/comprexy-bench.db` | Bench SQLite path relative to repo root. |
+| `MafCompactPort` | `18129` | Baseline proxy port for spawned harness. |
+| `ComprexyPort` | `18131` | Treatment proxy port for spawned harness. |
+| `ControlApiPort` | `18130` | Bench control-api port for spawned harness. |
+| `CompletionTimeoutSeconds` | `300` | Per-completion timeout forwarded to harness. |
+| `ConversationTimeoutSeconds` | `7200` | Per-conversation wall-clock cap forwarded to harness. |
+| `RepoRoot` | (auto) | Optional repo root override when content-root walk fails. |
+
+Concurrent CLI and dashboard writers under `reports/bench/` are unsupported in v1.
+
+---
+
 ## Trace
 
 Console payload categories require `Logging:LogLevel:Comprexy` = `Trace`. `RequestFiles` writes audit files regardless of console toggles.

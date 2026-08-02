@@ -42,6 +42,7 @@ async function parseJson<T>(response: Response): Promise<T> {
     throw {
       message,
       statusCode: response.status,
+      ...(typeof errorBody === 'object' && errorBody !== null ? errorBody : {}),
     } satisfies ApiError;
   }
 

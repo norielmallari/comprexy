@@ -29,6 +29,8 @@ public static class ServiceCollectionExtensions
 
         services.AddSingleton<IEvidenceMarkdownService, EvidenceMarkdownService>();
         services.AddSingleton<IRegressionDetector, RegressionDetector>();
+        services.AddSingleton<IBenchmarkTotalsCalculator, BenchmarkTotalsCalculator>();
+        services.AddSingleton<IBenchmarkCostCalculator, BenchmarkCostCalculator>();
         services.AddScoped<PromptTokenBasisContext>();
         services.AddScoped<IConversationMetricsQueryService, ConversationMetricsQueryService>();
         services.AddScoped<IConversationRetrievalQueryService, ConversationRetrievalQueryService>();

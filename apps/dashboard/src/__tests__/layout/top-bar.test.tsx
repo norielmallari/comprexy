@@ -17,6 +17,14 @@ vi.mock('@/hooks/use-conversation-url', () => ({
   useConversationUrl: vi.fn(),
 }));
 
+import { usePathname } from 'next/navigation';
+
+vi.mock('next/navigation', () => ({
+  usePathname: vi.fn(() => '/'),
+}));
+
+const mockUsePathname = usePathname as MockedFunction<typeof usePathname>;
+
 vi.mock('@/lib/constants', () => ({
   API_BASE_URL: 'http://localhost:8130',
 }));
@@ -27,10 +35,16 @@ const mockUseConversationUrl = useConversationUrl as MockedFunction<typeof useCo
 
 const defaultThemeMock = { theme: 'light' as const, toggleTheme: vi.fn() };
 const defaultConversationsMock = { data: [], isLoading: false, isSuccess: true } as unknown as ReturnType<typeof useConversations>;
-const defaultUrlMock = { conversationId: null, navigateToConversation: vi.fn() };
+const defaultUrlMock = {
+  conversationId: null,
+  effectiveConversationId: null,
+  isRestoringConversation: false,
+  navigateToConversation: vi.fn(),
+};
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mockUsePathname.mockReturnValue('/');
   mockUseTheme.mockReturnValue(defaultThemeMock);
   mockUseConversations.mockReturnValue(defaultConversationsMock);
   mockUseConversationUrl.mockReturnValue(defaultUrlMock);
@@ -62,8 +76,9 @@ describe('TopBar', () => {
 
   it('renders with mocked useConversationUrl hook', () => {
     mockUseConversationUrl.mockReturnValue({
+      ...defaultUrlMock,
       conversationId: 'abc12345',
-      navigateToConversation: vi.fn(),
+      effectiveConversationId: 'abc12345',
     });
 
     render(<TopBar />);
@@ -118,7 +133,7 @@ describe('TopBar', () => {
   it('calls navigateToConversation when option selected', async () => {
     const navigateMock = vi.fn();
     mockUseConversationUrl.mockReturnValue({
-      conversationId: null,
+      ...defaultUrlMock,
       navigateToConversation: navigateMock,
     });
 
@@ -138,7 +153,9 @@ describe('TopBar', () => {
   it('calls navigateToConversation with empty string when none selected', async () => {
     const navigateMock = vi.fn();
     mockUseConversationUrl.mockReturnValue({
+      ...defaultUrlMock,
       conversationId: 'conv-001',
+      effectiveConversationId: 'conv-001',
       navigateToConversation: navigateMock,
     });
 
@@ -152,14 +169,12 @@ describe('TopBar', () => {
     const select = screen.getByRole('combobox');
     fireEvent.change(select, { target: { value: 'none' } });
 
-    // handleConversationChange: Select's 'none' value normalizes to '' in jsdom
-    // since 'none' isn't in the options list, so navigateToConversation('') is called
-    expect(navigateMock).toHaveBeenCalledWith('');
+    expect(navigateMock).toHaveBeenCalledWith(null);
   });
 
   it('handles empty conversations list', () => {
     mockUseConversations.mockReturnValue({ data: [], isLoading: false, isSuccess: true } as unknown as ReturnType<typeof useConversations>);
-    mockUseConversationUrl.mockReturnValue({ conversationId: null, navigateToConversation: vi.fn() });
+    mockUseConversationUrl.mockReturnValue(defaultUrlMock);
 
     render(<TopBar />);
     expect(screen.getByText('Select conversation')).toBeInTheDocument();
@@ -193,8 +208,9 @@ describe('TopBar', () => {
 
   it('renders badge when conversationId is present', () => {
     mockUseConversationUrl.mockReturnValue({
+      ...defaultUrlMock,
       conversationId: 'abc12345',
-      navigateToConversation: vi.fn(),
+      effectiveConversationId: 'abc12345',
     });
 
     render(<TopBar />);
@@ -204,8 +220,9 @@ describe('TopBar', () => {
 
   it('does not render badge when conversationId is null', () => {
     mockUseConversationUrl.mockReturnValue({
+      ...defaultUrlMock,
       conversationId: null,
-      navigateToConversation: vi.fn(),
+      effectiveConversationId: null,
     });
 
     render(<TopBar />);
@@ -219,5 +236,66 @@ describe('TopBar', () => {
     await waitFor(() => {
       expect(screen.getByText('Connected')).toBeInTheDocument();
     });
+  });
+
+  it('shows Comprexy Benchmark title on /benchmark', () => {
+    mockUsePathname.mockReturnValue('/benchmark');
+    render(<TopBar />);
+    expect(screen.getByText('Comprexy Benchmark')).toBeInTheDocument();
+  });
+
+  it('hides conversation selector on /benchmark', () => {
+    mockUsePathname.mockReturnValue('/benchmark');
+    render(<TopBar />);
+    expect(screen.queryByText('Conversation:')).not.toBeInTheDocument();
+    expect(screen.queryByRole('combobox')).not.toBeInTheDocument();
+  });
+
+  it('highlights Benchmark nav link on /benchmark', () => {
+    mockUsePathname.mockReturnValue('/benchmark');
+    render(<TopBar />);
+    const benchmarkLink = screen.getByTestId('nav-benchmark');
+    expect(benchmarkLink.className).toMatch(/bg-primary/);
+  });
+
+  it('highlights Metrics nav link on home page', () => {
+    mockUsePathname.mockReturnValue('/');
+    render(<TopBar />);
+    const metricsLink = screen.getByTestId('nav-metrics');
+    expect(metricsLink.className).toMatch(/bg-primary/);
+  });
+
+  it('preserves conversation query param in nav links', () => {
+    const conversationId = '00000000-0000-4000-8000-000000000099';
+    mockUseConversationUrl.mockReturnValue({
+      ...defaultUrlMock,
+      conversationId,
+      effectiveConversationId: conversationId,
+    });
+
+    render(<TopBar />);
+
+    expect(screen.getByTestId('nav-metrics')).toHaveAttribute(
+      'href',
+      `/?conv=${encodeURIComponent(conversationId)}`,
+    );
+    expect(screen.getByTestId('nav-benchmark')).toHaveAttribute(
+      'href',
+      `/benchmark?conv=${encodeURIComponent(conversationId)}`,
+    );
+  });
+
+  it('shows Select conversation when none is chosen', () => {
+    mockUseConversationUrl.mockReturnValue(defaultUrlMock);
+    mockUseConversations.mockReturnValue({
+      data: [{ conversationId: 'bf9b54f4-0000-4000-8000-000000000001' }],
+      isLoading: false,
+    } as any);
+
+    render(<TopBar />);
+
+    const select = screen.getByRole('combobox') as HTMLSelectElement;
+    expect(select.value).toBe('none');
+    expect(screen.getByRole('option', { name: 'Select conversation' })).toBeInTheDocument();
   });
 });
