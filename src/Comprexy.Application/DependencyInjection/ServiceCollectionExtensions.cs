@@ -2,6 +2,7 @@ using Comprexy.Application.Abstractions;
 using Comprexy.Application.Configuration;
 using Comprexy.Application.Services;
 using Comprexy.Application.Services.CacheAlignment;
+using Comprexy.Application.Services.ChatTurn;
 using Comprexy.Application.Services.ToolIr;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -92,6 +93,12 @@ public static class ServiceCollectionExtensions
         services.AddScoped<ToolSchemaOrchestrator>();
         services.AddSingleton<ProviderEndpointResolver>();
         services.AddScoped<IConversationMetricsRecorder, ConversationMetricsRecorder>();
+        services.AddScoped<ChatTurnMessageHelper>();
+        services.AddScoped<ClientHistorySynchronizer>();
+        services.AddScoped<OutgoingContextMaterializer>();
+        services.AddScoped<InlineWrapUpRunner>();
+        services.AddScoped<ChatTurnPreparer>();
+        services.AddScoped<ChatTurnCompleter>();
         services.AddScoped<ProxyChatCompletionService>();
 
         var learnerEnabled = configuration

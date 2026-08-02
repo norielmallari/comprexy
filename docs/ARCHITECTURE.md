@@ -68,7 +68,7 @@ flowchart TB
 
 ## Chat request lifecycle
 
-`ProxyChatCompletionService` owns one turn end to end.
+`ProxyChatCompletionService` owns one turn end to end (exclusive gate lease, chat `IUnitOfWork` flushes). Prepare/complete logic lives in `Services/ChatTurn/` collaborators (`ChatTurnPreparer`, `ChatTurnCompleter`, `InlineWrapUpRunner`, `OutgoingContextMaterializer`, `ClientHistorySynchronizer`); they stage repository mutations and named early flushes execute only through the façade-owned chat unit flush.
 
 1. **Identity** — `ConversationIdentityResolver`: prefer `X-Comprexy-Conversation-Id`; else fingerprint system + first two **plain** user turns (Cursor `<user_query>` extraction / metadata strip; skip Kilo/Cursor tool-echo user turns such as `Called the … tool with the following input:`).
 2. **Gate** — exclusive lease on the conversation key via `ConversationRequestGate` (serializes chat + Inline wrap-up for that key).
@@ -138,7 +138,7 @@ Repositories stage changes on the request-scoped `ComprexyDbContext`. Only these
 
 | Owner | Role |
 | --- | --- |
-| `ProxyChatCompletionService` | Chat path: complete; Inline two-phase; CatalogMutated; snapshot rewind; inbound distill commit |
+| `ProxyChatCompletionService` | Chat path: complete; Inline two-phase; CatalogMutated; snapshot rewind; inbound distill commit. ChatTurn collaborators stage changes; only the façade invokes `SaveChangesAsync` on the request-scoped chat unit. |
 
 **Dual-id maps** (`ConversationToolCallMap`) use a short-lived context from `IToolIrCallIdMapUnitOfWorkFactory` so register-before-emit does not flush unrelated chat aggregates.
 
@@ -234,11 +234,11 @@ Loaded as: `appsettings.json` → environment-specific → host defaults → opt
 | Metrics dashboard UI | `apps/dashboard` (Next.js; consumes control-api REST) |
 | Telemetry MCP tools/resources | `apps/control-api` `Mcp/` (`ConversationTools`, `ConversationRetrievalTools`, `ConversationResources`, `ConversationRetrievalResources`) |
 | Shared API-key middleware | `Infrastructure/Hosting/ApiKeyAuthMiddleware` |
-| Turn prepare/complete, soft budget, Inline wrap-up, Virtual Tools rewrite | `ProxyChatCompletionService`, `ToolSchemaOrchestrator`, `ToolIr*` helpers |
-| Fold / WM versions / Inline prompts | `ProxyChatCompletionService`, `CompressionPromptFactory`, `RecentContextSelector` |
+| Turn prepare/complete, soft budget, Inline wrap-up, Virtual Tools rewrite | `ProxyChatCompletionService` (façade), `ChatTurnPreparer`, `ChatTurnCompleter`, `InlineWrapUpRunner`, `ToolSchemaOrchestrator`, `ToolIr*` helpers |
+| Fold / WM versions / Inline prompts | `InlineWrapUpRunner`, `CompressionPromptFactory`, `RecentContextSelector` |
 | Token metrics / conversation proof totals | `ConversationTurnMetric`, `ConversationMetricsSummary`, `ConversationMetricsRecorder`, `IConversationMetricsQueryService`, control-api REST + MCP |
 | Conversation message / WM retrieval (MCP RAG) | `IConversationRetrievalQueryService`, `ConversationMessage` / `WorkingMemory` repos, control-api retrieval MCP tools |
-| Outgoing message assembly | `ICacheAlignmentService` (wrap-up-ready Prefix when enabled), `ContextBuilder`, `RecentContextSelector` |
+| Outgoing message assembly | `ICacheAlignmentService` (wrap-up-ready Prefix when enabled), `OutgoingContextMaterializer`, `ContextBuilder`, `RecentContextSelector` |
 | Identity / fingerprint | `ConversationIdentityResolver` |
 | Schema / keys / indexes | `EntityBase`, EF configs under `Infrastructure/Persistence` (migrations via `dotnet ef` only) |
 | Upstream HTTP / SSE parse | `OpenAiCompatibleChatCompletionClient`, streaming helpers |

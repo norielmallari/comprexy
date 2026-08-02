@@ -4,6 +4,7 @@ using Comprexy.Application.Configuration;
 using Comprexy.Application.Models;
 using Comprexy.Application.Services;
 using Comprexy.Application.Services.CacheAlignment;
+using Comprexy.Application.Services.ChatTurn;
 using Comprexy.Application.Services.ToolIr;
 using Comprexy.Domain.Entities;
 using Comprexy.Domain.Enums;
@@ -124,51 +125,102 @@ public class ProxyChatCompletionServiceTests
         ICacheAlignmentService alignment = cacheAlignment
             ?? new CacheAlignmentService(Options.Create(_cacheAlignmentOptions));
 
-        return new ProxyChatCompletionService(
-            new ConversationIdentityResolver(),
-            requestGate ?? new ConversationRequestGate(),
+        var contextBuilder = new ContextBuilder();
+        var metrics = metricsRecorder ?? Mock.Of<IConversationMetricsRecorder>(m => m.IsEnabled == false);
+        var toolSchemaOrchestrator = new ToolSchemaOrchestrator(
+            toolSchemaOptions,
+            new ToolCatalogParser(),
+            new ToolArgumentValidator(),
+            new ToolIrSchemaMapper(
+                toolSchemaOptions,
+                Options.Create(_compressionOptions),
+                endpointResolver,
+                _chatCompletionClient.Object,
+                _tokenEstimator.Object,
+                metrics,
+                NullLogger<ToolIrSchemaMapper>.Instance),
+            new ToolIrPlanner(toolSchemaOptions, fileCache),
+            ToolIrTestFactory.CreateDistiller(toolSchemaOptions, fileCache),
+            callIdMapService,
+            _toolCatalogRepository.Object,
+            _toolDefinitionRepository.Object,
+            _chatCompletionClient.Object,
+            _clock.Object,
+            ToolIrTestFactory.CreateShapeStore(_toolSchemaOptions),
+            NullLogger<ToolSchemaOrchestrator>.Instance);
+        var messageHelper = new ChatTurnMessageHelper(_messageRepository.Object, _tokenEstimator.Object);
+        var historySynchronizer = new ClientHistorySynchronizer(
+            _messageRepository.Object,
+            _workingMemoryRepository.Object,
+            toolSchemaOrchestrator,
+            alignment,
+            _tokenEstimator.Object,
+            Options.Create(_proxyOptions),
+            Options.Create(_cacheAlignmentOptions),
+            NullLogger<ClientHistorySynchronizer>.Instance);
+        var contextMaterializer = new OutgoingContextMaterializer(
+            contextBuilder,
+            alignment,
+            Options.Create(_policy),
+            Options.Create(_cacheAlignmentOptions),
+            NullLogger<OutgoingContextMaterializer>.Instance);
+        var inlineWrapUpRunner = new InlineWrapUpRunner(
+            _messageRepository.Object,
+            _workingMemoryRepository.Object,
+            _compressionEventRepository.Object,
+            PromptFactory,
+            _chatCompletionClient.Object,
+            _tokenEstimator.Object,
+            contextBuilder,
+            alignment,
+            new RecentContextSelector(Options.Create(_policy)),
+            metrics,
+            _clock.Object,
+            Options.Create(_cacheAlignmentOptions),
+            NullLogger<InlineWrapUpRunner>.Instance);
+        var preparer = new ChatTurnPreparer(
             _conversationRepository.Object,
             _messageRepository.Object,
             _workingMemoryRepository.Object,
+            _compressionEventRepository.Object,
             _tokenEstimator.Object,
-            new ContextBuilder(),
+            contextBuilder,
             alignment,
             new ContextBudgetEvaluator(Options.Create(_policy)),
-            new RecentContextSelector(Options.Create(_policy)),
-            endpointResolver,
-            _chatCompletionClient.Object,
-            _compressionEventRepository.Object,
             PromptFactory,
-            new ToolSchemaOrchestrator(
-                toolSchemaOptions,
-                new ToolCatalogParser(),
-                new ToolArgumentValidator(),
-                new ToolIrSchemaMapper(
-                    toolSchemaOptions,
-                    Options.Create(_compressionOptions),
-                    endpointResolver,
-                    _chatCompletionClient.Object,
-                    _tokenEstimator.Object,
-                    metricsRecorder ?? Mock.Of<IConversationMetricsRecorder>(m => m.IsEnabled == false),
-                    NullLogger<ToolIrSchemaMapper>.Instance),
-                new ToolIrPlanner(toolSchemaOptions, fileCache),
-                ToolIrTestFactory.CreateDistiller(toolSchemaOptions, fileCache),
-                callIdMapService,
-                _toolCatalogRepository.Object,
-                _toolDefinitionRepository.Object,
-                _chatCompletionClient.Object,
-                _clock.Object,
-                ToolIrTestFactory.CreateShapeStore(_toolSchemaOptions),
-                NullLogger<ToolSchemaOrchestrator>.Instance),
-            metricsRecorder ?? Mock.Of<IConversationMetricsRecorder>(m => m.IsEnabled == false),
-            _unitOfWork.Object,
+            toolSchemaOrchestrator,
+            historySynchronizer,
+            contextMaterializer,
+            messageHelper,
+            endpointResolver,
+            metrics,
             _clock.Object,
             Options.Create(_policy),
             Options.Create(_proxyOptions),
             Options.Create(_cacheAlignmentOptions),
-            _hostLifetime.Object,
             Mock.Of<IPayloadTraceLogger>(),
             Mock.Of<IRequestTraceFileSession>(),
+            NullLogger<ChatTurnPreparer>.Instance);
+        var completer = new ChatTurnCompleter(
+            _messageRepository.Object,
+            toolSchemaOrchestrator,
+            metrics,
+            inlineWrapUpRunner,
+            messageHelper,
+            _tokenEstimator.Object,
+            _clock.Object,
+            Options.Create(_policy),
+            NullLogger<ChatTurnCompleter>.Instance);
+
+        return new ProxyChatCompletionService(
+            new ConversationIdentityResolver(),
+            requestGate ?? new ConversationRequestGate(),
+            _chatCompletionClient.Object,
+            toolSchemaOrchestrator,
+            preparer,
+            completer,
+            _unitOfWork.Object,
+            _hostLifetime.Object,
             NullLogger<ProxyChatCompletionService>.Instance);
     }
 
