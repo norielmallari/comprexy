@@ -1,0 +1,17 @@
+{
+  "systemPrompt": "You are a coding agent doing design work in the Comprexy repository, a C#/.NET context-compressing proxy. Ground every claim in a file you actually read. Write plans as prose and short tables, not as bullet soup, and do not start implementing until you are asked.",
+  "prompts": [
+    "Read docs/ARCHITECTURE.md, src/Comprexy.Application/Services/ProxyChatCompletionService.cs, and src/Comprexy.Application/Services/ContextBudgetEvaluator.cs, then describe the current design in your own words: where a turn is assembled, where the budget decision is made, and where anything is persisted.",
+    "The next feature is a per-conversation token budget forecast: before forwarding a turn, estimate how many turns remain before the soft limit is reached, and expose it on the metrics API. Before planning, tell me every place in the current code that already has the numbers this would need.",
+    "Draft the plan. Cover where the forecast is computed, what it is computed from, how it reaches the control API, and what happens on a conversation with too little history to forecast anything.",
+    "Critique your own plan. What is its weakest assumption, and what would you need to know about real traffic to firm it up?",
+    "Read src/Comprexy.Application/Services/ConversationMetricsQueryService.cs and apps/control-api/Endpoints/MetricsEndpoints.cs, then revise the plan's API section so it matches how metrics are actually exposed today.",
+    "Write docs/plans/budget-forecast.md with the plan, phased so that each phase leaves the proxy working. Do not change any production code.",
+    "Read the plan file back and check it against the code once more. Correct anything that is now wrong, and say what you corrected.",
+    "Second request: surface the forecast on the dashboard. Read apps/dashboard/src/app/page.tsx and one metric card component, then tell me whether this belongs as a new card or as a field on an existing one, and why.",
+    "Sketch that UI change in docs/plans/budget-forecast-ui.md, including which existing component you would follow as the pattern and what the loading and empty states should be.",
+    "The two plans overlap on the metrics contract. Describe the ordering constraint between them and update both files so that ordering is written down.",
+    "Suppose only one of the two can ship this week. Which one, and what is the argument you would give a reviewer who wants the other?",
+    "Give me a consolidated summary: both plans, the ordering, what you verified in the code, and the open questions that still need a human decision."
+  ]
+}

@@ -12,5 +12,6 @@
   <Folder Name="/tests/">
     <Project Path="tests/Comprexy.Application.Tests/Comprexy.Application.Tests.csproj" />
     <Project Path="tests/Comprexy.ControlApi.Tests/Comprexy.ControlApi.Tests.csproj" />
+    <Project Path="tests/Comprexy.Bench/Comprexy.Bench.csproj" />
   </Folder>
 </Solution>

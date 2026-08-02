@@ -196,7 +196,8 @@ public sealed class CacheAlignmentService : ICacheAlignmentService
         var suffixMessages = ResolveSuffix(entry.SuffixMessageIds, messagesById);
         var (safeSuffix, _) = ChatTemplateMessageOrder.RemoveOrphanToolMessages(suffixMessages);
 
-        if (mode == CacheAlignmentWrapUpMode.StopTurn && ToolCallChainState.Assess(safeSuffix).IsOpen)
+        var suffixAssessment = ToolCallChainState.Assess(safeSuffix);
+        if (mode == CacheAlignmentWrapUpMode.StopTurn && suffixAssessment.IsOpen)
         {
             return new CacheAlignmentWrapUpProjection(
                 Array.Empty<ChatMessage>(),
@@ -204,10 +205,31 @@ public sealed class CacheAlignmentService : ICacheAlignmentService
                 SoftFailReason: "suffix_open");
         }
 
-        // Prefer live upstream bytes for live→wrap-up KV continuity (includes ephemeral omit projection).
-        // Fall back to Prefix ⊕ resolved Suffix when live messages are not supplied.
         IReadOnlyList<ChatMessage> baseMessages;
-        if (liveMessages is { Count: > 0 })
+        if (mode == CacheAlignmentWrapUpMode.MidChainPrefix && suffixAssessment.IsOpen)
+        {
+            if (!WrapUpReadiness.TryEnsureWrapUpReady(
+                    safeSuffix,
+                    out var closedSuffix,
+                    out _))
+            {
+                return new CacheAlignmentWrapUpProjection(
+                    Array.Empty<ChatMessage>(),
+                    SoftFailed: true,
+                    SoftFailReason: "suffix_open_unrepairable");
+            }
+
+            var rebuilt = new List<ChatMessage>(entry.Prefix.Count + closedSuffix.Count);
+            rebuilt.AddRange(entry.Prefix);
+            foreach (var message in closedSuffix.OrderBy(m => m.Sequence))
+            {
+                rebuilt.Add(ConversationMessageMapper.ToChatMessage(message));
+            }
+
+            baseMessages = rebuilt;
+        }
+        // Prefer live upstream bytes for closed live→wrap-up KV continuity (includes ephemeral omit).
+        else if (liveMessages is { Count: > 0 })
         {
             baseMessages = liveMessages;
         }

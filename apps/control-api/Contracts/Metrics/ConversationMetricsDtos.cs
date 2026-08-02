@@ -99,6 +99,16 @@ public sealed class ConversationTurnMetricDto
 
     public int SentMessageCount { get; init; }
 
+    /// <summary>
+    /// Proxy turn wall clock (prepare + upstream + persist), excluding Inline wrap-up.
+    /// Null on turns recorded before timing capture existed.
+    /// </summary>
+    public int? DurationMs { get; init; }
+
+    public int? UpstreamDurationMs { get; init; }
+
+    public int? PrepareDurationMs { get; init; }
+
     public DateTimeOffset CreatedAt { get; init; }
 }
 
@@ -162,6 +172,9 @@ public static class ConversationMetricsMapper
             WorkingMemoryVersionUsed = turn.WorkingMemoryVersionUsed,
             RawMessageCount = turn.RawMessageCount,
             SentMessageCount = turn.SentMessageCount,
+            DurationMs = turn.DurationMs,
+            UpstreamDurationMs = turn.UpstreamDurationMs,
+            PrepareDurationMs = turn.PrepareDurationMs,
             CreatedAt = turn.CreatedAt
         };
 }

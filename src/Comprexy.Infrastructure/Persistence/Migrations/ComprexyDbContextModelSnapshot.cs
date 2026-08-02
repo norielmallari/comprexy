@@ -419,6 +419,9 @@ namespace Comprexy.Infrastructure.Persistence.Migrations
                     b.Property<long>("CreatedAt")
                         .HasColumnType("INTEGER");
 
+                    b.Property<int?>("DurationMs")
+                        .HasColumnType("INTEGER");
+
                     b.Property<bool>("HardBudgetExceeded")
                         .HasColumnType("INTEGER");
 
@@ -431,6 +434,9 @@ namespace Comprexy.Infrastructure.Persistence.Migrations
                         .HasColumnType("REAL");
 
                     b.Property<int>("NetTokensSaved")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int?>("PrepareDurationMs")
                         .HasColumnType("INTEGER");
 
                     b.Property<int>("RawInputTokensEstimated")
@@ -462,6 +468,9 @@ namespace Comprexy.Infrastructure.Persistence.Migrations
                         .HasColumnType("INTEGER");
 
                     b.Property<int>("TurnIndex")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int?>("UpstreamDurationMs")
                         .HasColumnType("INTEGER");
 
                     b.Property<int?>("WorkingMemoryVersionUsed")

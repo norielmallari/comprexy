@@ -48,6 +48,23 @@ public class ConversationTurnMetric : EntityBase
 
     public string SentPayloadHash { get; private set; } = string.Empty;
 
+    /// <summary>
+    /// Proxy turn wall clock from accept through the metric write (prepare + upstream + persist).
+    /// Excludes Inline wrap-up, which is timed separately on <c>CompressionEvent.DurationMs</c>.
+    /// Null on rows written before turn timing was captured.
+    /// </summary>
+    public int? DurationMs { get; private set; }
+
+    /// <summary>
+    /// Time blocked on the provider HTTP call (including SSE forwarding on streaming turns).
+    /// </summary>
+    public int? UpstreamDurationMs { get; private set; }
+
+    /// <summary>
+    /// Prepare-path work before the upstream call: rebuild, ToolSchema, budget evaluation.
+    /// </summary>
+    public int? PrepareDurationMs { get; private set; }
+
     public DateTimeOffset CreatedAt { get; private set; }
 
     private ConversationTurnMetric()
@@ -71,6 +88,9 @@ public class ConversationTurnMetric : EntityBase
         int sentMessageCount,
         string requestHash,
         string sentPayloadHash,
+        int? durationMs,
+        int? upstreamDurationMs,
+        int? prepareDurationMs,
         DateTimeOffset createdAt)
     {
         // Like-for-like: both sides are tiktoken estimates. Mixing provider usage.prompt_tokens
@@ -105,6 +125,9 @@ public class ConversationTurnMetric : EntityBase
             SentMessageCount = sentMessageCount,
             RequestHash = requestHash,
             SentPayloadHash = sentPayloadHash,
+            DurationMs = durationMs,
+            UpstreamDurationMs = upstreamDurationMs,
+            PrepareDurationMs = prepareDurationMs,
             CreatedAt = createdAt
         };
     }

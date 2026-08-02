@@ -40,6 +40,7 @@ Commands:
   test [args...]        Run solution tests
   build [args...]       Build the solution
   clear-db              Rebuild SQLite from migrations (proxy --clear-db)
+  bench [args...]       Compression benchmark harness (run | report | publish)
   install-dotnet        Install .NET 10 SDK into %USERPROFILE%\.dotnet (official script)
   help                  Show this help
 
@@ -52,6 +53,8 @@ Examples:
   .\comprexy.cmd dev
   .\comprexy.cmd test
   .\comprexy.cmd clear-db
+  .\comprexy.cmd bench run
+  .\comprexy.cmd bench report --run-id <runId>
   .\comprexy.cmd install-dotnet
 "@
 }
@@ -241,6 +244,12 @@ function Invoke-ClearDb {
     exit $LASTEXITCODE
 }
 
+function Invoke-Bench {
+    Require-Dotnet
+    & dotnet run --project "tests/Comprexy.Bench/Comprexy.Bench.csproj" -- @CommandArgs
+    exit $LASTEXITCODE
+}
+
 switch -Regex ($Command) {
     '^(proxy)$' {
         Invoke-Proxy
@@ -259,6 +268,9 @@ switch -Regex ($Command) {
     }
     '^(clear-db)$' {
         Invoke-ClearDb
+    }
+    '^(bench)$' {
+        Invoke-Bench
     }
     '^(install-dotnet)$' {
         Install-DotnetSdk

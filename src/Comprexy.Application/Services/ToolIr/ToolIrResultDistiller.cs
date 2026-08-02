@@ -11,6 +11,8 @@ namespace Comprexy.Application.Services.ToolIr;
 /// </summary>
 public class ToolIrResultDistiller
 {
+    private const int MaxJsonStringUnwrapDepth = 2;
+
     private readonly ToolSchemaOptions _options;
     private readonly ToolIrFileBodyCache _fileCache;
 
@@ -38,19 +40,27 @@ public class ToolIrResultDistiller
             ToolSchemaConstants.FileSearchToolName => DistillFileSearch(mapping, nativeContent),
             ToolSchemaConstants.DirListToolName => DistillDirList(mapping, nativeContent),
             ToolSchemaConstants.ShellToolName => DistillShell(mapping, nativeContent),
-            _ => JsonSerializer.Serialize(new
-            {
-                type = "passthrough",
-                tool = mapping.ComprexyToolName,
-                content = Truncate(nativeContent, 4000)
-            })
+            _ => DistillPassthrough(mapping, nativeContent)
         };
+    }
+
+    private static string DistillPassthrough(ToolIrCallMapping mapping, string nativeContent)
+    {
+        var content = Truncate(UnwrapJsonEncodedText(nativeContent), 4000, out var truncated);
+        return JsonSerializer.Serialize(new
+        {
+            type = "passthrough",
+            tool = mapping.ComprexyToolName,
+            truncated,
+            content
+        });
     }
 
     private string DistillShell(ToolIrCallMapping mapping, string nativeContent)
     {
-        var truncatedContent = Truncate(nativeContent, _options.MaxShellObservationChars);
-        var truncated = !string.Equals(truncatedContent, nativeContent, StringComparison.Ordinal);
+        var content = UnwrapJsonEncodedText(nativeContent);
+        var truncatedContent = Truncate(content, _options.MaxShellObservationChars);
+        var truncated = !string.Equals(truncatedContent, content, StringComparison.Ordinal);
         return JsonSerializer.Serialize(new
         {
             type = "shell",
@@ -167,15 +177,16 @@ public class ToolIrResultDistiller
 
     private string DistillFileSearch(ToolIrCallMapping mapping, string nativeContent)
     {
-        var matches = ExtractSearchMatches(nativeContent, _options.MaxSearchMatches, out var truncated);
+        var result = ExtractSearchMatches(nativeContent, _options.MaxSearchMatches);
         return JsonSerializer.Serialize(new
         {
             type = "file_search",
             query = TryReadArg(mapping.IrArgumentsJson, "query"),
             path = mapping.Path,
-            truncated,
-            match_count = matches.Count,
-            matches
+            truncated = result.Truncated,
+            match_count = result.Matches.Count,
+            total_match_count = result.TotalCount,
+            matches = result.Matches
         });
     }
 
@@ -199,6 +210,7 @@ public class ToolIrResultDistiller
             return new ExtractedFileBody(string.Empty, null, false);
         }
 
+        nativeContent = UnwrapJsonEncodedText(nativeContent);
         var trimmed = nativeContent.TrimStart();
         if (trimmed.StartsWith('{') || trimmed.StartsWith('['))
         {
@@ -229,6 +241,47 @@ public class ToolIrResultDistiller
         }
 
         return StripReadLinePrefixes(nativeContent);
+    }
+
+    /// <summary>
+    /// Decodes a native tool result delivered as a JSON-encoded string (a bare JSON string literal),
+    /// so downstream parsing sees real newlines instead of <c>\n</c> escapes. Unwraps at most
+    /// <see cref="MaxJsonStringUnwrapDepth"/> levels and only when the trimmed payload both starts and
+    /// ends with a quote; anything else is returned unchanged. A payload still encoded after the bound
+    /// is passed through intact — the search, shell, and passthrough envelopes report any resulting cut
+    /// via their <c>truncated</c> flag rather than dropping content silently.
+    /// Trade-off: a result that is legitimately a bare JSON string literal (e.g. a file whose entire
+    /// content is <c>"hello"</c>) loses its outer quotes. That shape is indistinguishable from a
+    /// double-encoded result, and only quoting/escaping is affected.
+    /// </summary>
+    private static string UnwrapJsonEncodedText(string nativeContent)
+    {
+        var current = nativeContent;
+        for (var depth = 0; depth < MaxJsonStringUnwrapDepth; depth++)
+        {
+            var candidate = current.Trim();
+            if (candidate.Length < 2 || candidate[0] != '"' || candidate[^1] != '"')
+            {
+                return current;
+            }
+
+            try
+            {
+                using var document = JsonDocument.Parse(candidate);
+                if (document.RootElement.ValueKind != JsonValueKind.String)
+                {
+                    return current;
+                }
+
+                current = document.RootElement.GetString() ?? string.Empty;
+            }
+            catch (JsonException)
+            {
+                return current;
+            }
+        }
+
+        return current;
     }
 
     /// <summary>
@@ -399,10 +452,15 @@ public class ToolIrResultDistiller
 
     internal readonly record struct ExtractedFileBody(string Body, int? FirstLineNumber, bool HadLinePrefixes);
 
-    private static List<object> ExtractSearchMatches(string nativeContent, int max, out bool truncated)
+    private readonly record struct SearchMatchResult(List<object> Matches, int TotalCount, bool Truncated);
+
+    private static SearchMatchResult ExtractSearchMatches(string nativeContent, int max)
     {
-        truncated = false;
+        nativeContent = UnwrapJsonEncodedText(nativeContent);
         var matches = new List<object>();
+        var total = 0;
+        var capDropped = false;
+        var previewCut = false;
         try
         {
             using var document = JsonDocument.Parse(nativeContent);
@@ -410,23 +468,27 @@ public class ToolIrResultDistiller
             {
                 foreach (var element in elements)
                 {
+                    total++;
                     if (matches.Count >= max)
                     {
-                        truncated = true;
-                        break;
+                        capDropped = true;
+                        continue;
                     }
 
+                    var preview = Truncate(
+                        TryGetString(element, "preview", "content", "text", "snippet") ?? element.GetRawText(),
+                        200,
+                        out var cut);
+                    previewCut |= cut;
                     matches.Add(new
                     {
                         path = TryGetString(element, "path", "file", "filename") ?? string.Empty,
                         line = TryGetInt(element, "line", "line_number", "lineNumber") ?? 0,
-                        preview = Truncate(
-                            TryGetString(element, "preview", "content", "text", "snippet") ?? element.GetRawText(),
-                            200)
+                        preview
                     });
                 }
 
-                return matches;
+                return new SearchMatchResult(matches, total, capDropped || previewCut);
             }
         }
         catch (JsonException)
@@ -434,27 +496,98 @@ public class ToolIrResultDistiller
             // plain text fallback
         }
 
-        foreach (var line in nativeContent.Split('\n'))
+        var normalized = nativeContent.Replace("\r\n", "\n", StringComparison.Ordinal);
+        foreach (var rawLine in normalized.Split('\n'))
         {
-            if (matches.Count >= max)
-            {
-                truncated = true;
-                break;
-            }
-
-            if (string.IsNullOrWhiteSpace(line))
+            if (string.IsNullOrWhiteSpace(rawLine))
             {
                 continue;
             }
 
-            matches.Add(new { path = "", line = 0, preview = Truncate(line.TrimEnd(), 200) });
+            total++;
+            if (matches.Count >= max)
+            {
+                capDropped = true;
+                continue;
+            }
+
+            var line = rawLine.TrimEnd();
+            if (TryParsePathLinePrefix(line, out var path, out var lineNumber, out var text))
+            {
+                var preview = Truncate(text, 200, out var cut);
+                previewCut |= cut;
+                matches.Add(new { path, line = lineNumber, preview });
+                continue;
+            }
+
+            var fallbackPreview = Truncate(line, 200, out var fallbackCut);
+            previewCut |= fallbackCut;
+            matches.Add(new { path = "", line = 0, preview = fallbackPreview });
         }
 
-        return matches;
+        return new SearchMatchResult(matches, total, capDropped || previewCut);
+    }
+
+    /// <summary>
+    /// Parses a grep-family search line (<c>path:line: text</c> or <c>path:line:text</c>) into its parts.
+    /// Returns false for any line that does not carry a <c>:digits:</c> separator, so the caller can
+    /// emit it as a preview-only match rather than dropping it.
+    /// </summary>
+    private static bool TryParsePathLinePrefix(string line, out string path, out int lineNumber, out string text)
+    {
+        path = string.Empty;
+        lineNumber = 0;
+        text = string.Empty;
+
+        // Skip a Windows drive-letter colon so "C:/ws/a.cs:12: x" separates on the line colon.
+        var scanStart = line.Length >= 3 &&
+                        char.IsAsciiLetter(line[0]) &&
+                        line[1] == ':' &&
+                        (line[2] == '/' || line[2] == '\\')
+            ? 2
+            : 0;
+
+        for (var c = scanStart; c < line.Length; c++)
+        {
+            if (line[c] != ':')
+            {
+                continue;
+            }
+
+            var d = c + 1;
+            while (d < line.Length && char.IsAsciiDigit(line[d]))
+            {
+                d++;
+            }
+
+            var digits = d - (c + 1);
+            if (digits == 0 || d >= line.Length || line[d] != ':')
+            {
+                continue;
+            }
+
+            if (c == 0 || digits > 9 || !int.TryParse(line.AsSpan(c + 1, digits), out var parsed) || parsed < 1)
+            {
+                return false;
+            }
+
+            path = ToolIrFileBodyCache.NormalizePath(line[..c]);
+            lineNumber = parsed;
+            text = line[(d + 1)..];
+            if (text.StartsWith(' '))
+            {
+                text = text[1..];
+            }
+
+            return true;
+        }
+
+        return false;
     }
 
     private static List<object> ExtractDirEntries(string nativeContent, int max, out bool truncated)
     {
+        nativeContent = UnwrapJsonEncodedText(nativeContent);
         truncated = false;
         var entries = new List<object>();
         try
@@ -749,13 +882,17 @@ public class ToolIrResultDistiller
         return null;
     }
 
-    private static string Truncate(string text, int maxChars)
+    private static string Truncate(string text, int maxChars) => Truncate(text, maxChars, out _);
+
+    private static string Truncate(string text, int maxChars, out bool cut)
     {
         if (string.IsNullOrEmpty(text) || text.Length <= maxChars)
         {
+            cut = false;
             return text;
         }
 
+        cut = true;
         return text[..maxChars] + "…";
     }
 }

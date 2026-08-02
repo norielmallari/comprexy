@@ -1,0 +1,32 @@
+{
+  "systemPrompt": "You are a coding agent working in the Comprexy repository, a C#/.NET context-compressing proxy. Alternate freely between reading, editing, and running commands, and verify each change before moving on. Keep replies short and say what you actually ran.",
+  "prompts": [
+    "Get oriented: list the repository root and read README.md.",
+    "Read src/Comprexy.Domain/Entities/ConversationTurnMetric.cs and tell me what one row records.",
+    "Read src/Comprexy.Application/Services/ConversationMetricsRecorder.cs and tell me exactly when a turn metric row is written.",
+    "Write scratch/turn-metric.md describing the write path for a turn metric, from the proxy service down to the repository. One line per hop.",
+    "Read src/Comprexy.Application/Services/ConversationMetricsQueryService.cs and tell me which aggregates the control API can serve today.",
+    "Compare those aggregates against what apps/control-api/Endpoints/MetricsEndpoints.cs actually exposes. Is anything computed but never surfaced?",
+    "Add an XML doc comment to the type declaration of ConversationMetricsQueryService describing what it owns. Match the comment style used elsewhere in that folder.",
+    "Read the file back and confirm the comment reads cleanly and did not disturb the code below it.",
+    "Run `git diff --stat` and confirm exactly one file has changed.",
+    "Read src/Comprexy.Application/Services/ContextBudgetEvaluator.cs and tell me what happens when the estimated prompt is already over the soft limit before anything is added.",
+    "Search the repository for every caller of the evaluator and tell me whether any of them ignore its result.",
+    "Read tests/Comprexy.Application.Tests/Services/ContextBudgetEvaluatorTests.cs and tell me which of those callers is covered.",
+    "Write scratch/coverage-gap.md naming one specific untested behavior and the test you would write for it. Do not write the test.",
+    "Read src/Comprexy.Application/Services/ToolIr/ToolIrVirtualToolDefinitions.cs and list the virtual tools with a one-line purpose each.",
+    "Tell me which of your own tools in this session has no virtual counterpart, and what that costs an agent working through the proxy.",
+    "Append that finding to scratch/coverage-gap.md as a short second section.",
+    "Run `wc -l scratch/*.md` and report the sizes.",
+    "Read src/Comprexy.Infrastructure/Providers/OpenAiCompatibleChatCompletionClient.cs and tell me how upstream failures are surfaced.",
+    "Search for 'catch' in that file and tell me whether any exception is swallowed.",
+    "Read docs/SETTINGS.md and tell me which settings control the upstream client's behavior.",
+    "Cross-check two of those setting names by searching the source, and report any mismatch between the doc and the code.",
+    "If you found a mismatch, fix the documentation to match the code and show the edit. If you found none, say so explicitly and change nothing.",
+    "Run `git diff --stat` again and tell me what the full set of changes is now.",
+    "Read every file you have modified once more and tell me whether any change is inconsistent with any other.",
+    "Write scratch/session-log.md: what you read, what you changed, and what you verified by running something.",
+    "Run `git status --short` and reconcile it against your session log. Correct the log if it overstates anything.",
+    "Final pass: list every file you created or modified, and state plainly which of your conclusions you verified and which are inference."
+  ]
+}

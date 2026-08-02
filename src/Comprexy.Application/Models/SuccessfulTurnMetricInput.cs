@@ -20,4 +20,5 @@ public sealed record SuccessfulTurnMetricInput(
     int RawMessageCount,
     int SentMessageCount,
     string RequestHash,
-    string SentPayloadHash);
+    string SentPayloadHash,
+    TurnTimings Timings);

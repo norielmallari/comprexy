@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Comprexy.Application.Configuration;
 using Comprexy.Application.Services;
 using Comprexy.Application.Services.ToolIr;
@@ -239,5 +240,351 @@ public class ToolIrFileBodyCacheAndDistillTests
 
         Assert.Equal(1, cache.Invalidate(conversationId, "/workspace/repo/docs/a.md"));
         Assert.False(cache.TryGet(conversationId, "docs/a.md", out _));
+    }
+
+    [Fact]
+    public void DistillFileSearch_JsonStringWrappedResult_KeepsEveryMatch()
+    {
+        using var observation = DistillFileSearch(JsonSerializer.Serialize(SearchResultLines));
+        var root = observation.RootElement;
+
+        Assert.Equal("file_search", root.GetProperty("type").GetString());
+        Assert.Equal(3, root.GetProperty("match_count").GetInt32());
+        Assert.Equal(3, root.GetProperty("total_match_count").GetInt32());
+        Assert.False(root.GetProperty("truncated").GetBoolean());
+
+        var first = MatchAt(root, 0);
+        Assert.Equal("src/alpha.py", first.Path);
+        Assert.Equal(12, first.Line);
+        Assert.Equal("def f():", first.Preview);
+
+        foreach (var match in root.GetProperty("matches").EnumerateArray())
+        {
+            var preview = match.GetProperty("preview").GetString()!;
+            Assert.DoesNotContain("\\n", preview, StringComparison.Ordinal);
+            Assert.DoesNotContain("\"", preview, StringComparison.Ordinal);
+        }
+    }
+
+    [Fact]
+    public void DistillFileSearch_RawMultilineText_ParsesPathAndLine()
+    {
+        using var observation = DistillFileSearch(SearchResultLines);
+        var root = observation.RootElement;
+
+        Assert.Equal(3, root.GetProperty("match_count").GetInt32());
+        Assert.Equal(3, root.GetProperty("total_match_count").GetInt32());
+        Assert.False(root.GetProperty("truncated").GetBoolean());
+        Assert.Equal(("src/alpha.py", 12, "def f():"), MatchAt(root, 0));
+        Assert.Equal(("src/beta.py", 3, "x = 1"), MatchAt(root, 1));
+        Assert.Equal(("docs/notes.md", 7, "note"), MatchAt(root, 2));
+    }
+
+    [Fact]
+    public void DistillFileSearch_JsonObjectResult_ProjectsMatchesArray()
+    {
+        using var observation = DistillFileSearch(
+            """{"matches":[{"path":"src/alpha.py","line":3,"preview":"x"}]}""");
+        var root = observation.RootElement;
+
+        Assert.Equal(1, root.GetProperty("match_count").GetInt32());
+        Assert.Equal(1, root.GetProperty("total_match_count").GetInt32());
+        Assert.False(root.GetProperty("truncated").GetBoolean());
+        Assert.Equal(("src/alpha.py", 3, "x"), MatchAt(root, 0));
+    }
+
+    [Fact]
+    public void DistillFileSearch_JsonStringWrappedObject_UnwrapsToMatchesArray()
+    {
+        var native = JsonSerializer.Serialize(
+            JsonSerializer.Serialize(new { matches = new[] { new { path = "src/alpha.py", line = 3, preview = "x" } } }));
+
+        using var observation = DistillFileSearch(native);
+        var root = observation.RootElement;
+
+        Assert.Equal(1, root.GetProperty("match_count").GetInt32());
+        Assert.Equal(1, root.GetProperty("total_match_count").GetInt32());
+        Assert.Equal(("src/alpha.py", 3, "x"), MatchAt(root, 0));
+    }
+
+    [Fact]
+    public void DistillFileSearch_UnwrapDepthExceeded_KeepsPayloadAndFlagsCut()
+    {
+        var text = string.Concat(Enumerable.Repeat("alpha beta gamma delta ", 15));
+        Assert.True(text.Length > 200);
+        var native = JsonSerializer.Serialize(JsonSerializer.Serialize(JsonSerializer.Serialize(text)));
+
+        using var observation = DistillFileSearch(native);
+        var root = observation.RootElement;
+
+        Assert.Equal(1, root.GetProperty("match_count").GetInt32());
+        Assert.Equal(1, root.GetProperty("total_match_count").GetInt32());
+        Assert.True(root.GetProperty("truncated").GetBoolean());
+
+        var only = MatchAt(root, 0);
+        Assert.Equal(string.Empty, only.Path);
+        Assert.Equal(0, only.Line);
+        Assert.Equal(201, only.Preview.Length);
+    }
+
+    [Fact]
+    public void DistillFileSearch_LongMatchText_SetsTruncatedWhenPreviewCut()
+    {
+        using var observation = DistillFileSearch("src/alpha.py:12: " + new string('a', 300));
+        var root = observation.RootElement;
+
+        Assert.True(root.GetProperty("truncated").GetBoolean());
+        Assert.Equal(1, root.GetProperty("match_count").GetInt32());
+        Assert.Equal(1, root.GetProperty("total_match_count").GetInt32());
+
+        var only = MatchAt(root, 0);
+        Assert.Equal("src/alpha.py", only.Path);
+        Assert.Equal(12, only.Line);
+        Assert.Equal(201, only.Preview.Length);
+        Assert.EndsWith("…", only.Preview, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void DistillFileSearch_JsonElementLongPreview_SetsTruncated()
+    {
+        var native = JsonSerializer.Serialize(
+            new { matches = new[] { new { path = "src/alpha.py", line = 3, preview = new string('a', 300) } } });
+
+        using var observation = DistillFileSearch(native);
+        var root = observation.RootElement;
+
+        Assert.True(root.GetProperty("truncated").GetBoolean());
+        Assert.Equal(1, root.GetProperty("match_count").GetInt32());
+        Assert.Equal(1, root.GetProperty("total_match_count").GetInt32());
+        Assert.Equal(201, MatchAt(root, 0).Preview.Length);
+    }
+
+    [Fact]
+    public void DistillFileSearch_MoreMatchesThanCap_ReportsPreCapTotal()
+    {
+        var native = string.Join(
+            '\n',
+            Enumerable.Range(1, 5).Select(i => $"src/mod{i}.py:{i}: hit {i}"));
+
+        using var observation = DistillFileSearch(native, maxSearchMatches: 2);
+        var root = observation.RootElement;
+
+        Assert.Equal(2, root.GetProperty("match_count").GetInt32());
+        Assert.Equal(5, root.GetProperty("total_match_count").GetInt32());
+        Assert.True(root.GetProperty("truncated").GetBoolean());
+    }
+
+    [Fact]
+    public void DistillFileSearch_NonConformingLines_DegradeToPreviewOnly()
+    {
+        const string native = "src/alpha.py:12: def f():\nnote: 12: hello\nno separator on this line";
+
+        using var observation = DistillFileSearch(native);
+        var root = observation.RootElement;
+
+        Assert.Equal(3, root.GetProperty("match_count").GetInt32());
+        Assert.Equal(3, root.GetProperty("total_match_count").GetInt32());
+        Assert.False(root.GetProperty("truncated").GetBoolean());
+        Assert.Equal(("src/alpha.py", 12, "def f():"), MatchAt(root, 0));
+        Assert.Equal((string.Empty, 0, "note: 12: hello"), MatchAt(root, 1));
+        Assert.Equal((string.Empty, 0, "no separator on this line"), MatchAt(root, 2));
+    }
+
+    [Fact]
+    public void DistillFileSearch_WindowsDrivePath_ParsesPathAndLine()
+    {
+        const string native = @"C:\ws\src\alpha.cs:12: x" + "\nweird:name.py:3: x";
+
+        using var observation = DistillFileSearch(native);
+        var root = observation.RootElement;
+
+        Assert.Equal(2, root.GetProperty("match_count").GetInt32());
+        Assert.Equal(("C:/ws/src/alpha.cs", 12, "x"), MatchAt(root, 0));
+        Assert.Equal(("weird:name.py", 3, "x"), MatchAt(root, 1));
+    }
+
+    [Fact]
+    public void DistillDirList_JsonStringWrappedResult_ListsEveryEntry()
+    {
+        var options = Options.Create(new ToolSchemaOptions());
+        using var cache = new ToolIrFileBodyCache(options);
+        var distiller = new ToolIrResultDistiller(options, cache);
+        var conversationId = Guid.NewGuid();
+        var mapping = BuildMapping(
+            conversationId,
+            ToolSchemaConstants.DirListToolName,
+            """{"path":"src"}""",
+            path: "src");
+
+        var native = JsonSerializer.Serialize("alpha.txt\nbeta/\ngamma.md");
+        using var observation = JsonDocument.Parse(distiller.Distill(conversationId, mapping, native));
+        var root = observation.RootElement;
+
+        Assert.Equal("dir_list", root.GetProperty("type").GetString());
+        Assert.False(root.GetProperty("truncated").GetBoolean());
+        Assert.Equal(3, root.GetProperty("entry_count").GetInt32());
+
+        var names = root.GetProperty("entries")
+            .EnumerateArray()
+            .Select(e => e.GetProperty("name").GetString()!)
+            .ToArray();
+        Assert.Equal(new[] { "alpha.txt", "beta/", "gamma.md" }, names);
+        Assert.All(
+            root.GetProperty("entries").EnumerateArray(),
+            e => Assert.Equal("unknown", e.GetProperty("kind").GetString()));
+    }
+
+    [Fact]
+    public void DistillFileRange_JsonStringWrappedBody_DoesNotPoisonCache()
+    {
+        var options = Options.Create(new ToolSchemaOptions { MaxRangeLines = 250 });
+        using var cache = new ToolIrFileBodyCache(options);
+        var distiller = new ToolIrResultDistiller(options, cache);
+        var conversationId = Guid.NewGuid();
+        var mapping = BuildMapping(
+            conversationId,
+            ToolSchemaConstants.FileRangeToolName,
+            """{"path":"src/alpha.py","start_line":1,"end_line":3}""",
+            path: "src/alpha.py",
+            startLine: 1,
+            endLine: 3);
+
+        var native = JsonSerializer.Serialize(
+            "<content>\n1: line one\n2: line two\n3: line three\n</content>");
+
+        using var observation = JsonDocument.Parse(distiller.Distill(conversationId, mapping, native));
+        var content = observation.RootElement.GetProperty("content").GetString()!;
+
+        Assert.Equal("line one\nline two\nline three", content);
+        Assert.DoesNotContain("\\n", content, StringComparison.Ordinal);
+        Assert.True(cache.TryGet(conversationId, "src/alpha.py", out var entry));
+        Assert.Equal(3, ToolIrFileBodyCache.ContentLineCount(entry!));
+        Assert.True(cache.TryGetCovering(conversationId, "src/alpha.py", 1, 3, out _));
+    }
+
+    [Fact]
+    public void DistillFileManifest_JsonStringWrappedBody_CountsDecodedLines()
+    {
+        var options = Options.Create(new ToolSchemaOptions());
+        using var cache = new ToolIrFileBodyCache(options);
+        var distiller = new ToolIrResultDistiller(options, cache);
+        var conversationId = Guid.NewGuid();
+        var mapping = BuildMapping(
+            conversationId,
+            ToolSchemaConstants.FileManifestToolName,
+            """{"path":"src/alpha.py"}""",
+            path: "src/alpha.py");
+
+        var native = JsonSerializer.Serialize(
+            "<content>\n1: import os\n2: def f():\n3:     return 1\n</content>");
+
+        using var observation = JsonDocument.Parse(distiller.Distill(conversationId, mapping, native));
+        var root = observation.RootElement;
+
+        Assert.Equal("file_manifest", root.GetProperty("type").GetString());
+        Assert.Equal("python", root.GetProperty("language").GetString());
+        Assert.Equal(
+            new[] { "import os" },
+            root.GetProperty("imports").EnumerateArray().Select(e => e.GetString()!).ToArray());
+        Assert.Equal("f", root.GetProperty("symbols")[0].GetProperty("name").GetString());
+    }
+
+    [Fact]
+    public void Distill_Shell_JsonStringWrappedOutput_DecodesBeforeCap()
+    {
+        var options = Options.Create(new ToolSchemaOptions { MaxShellObservationChars = 4000 });
+        using var cache = new ToolIrFileBodyCache(options);
+        var distiller = new ToolIrResultDistiller(options, cache);
+        var conversationId = Guid.NewGuid();
+        var mapping = BuildMapping(
+            conversationId,
+            ToolSchemaConstants.ShellToolName,
+            """{"command":"ls"}""");
+
+        var native = JsonSerializer.Serialize("line one\nline two");
+        using var observation = JsonDocument.Parse(distiller.Distill(conversationId, mapping, native));
+        var root = observation.RootElement;
+
+        Assert.Equal("shell", root.GetProperty("type").GetString());
+        Assert.Equal("line one\nline two", root.GetProperty("content").GetString());
+        Assert.False(root.GetProperty("truncated").GetBoolean());
+    }
+
+    [Fact]
+    public void Distill_UnmappedTool_JsonStringWrappedContent_FlagsTruncation()
+    {
+        var options = Options.Create(new ToolSchemaOptions());
+        using var cache = new ToolIrFileBodyCache(options);
+        var distiller = new ToolIrResultDistiller(options, cache);
+        var conversationId = Guid.NewGuid();
+        var mapping = BuildMapping(conversationId, "client_custom_tool", """{"input":"x"}""");
+
+        var raw = string.Join(
+            '\n',
+            Enumerable.Range(1, 400).Select(i => $"observation line {i} padding padding"));
+        Assert.True(raw.Length > 4000);
+
+        using var observation = JsonDocument.Parse(
+            distiller.Distill(conversationId, mapping, JsonSerializer.Serialize(raw)));
+        var root = observation.RootElement;
+
+        Assert.Equal("passthrough", root.GetProperty("type").GetString());
+        Assert.Equal("client_custom_tool", root.GetProperty("tool").GetString());
+        Assert.True(root.TryGetProperty("truncated", out var truncated));
+        Assert.True(truncated.GetBoolean());
+
+        var content = root.GetProperty("content").GetString()!;
+        Assert.Equal(4001, content.Length);
+        Assert.EndsWith("…", content, StringComparison.Ordinal);
+        Assert.Contains("\n", content, StringComparison.Ordinal);
+        Assert.DoesNotContain("\\n", content, StringComparison.Ordinal);
+    }
+
+    private const string SearchResultLines =
+        "src/alpha.py:12: def f():\nsrc/beta.py:3: x = 1\ndocs/notes.md:7: note";
+
+    private static JsonDocument DistillFileSearch(string nativeContent, int maxSearchMatches = 40)
+    {
+        var options = Options.Create(new ToolSchemaOptions { MaxSearchMatches = maxSearchMatches });
+        using var cache = new ToolIrFileBodyCache(options);
+        var distiller = new ToolIrResultDistiller(options, cache);
+        var conversationId = Guid.NewGuid();
+        var mapping = BuildMapping(
+            conversationId,
+            ToolSchemaConstants.FileSearchToolName,
+            """{"query":"alpha"}""",
+            path: "src");
+
+        return JsonDocument.Parse(distiller.Distill(conversationId, mapping, nativeContent));
+    }
+
+    private static ToolIrCallMapping BuildMapping(
+        Guid conversationId,
+        string comprexyToolName,
+        string irArgumentsJson,
+        string? path = null,
+        int? startLine = null,
+        int? endLine = null) =>
+        new(
+            conversationId,
+            "call_1",
+            "cur_1",
+            comprexyToolName,
+            "client_tool",
+            irArgumentsJson,
+            ClientArgumentsJson: null,
+            Strategy: "direct",
+            Path: path,
+            StartLine: startLine,
+            EndLine: endLine,
+            Pending: false);
+
+    private static (string Path, int Line, string Preview) MatchAt(JsonElement root, int index)
+    {
+        var match = root.GetProperty("matches")[index];
+        return (
+            match.GetProperty("path").GetString()!,
+            match.GetProperty("line").GetInt32(),
+            match.GetProperty("preview").GetString()!);
     }
 }

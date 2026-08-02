@@ -351,6 +351,9 @@ public sealed class ConversationMetricsQueryService : IConversationMetricsQueryS
             WorkingMemoryVersionUsed = turn.WorkingMemoryVersionUsed,
             RawMessageCount = turn.RawMessageCount,
             SentMessageCount = turn.SentMessageCount,
+            DurationMs = turn.DurationMs,
+            UpstreamDurationMs = turn.UpstreamDurationMs,
+            PrepareDurationMs = turn.PrepareDurationMs,
             CreatedAt = turn.CreatedAt
         };
     }

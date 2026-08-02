@@ -39,5 +39,11 @@ public sealed class ConversationTurnProjection
 
     public int SentMessageCount { get; init; }
 
+    public int? DurationMs { get; init; }
+
+    public int? UpstreamDurationMs { get; init; }
+
+    public int? PrepareDurationMs { get; init; }
+
     public DateTimeOffset CreatedAt { get; init; }
 }

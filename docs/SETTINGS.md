@@ -11,8 +11,9 @@ Settings load in order (later sources override earlier ones):
 3. User secrets, environment variables, command-line arguments (from `WebApplication.CreateBuilder`)
 4. Shared default: hosts rewrite `ConnectionStrings:Comprexy` to `data/comprexy.db` under the repo root (`SharedSqliteConfiguration.UseRepoSharedDatabase`)
 5. Optional `apps/*/appsettings.Local.json` (gitignored) — may override connection string and other settings
+6. Environment variables and command-line arguments again (re-appended by both hosts)
 
-Because SharedSqlite and Local.json are added after env/cmdline, an env override of `ConnectionStrings:Comprexy` does not stick; use Local.json (or another source registered after the rewrite) to point at a different database.
+Both hosts re-append the environment-variable and command-line providers after the SharedSqlite rewrite and `appsettings.Local.json`, so an env override such as `ConnectionStrings__Comprexy` or `ToolSchema__Mode` wins over both. Local.json remains the convenient place for machine-local defaults; env/cmdline is what a harness or container uses to override them for one process.
 
 Defaults in the tables below match stock `apps/proxy/appsettings.json` (and control-api where noted). C# `*Options` property initializers may differ when a key is omitted entirely.
 
@@ -216,7 +217,7 @@ In-memory cache for tiktoken estimates.
 
 | Key | Default | Description |
 | --- | --- | --- |
-| `Comprexy` | rewritten to `data/comprexy.db` under repo root | SQLite database path. Hosts call `SharedSqliteConfiguration.UseRepoSharedDatabase` after env/cmdline; override via `appsettings.Local.json` (env alone does not win). WAL and 5s busy timeout are applied on connect. |
+| `Comprexy` | rewritten to `data/comprexy.db` under repo root | SQLite database path. Hosts call `SharedSqliteConfiguration.UseRepoSharedDatabase`, then re-append env/cmdline, so `ConnectionStrings__Comprexy` or `appsettings.Local.json` both override the shared default. WAL and 5s busy timeout are applied on connect. |
 
 Migrations run at startup. Pass `--clear-db` to rebuild from migrations.
 

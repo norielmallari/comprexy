@@ -321,6 +321,18 @@ Settings load from `appsettings.json`, environment overlays, and optional gitign
 - `ExcludeFromModelTools` hides tools from the model only; they remain in the client catalog. Already-persisted transcript turns are not scrubbed.
 - Token and cost intelligence is estimate-based. Actual provider billing may differ because of model-specific tokenization, prompt caching, output volume, provider pricing, local hardware utilization, and workflow shape.
 
+## Benchmark harness
+
+`tests/Comprexy.Bench` replays a frozen prompt list through a Microsoft Agent Framework coding agent twice — once with client-side compaction alone (`ToolSchema:Mode=Off`, unreachable soft limit) and once with Comprexy compression plus Virtual Tools — against harness-spawned proxy and control-api hosts on a dedicated `data/comprexy-bench.db`. The agent works in a throwaway `git clone` of this repository pinned to the run's HEAD commit, so both arms read the same real code; the clone has no remote and its own object store, and it is deleted after each conversation with its diff against the pinned commit kept as a patch.
+
+```bash
+./comprexy.sh bench run                              # spawn hosts, run both arms, write manifest.json
+./comprexy.sh bench report --run-id <runId>          # join control-api metrics, draft summary.md
+./comprexy.sh bench publish --run-id <runId> --confirm  # copy the reviewed summary to docs/evidence/
+```
+
+Each run writes to a gitignored directory named for the UTC minute it started, `reports/bench/20260801-1200/`, so a repeat never overwrites earlier artifacts; `--run-id <label>` appends a label to that stamp (`20260801-1200-short-deep`), and `report` and `publish` take the resulting directory name. Only reviewed summaries are committed. Token numbers come from Comprexy's own turn metrics, so a run needs a configured provider and enough wall clock for two full passes. Design notes: [`docs/plans/benchmarking-implementation-plan.md`](docs/plans/benchmarking-implementation-plan.md).
+
 ## Architecture
 
 Layering, request lifecycle, Virtual Tools, compression ownership, and persistence are documented in [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).

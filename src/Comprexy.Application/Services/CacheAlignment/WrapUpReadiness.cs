@@ -32,7 +32,7 @@ public static class WrapUpReadiness
     }
 
     /// <summary>
-    /// Normalize orphans and open chains for Prefix store. Open assistants (+ unmatched tools)
+    /// Normalize orphans and open chains for Prefix store. Open assistants (+ all their tools)
     /// move to <paramref name="excludedFromPrefix"/>; remaining frontier must be closed.
     /// Returns false when the remaining frontier is still illegal (fail closed).
     /// </summary>
@@ -70,7 +70,7 @@ public static class WrapUpReadiness
     }
 
     /// <summary>
-    /// Moves open tool-call assistants and their unmatched tool results out of the frontier.
+    /// Moves open tool-call assistants and all results for their announced ids out of the frontier.
     /// </summary>
     public static IReadOnlyList<ConversationMessage> RepairOpenByExclusion(
         IReadOnlyList<ConversationMessage> frontier,
@@ -86,6 +86,7 @@ public static class WrapUpReadiness
         var openIds = new HashSet<string>(assessment.OpenToolCallIds, StringComparer.Ordinal);
         var ordered = frontier.OrderBy(m => m.Sequence).ToList();
         var excludeIds = new HashSet<Guid>();
+        var excludedAssistantToolCallIds = new HashSet<string>(StringComparer.Ordinal);
 
         foreach (var message in ordered)
         {
@@ -102,23 +103,27 @@ public static class WrapUpReadiness
                 if (ids.Any(id => openIds.Contains(id)))
                 {
                     excludeIds.Add(message.Id);
+                    excludedAssistantToolCallIds.UnionWith(ids);
                 }
 
                 continue;
             }
+        }
 
+        foreach (var message in ordered)
+        {
             if (message.Role == MessageRole.Tool)
             {
                 var toolCallId = ToolCallWireHelper.TryExtractToolCallId(message);
-                if (toolCallId is not null && openIds.Contains(toolCallId))
+                if (toolCallId is not null
+                    && (openIds.Contains(toolCallId)
+                        || excludedAssistantToolCallIds.Contains(toolCallId)))
                 {
                     excludeIds.Add(message.Id);
                 }
             }
         }
 
-        // Also exclude tools that follow an excluded open assistant with no id match yet
-        // (partial batches): any tool after the first excluded open assistant when still open.
         if (excludeIds.Count == 0)
         {
             // Unparseable-only open: drop trailing assistants with non-empty tool_calls.

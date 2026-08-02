@@ -195,6 +195,9 @@ public sealed class TelemetryRepositoryTests
             sentMessageCount: 5,
             requestHash,
             sentHash,
+            durationMs: 1_000 + turnIndex,
+            upstreamDurationMs: 700 + turnIndex,
+            prepareDurationMs: 200 + turnIndex,
             DateTimeOffset.UnixEpoch.AddMinutes(turnIndex));
 
     private sealed class SqliteFixture : IAsyncDisposable

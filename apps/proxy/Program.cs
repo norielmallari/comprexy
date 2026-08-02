@@ -14,6 +14,10 @@ SharedSqliteConfiguration.UseRepoSharedDatabase(builder);
 // Optional machine-specific overrides (gitignored). Copy from appsettings.Local.json.example.
 builder.Configuration.AddJsonFile("appsettings.Local.json", optional: true, reloadOnChange: true);
 
+// Re-append so env/cmdline still win over SharedSqlite and Local.json (harness and container overrides).
+builder.Configuration.AddEnvironmentVariables();
+builder.Configuration.AddCommandLine(args);
+
 builder.Services.AddComprexyApplication(builder.Configuration);
 builder.Services.AddComprexyInfrastructure(builder.Configuration);
 

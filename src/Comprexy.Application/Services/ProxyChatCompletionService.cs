@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Text.Json;
 using Comprexy.Application.Abstractions;
 using Comprexy.Application.Configuration;
@@ -113,7 +114,11 @@ public class ProxyChatCompletionService
             ConversationGateLeaseKind.Exclusive,
             cancellationToken);
 
+        var turnStartedTimestamp = Stopwatch.GetTimestamp();
         var prepared = await PrepareAsync(request, conversationKey, cancellationToken);
+        var prepareDuration = Stopwatch.GetElapsedTime(turnStartedTimestamp);
+
+        var upstreamStartedTimestamp = Stopwatch.GetTimestamp();
         UpstreamChatResult upstreamResult;
         try
         {
@@ -127,9 +132,14 @@ public class ProxyChatCompletionService
             throw;
         }
 
+        var timing = new TurnPhaseTiming(
+            turnStartedTimestamp,
+            prepareDuration,
+            Stopwatch.GetElapsedTime(upstreamStartedTimestamp));
+
         using var postMainCts = CancellationTokenSource.CreateLinkedTokenSource(
             _hostApplicationLifetime.ApplicationStopping);
-        return await CompleteAsync(prepared, upstreamResult, postMainCts.Token);
+        return await CompleteAsync(prepared, upstreamResult, timing, postMainCts.Token);
     }
 
     public async Task<ProxyChatCompletionResult> HandleStreamingAsync(
@@ -149,7 +159,9 @@ public class ProxyChatCompletionService
             ConversationGateLeaseKind.Exclusive,
             cancellationToken);
 
+        var turnStartedTimestamp = Stopwatch.GetTimestamp();
         var prepared = await PrepareAsync(request, conversationKey, cancellationToken);
+        var prepareDuration = Stopwatch.GetElapsedTime(turnStartedTimestamp);
         onConversationReady(prepared.Conversation.Id);
 
         // Inline eligible turns must not let the client act on the answer before the wrap-up
@@ -183,6 +195,7 @@ public class ProxyChatCompletionService
             await onRawSseData(data, ct);
         };
 
+        var upstreamStartedTimestamp = Stopwatch.GetTimestamp();
         UpstreamChatResult main;
         try
         {
@@ -204,9 +217,14 @@ public class ProxyChatCompletionService
             throw;
         }
 
+        var timing = new TurnPhaseTiming(
+            turnStartedTimestamp,
+            prepareDuration,
+            Stopwatch.GetElapsedTime(upstreamStartedTimestamp));
+
         using var postMainCts = CancellationTokenSource.CreateLinkedTokenSource(
             _hostApplicationLifetime.ApplicationStopping);
-        var result = await CompleteAsync(prepared, main, postMainCts.Token);
+        var result = await CompleteAsync(prepared, main, timing, postMainCts.Token);
 
         if (heldFrames.Count > 0)
         {
@@ -784,13 +802,15 @@ public class ProxyChatCompletionService
         var effectiveReplaceMessages = toolSchema is not null || replaceMessages;
         var preFollowUpEstimatedTokens = tokens;
         var inlineFollowUpEligible = false;
+        var inlineOpenStoreEmergency = false;
 
         if (!skipCompression
             && decision != ContextBudgetDecision.ForwardImmediate
             && await IsInlineCooldownClearAsync(conversation.Id, allMessages, cancellationToken))
         {
             var unfolded = allMessages.Where(m => !m.IsFolded).OrderBy(m => m.Sequence).ToList();
-            if (!ToolCallChainState.Assess(unfolded).IsOpen)
+            var chainAssessment = ToolCallChainState.Assess(unfolded);
+            if (!chainAssessment.IsOpen)
             {
                 var wrapUpUser = _compressionPromptFactory.BuildInlineWrapUpUserMessage();
                 var wrapUpTipTokens = _tokenEstimator.CountTokens([wrapUpUser]);
@@ -803,9 +823,39 @@ public class ProxyChatCompletionService
             }
             else
             {
-                _logger.LogInformation(
-                    "Inline follow-up wrap-up skipped for conversation {ConversationId}: open tool-call chain.",
-                    conversation.Id);
+                if (!WrapUpReadiness.TryEnsureWrapUpReady(
+                        unfolded,
+                        out var closedPrefix,
+                        out var excludedOpen))
+                {
+                    _logger.LogWarning(
+                        "Inline follow-up wrap-up skipped for conversation {ConversationId}: open_unrepairable; awaitingClientToolResults={IsAwaitingClientToolResults}.",
+                        conversation.Id,
+                        chainAssessment.IsAwaitingClientToolResults);
+                }
+                else if (closedPrefix.Count == 0)
+                {
+                    _logger.LogInformation(
+                        "Inline follow-up wrap-up skipped for conversation {ConversationId}: no_closed_prefix; awaitingClientToolResults={IsAwaitingClientToolResults} excludedCount={ExcludedCount}.",
+                        conversation.Id,
+                        chainAssessment.IsAwaitingClientToolResults,
+                        excludedOpen.Count);
+                }
+                else
+                {
+                    var wrapUpUser = _compressionPromptFactory.BuildInlineWrapUpUserMessage();
+                    var wrapUpTipTokens = _tokenEstimator.CountTokens([wrapUpUser]);
+                    inlineFollowUpEligible = true;
+                    inlineOpenStoreEmergency = true;
+                    _logger.LogInformation(
+                        "Inline follow-up wrap-up eligible (open-store mid-chain emergency) for conversation {ConversationId}: estimatedTokens={EstimatedTokens} wrapUpTipTokens={WrapUpTipTokens} awaitingClientToolResults={IsAwaitingClientToolResults} excludedCount={ExcludedCount} closedPrefixCount={ClosedPrefixCount}.",
+                        conversation.Id,
+                        preFollowUpEstimatedTokens,
+                        wrapUpTipTokens,
+                        chainAssessment.IsAwaitingClientToolResults,
+                        excludedOpen.Count,
+                        closedPrefix.Count);
+                }
             }
         }
 
@@ -830,6 +880,7 @@ public class ProxyChatCompletionService
             toolSchema,
             metricsPrepare,
             inlineFollowUpEligible,
+            inlineOpenStoreEmergency,
             preFollowUpEstimatedTokens);
     }
 
@@ -1297,6 +1348,7 @@ public class ProxyChatCompletionService
     private async Task<ProxyChatCompletionResult> CompleteAsync(
         PreparedRequest prepared,
         UpstreamChatResult upstreamResult,
+        TurnPhaseTiming timing,
         CancellationToken cancellationToken)
     {
         var sequence = prepared.NextSequence;
@@ -1374,7 +1426,8 @@ public class ProxyChatCompletionService
                     prepared.MetricsPrepare.RawMessageCount,
                     prepared.UpstreamRequest.Messages.Count,
                     prepared.MetricsPrepare.RequestHash,
-                    MetricsPayloadHasher.HashJsonElement(sentPayload)),
+                    MetricsPayloadHasher.HashJsonElement(sentPayload),
+                    timing.ToTurnTimings()),
                 cancellationToken);
         }
 
@@ -1783,6 +1836,24 @@ public class ProxyChatCompletionService
         return trimmed.Length <= maxLength ? trimmed : trimmed[..maxLength];
     }
 
+    /// <summary>
+    /// Phase clocks for the current turn. <c>TurnStartedTimestamp</c> is a
+    /// <see cref="Stopwatch"/> tick so the total can be read at the metric write.
+    /// </summary>
+    private sealed record TurnPhaseTiming(
+        long TurnStartedTimestamp,
+        TimeSpan Prepare,
+        TimeSpan Upstream)
+    {
+        public TurnTimings ToTurnTimings() => new(
+            ToMilliseconds(Prepare),
+            ToMilliseconds(Upstream),
+            ToMilliseconds(Stopwatch.GetElapsedTime(TurnStartedTimestamp)));
+
+        private static int ToMilliseconds(TimeSpan elapsed) =>
+            (int)Math.Clamp(Math.Round(elapsed.TotalMilliseconds), 0d, int.MaxValue);
+    }
+
     private sealed record PreparedRequest(
         Conversation Conversation,
         int NextSequence,
@@ -1798,5 +1869,6 @@ public class ProxyChatCompletionService
         ToolSchemaPrepareResult? ToolSchema = null,
         TurnMetricsPrepareData? MetricsPrepare = null,
         bool InlineFollowUpEligible = false,
+        bool InlineOpenStoreEmergency = false,
         int PreFollowUpEstimatedTokens = 0);
 }

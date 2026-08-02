@@ -1,5 +1,7 @@
 // Kilo Code project config — https://kilo.ai/docs/customize/custom-rules
 // Rules under .kilo/rules/ are generated from .cursor/rules/*.mdc (source of truth).
+// Skills under .kilo/skills/ are generated from .cursor/skills/ and auto-discovered — no instructions entry.
 {
+  "$schema": "https://app.kilo.ai/config.json",
   "instructions": [".kilo/rules/*.md"]
 }

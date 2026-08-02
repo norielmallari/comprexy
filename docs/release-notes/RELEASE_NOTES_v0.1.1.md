@@ -53,7 +53,3 @@ This repository remains an MIT-licensed proof of concept and is not under active
 - For metrics UI: start control-api, then `cd apps/dashboard && npm install && npm run dev`.
 - For MCP: connect Streamable HTTP clients to `http://localhost:8130/mcp` (see README).
 - Review `ToolSchema` and `ContextPolicy` in [`docs/SETTINGS.md`](docs/SETTINGS.md) if you customized CompactIndex-era settings.
-
-## Compare
-
-https://github.com/norielmallari/comprexy/compare/v0.1.0-preview...v0.1.1

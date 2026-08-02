@@ -67,6 +67,9 @@ public sealed class EfConversationTurnMetricRepository(ComprexyDbContext dbConte
                 WorkingMemoryVersionUsed = m.WorkingMemoryVersionUsed,
                 RawMessageCount = m.RawMessageCount,
                 SentMessageCount = m.SentMessageCount,
+                DurationMs = m.DurationMs,
+                UpstreamDurationMs = m.UpstreamDurationMs,
+                PrepareDurationMs = m.PrepareDurationMs,
                 CreatedAt = m.CreatedAt
             })
             .ToListAsync(cancellationToken);
@@ -99,6 +102,9 @@ public sealed class EfConversationTurnMetricRepository(ComprexyDbContext dbConte
                 WorkingMemoryVersionUsed = m.WorkingMemoryVersionUsed,
                 RawMessageCount = m.RawMessageCount,
                 SentMessageCount = m.SentMessageCount,
+                DurationMs = m.DurationMs,
+                UpstreamDurationMs = m.UpstreamDurationMs,
+                PrepareDurationMs = m.PrepareDurationMs,
                 CreatedAt = m.CreatedAt
             })
             .FirstOrDefaultAsync(cancellationToken);

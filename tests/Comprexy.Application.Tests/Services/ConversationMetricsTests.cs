@@ -26,6 +26,9 @@ public class ConversationTurnMetricTests
             sentMessageCount: 12,
             requestHash: "abc",
             sentPayloadHash: "def",
+            durationMs: null,
+            upstreamDurationMs: null,
+            prepareDurationMs: null,
             createdAt: DateTimeOffset.UtcNow);
 
         Assert.Equal(32_000, turn.ActualPromptTokens);
@@ -56,6 +59,9 @@ public class ConversationTurnMetricTests
             sentMessageCount: 5,
             requestHash: "r",
             sentPayloadHash: "s",
+            durationMs: null,
+            upstreamDurationMs: null,
+            prepareDurationMs: null,
             createdAt: DateTimeOffset.UtcNow);
 
         Assert.Equal(1_908, turn.NetTokensSaved);
@@ -83,6 +89,9 @@ public class ConversationTurnMetricTests
             sentMessageCount: 5,
             requestHash: "a",
             sentPayloadHash: "b",
+            durationMs: null,
+            upstreamDurationMs: null,
+            prepareDurationMs: null,
             createdAt: DateTimeOffset.UtcNow);
 
         Assert.Equal(10_500, turn.BaselineTotalTokensEstimated);
@@ -117,6 +126,9 @@ public class ConversationMetricsSummaryTests
             sentMessageCount: 4,
             requestHash: "r1",
             sentPayloadHash: "s1",
+            durationMs: null,
+            upstreamDurationMs: null,
+            prepareDurationMs: null,
             createdAt: now);
 
         var turn2 = ConversationTurnMetric.Create(
@@ -136,6 +148,9 @@ public class ConversationMetricsSummaryTests
             sentMessageCount: 5,
             requestHash: "r2",
             sentPayloadHash: "s2",
+            durationMs: null,
+            upstreamDurationMs: null,
+            prepareDurationMs: null,
             createdAt: now);
 
         summary.ApplyTurn(turn1, now);

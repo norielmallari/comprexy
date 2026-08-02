@@ -548,6 +548,9 @@ internal static class TelemetryTestData
             sentMessageCount: 5,
             requestHash: string.Empty,
             sentPayloadHash: string.Empty,
+            durationMs: null,
+            upstreamDurationMs: null,
+            prepareDurationMs: null,
             createdAt: DateTimeOffset.UnixEpoch.AddMinutes(turn));
 
     public static ConversationSummaryRollup Rollup(Guid id) =>

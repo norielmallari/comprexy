@@ -61,6 +61,9 @@ public sealed class ConversationMetricsRecorder : IConversationMetricsRecorder
             input.SentMessageCount,
             input.RequestHash,
             input.SentPayloadHash,
+            input.Timings.DurationMs,
+            input.Timings.UpstreamDurationMs,
+            input.Timings.PrepareDurationMs,
             now);
 
         _turnMetricRepository.Add(turn);
