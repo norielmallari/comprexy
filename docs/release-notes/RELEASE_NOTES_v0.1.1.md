@@ -52,4 +52,4 @@ This repository is the Apache 2.0–licensed open core of Comprexy OSS. Further 
 - Point OpenAI-compatible clients at `http://localhost:8129/v1` as before.
 - For metrics UI: start control-api, then `cd apps/dashboard && npm install && npm run dev`.
 - For MCP: connect Streamable HTTP clients to `http://localhost:8130/mcp` (see README).
-- Review `ToolSchema` and `ContextPolicy` in [`docs/SETTINGS.md`](docs/SETTINGS.md) if you customized CompactIndex-era settings.
+- Review `ToolSchema` and `ContextPolicy` in [`docs/SETTINGS.md`](../SETTINGS.md) if you customized CompactIndex-era settings.

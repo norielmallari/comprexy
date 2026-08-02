@@ -170,7 +170,9 @@ If you need routing, spend tracking, or broad agent wrappers, tools like LiteLLM
 
 Comprexy OSS persists completed conversation turns as the durable record. Working memory is a derived, versioned representation used to construct bounded upstream prompts. Compression marks messages as folded; it does not delete or replace them.
 
-Soft pressure above `SoftLimitTokens` triggers a blocking Inline wrap-up on eligible turns. The wrap-up folds older unfolded messages into a new working-memory version while retaining a tip window (`CompressionRetainMessageCount`).
+Soft pressure above `SoftLimitTokens` triggers a blocking Inline wrap-up on eligible turns (closed stored chain, or mid-chain closed-prefix checkpoint). The wrap-up folds older unfolded messages into a new working-memory version while retaining a tip window (`CompressionRetainMessageCount`).
+
+Release notes: [`docs/release-notes/`](docs/release-notes/).
 
 ## Agentic workflow
 
@@ -233,11 +235,11 @@ Telemetry MCP tools are named `comprexy_*` and require `conversationId` from the
 | Token metrics API | Control API `GET /v1/comprexy/conversations` (+ `/metrics`, `/metrics/turns`) on `:8130` reports raw vs compressed token savings per conversation |
 | Metrics dashboard | Optional Next.js UI in `apps/dashboard` (`:3000`) over control-api REST; requires Node.js (LTS) |
 | Telemetry MCP | Control API `/mcp` exposes read-only summaries, turns, compression phases, budget events, prompt growth, comparisons, evidence markdown, and conversation retrieval (search / message window / working memory / open tool chains) to MCP clients |
-| Token and cost intelligence | Conversation-level telemetry for estimated baseline tokens, sent-equivalent tokens, compression overhead, net savings, prompt growth, and final-turn snapshots; optional USD-at-rate cost-equivalent estimates from those token totals |
+| Token and cost intelligence | Conversation-level telemetry for estimated baseline tokens, sent-equivalent tokens, compression overhead, net savings, prompt growth, and final-turn snapshots; metrics reads default to `Metrics:PromptTokenBasis=ProviderActual` (prefer upstream `usage`); optional USD-at-rate cost-equivalent estimates from those token totals |
 | Rolling working memory | Versioned compressed representation of older context for prompt reconstruction. Derived from persisted messages via Inline wrap-up |
-| Soft budget | Soft (`> soft`) → Inline follow-up wrap-up on eligible turns (closed stored tool chain + `MinTurnsBetweenGenerations` cooldown). Token estimates use tiktoken for text and OpenAI-style vision tiles for `image_url` (base64 is not BPE-counted) |
+| Soft budget | Soft (`> soft`) → Inline follow-up wrap-up on eligible turns (`MinTurnsBetweenGenerations` cooldown): closed stored tool chain, or mid-chain checkpoint of a repairable closed prefix. Token estimates use tiktoken for text and OpenAI-style vision tiles for `image_url` (base64 is not BPE-counted) |
 | Context rebuild | Outgoing context is always rebuilt from stored turns (IR-side under Virtual Tools). Working memory is omitted until the first successful compression; `Proxy:PassThrough` is the only full bypass |
-| Virtual Tools | Default `ToolSchema:Mode=Virtual`. Maps the client catalog once per hash; model sees bound `comprexy_read_file_*` / `comprexy_dir_list` / `comprexy_shell` + meta + remaining passthrough; planner remaps to native tools; results distill to IR. Set `Off` (or use `Proxy:PassThrough`) to disable |
+| Virtual Tools | Default `ToolSchema:Mode=Virtual`. Maps the client catalog once per hash; model sees bound `comprexy_read_file_*` / `comprexy_dir_list` / `comprexy_shell` + meta + remaining passthrough; planner remaps to native tools; results distill to honest IR observations (span / completeness disclosure). Set `Off` (or use `Proxy:PassThrough`) to disable |
 | Tool denylist | `ToolSchema:ExcludeFromModelTools` hides listed client tools from the model (case-insensitive; stock defaults include Cursor UX tools plus Kilo `agent_manager` / `agent_manager_models` / `background_process` / `kilo_local_recall`), rejects calls locally, and swallows inbound orphans. The subagent delegation tool (`task` / `Task`) is not denylisted, so agent delegation stays available |
 | Conversation identity | Prefer a unique `X-Comprexy-Conversation-Id` per session; otherwise fingerprint from system + first two **plain** user turns (Cursor `<user_query>` when present; tool-echo user turns skipped) |
 | Local-first, cloud-ready | Point `Provider` at Ollama, LM Studio, vLLM, OpenAI, Azure OpenAI–compatible APIs, and similar |
@@ -290,8 +292,11 @@ Client tools[] → catalog hash + mapper → model IR tools
 
 | Piece | Behavior |
 | --- | --- |
-| File family | Bound `comprexy_read_file_manifest` / `range` / `search` and `comprexy_dir_list` replace native Read/Grep/list backends |
+| File family | Bound `comprexy_read_file_manifest` / `range` / `search` and `comprexy_dir_list` replace native Read/Grep/list backends; optional `end_line` enables an unwindowed first read (capped by `FirstReadMaxLines` / `FirstReadMaxChars`) |
 | Shell family | Bound `comprexy_shell` replaces native Shell/bash backends |
+| Observations | Distilled IR discloses requested vs returned spans, `body_complete` / `complete` / `next_start_line`, and related search/dir honesty fields; caps are also described on Virtual tool schemas |
+| Cache | File-body cache tracks `BodyComplete` / `TotalLineCount`; incomplete entries rematerialize (never local-satisfy). Local-satisfy IR turns are still persisted |
+| Shapes | First-result shape probes always run; optional idle learner (`ToolSchema:ResultShape:Learner`, default off) may promote closed `result_shapes` into MappingJson |
 | Denylist | `ExcludeFromModelTools` omits listed client tools from the model catalog |
 | Meta | `comprexy_get_current_conversation_id` runs proxy-locally |
 | Failure | Mapper exhaustion drops only the bindings that failed validation and keeps the rest; if nothing usable survives, `ToolIrDisabled` is set for that catalog hash and client tools are forwarded unchanged. Compression/budgets stay on either way |
@@ -300,14 +305,15 @@ Runtime detail: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md#tool-schema-virtua
 
 ## Configuration
 
-Settings load from `appsettings.json`, environment overlays, and optional gitignored `appsettings.Local.json`. See **[`docs/SETTINGS.md`](docs/SETTINGS.md)** for the full reference (Provider, Compression, ContextPolicy, **ToolSchema**, Auth, Proxy, Trace, token cache, SQLite).
+Settings load from `appsettings.json`, environment overlays, and optional gitignored `appsettings.Local.json`. See **[`docs/SETTINGS.md`](docs/SETTINGS.md)** for the full reference (Provider, Compression, ContextPolicy, **ToolSchema**, Metrics, Auth, Proxy, Trace, token cache, SQLite).
 
 | Section | Role (summary) |
 | --- | --- |
 | `Provider` | Upstream OpenAI-compatible chat endpoint |
 | `Compression` | Optional separate Compression endpoint for ToolSchema mapper; Inline wrap-up prompts |
-| `ContextPolicy` | Soft token limit, Inline cooldown / retain tip |
-| `ToolSchema` | Virtual Tools (`Mode: Virtual` default), file/shell IR, `ExcludeFromModelTools`, observation/cache TTLs |
+| `ContextPolicy` | Soft token limit, Inline cooldown / retain tip (mid-chain prefix when eligible) |
+| `ToolSchema` | Virtual Tools (`Mode: Virtual` default), file/shell IR, `ExcludeFromModelTools`, observation/cache TTLs, `FirstRead*`, optional `ResultShape` learner |
+| `Metrics` | Read-side `PromptTokenBasis` (`ProviderActual` default); SoftBudget persistence stays estimate-based |
 | `McpTelemetry` | Control-api MCP row limits and query timeout |
 | `Auth` | Optional API key gate on `/v1/*` and control-api `/mcp` |
 | `Proxy` | Pass-through and reasoning strip |
@@ -324,8 +330,9 @@ Settings load from `appsettings.json`, environment overlays, and optional gitign
 - `Proxy:PassThrough` disables context management entirely.
 - Soft Inline wrap-up and the conversation gate are process-local; they are not shared across multiple API instances.
 - Virtual Tools mapping is best-effort per catalog hash. A catalog with no tool the mapper can bind to a given Virtual tool loses that Virtual tool only; when nothing usable survives, Comprexy OSS sets `ToolIrDisabled` and forwards native tools for that hash (compression stays on).
+- Incomplete file-body cache entries never local-satisfy; the proxy rematerializes until a complete body is cached (often via an unwindowed first read).
 - `ExcludeFromModelTools` hides tools from the model only; they remain in the client catalog. Already-persisted transcript turns are not scrubbed.
-- Token and cost intelligence is estimate-based. Actual provider billing may differ because of model-specific tokenization, prompt caching, output volume, provider pricing, local hardware utilization, and workflow shape.
+- SoftBudget persistence and wrap-up eligibility stay estimate-based (tiktoken). Metrics API reads default to `PromptTokenBasis=ProviderActual` when upstream `usage.prompt_tokens` is present. Actual provider billing may still differ because of model-specific tokenization, prompt caching, output volume, provider pricing, local hardware utilization, and workflow shape.
 
 ## Benchmark harness
 
