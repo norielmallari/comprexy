@@ -81,7 +81,7 @@ internal sealed class ControlApiClient : IDisposable
         CancellationToken cancellationToken)
     {
         var response = await _client.GetAsync(
-            $"/v1/comprexy/conversations/{conversationId}/metrics", cancellationToken);
+            $"/v1/comprexy/conversations/{conversationId}/metrics?promptTokenBasis=ProviderActual", cancellationToken);
         if (response.StatusCode == HttpStatusCode.NotFound)
         {
             return null;
@@ -97,7 +97,7 @@ internal sealed class ControlApiClient : IDisposable
         CancellationToken cancellationToken)
     {
         var response = await _client.GetAsync(
-            $"/v1/comprexy/conversations/{conversationId}/metrics/turns", cancellationToken);
+            $"/v1/comprexy/conversations/{conversationId}/metrics/turns?promptTokenBasis=ProviderActual", cancellationToken);
         if (response.StatusCode == HttpStatusCode.NotFound)
         {
             return [];

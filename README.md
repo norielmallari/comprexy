@@ -325,6 +325,8 @@ Settings load from `appsettings.json`, environment overlays, and optional gitign
 
 `tests/Comprexy.Bench` replays a frozen prompt list through a Microsoft Agent Framework coding agent twice — once with client-side compaction alone (`ToolSchema:Mode=Off`, unreachable soft limit) and once with Comprexy compression plus Virtual Tools — against harness-spawned proxy and control-api hosts on a dedicated `data/comprexy-bench.db`. The agent works in a throwaway `git clone` of this repository pinned to the run's HEAD commit, so both arms read the same real code; the clone has no remote and its own object store, and it is deleted after each conversation with its diff against the pinned commit kept as a patch.
 
+By default, if `maf-compact` dies of a provider/context failure after X prompts (HTTP 502, completion stall, context overflow), the `comprexy` arm stops once it completes X+1 (`survived_baseline_failure`) instead of finishing the script — clearing the kill zone is the result. Opt out with `--continue-past-baseline-failure` (optional `--survival-margin <n>`).
+
 ```bash
 ./comprexy.sh bench run                              # spawn hosts, run both arms, write manifest.json
 ./comprexy.sh bench report --run-id <runId>          # join control-api metrics, draft summary.md

@@ -1,3 +1,5 @@
+using Comprexy.Domain.Enums;
+
 namespace Comprexy.Application.Configuration;
 
 /// <summary>
@@ -12,4 +14,12 @@ public class MetricsOptions
     /// for conversation-level proof reporting. Default is enabled.
     /// </summary>
     public bool Enabled { get; set; } = true;
+
+    /// <summary>
+    /// Default read-side basis for metrics REST / MCP / rollup projections
+    /// (<see cref="PromptTokenBasis.ProviderActual"/>). Persistence and SoftBudget always use
+    /// tiktoken estimates. Override per request with <c>?promptTokenBasis=Estimated</c> on
+    /// control-api metrics endpoints.
+    /// </summary>
+    public PromptTokenBasis PromptTokenBasis { get; set; } = PromptTokenBasis.ProviderActual;
 }

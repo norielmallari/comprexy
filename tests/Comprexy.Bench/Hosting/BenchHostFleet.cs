@@ -79,7 +79,9 @@ internal sealed class BenchHostFleet : IAsyncDisposable
     public IReadOnlyDictionary<string, string> SharedEnvironment() => new Dictionary<string, string>
     {
         ["ASPNETCORE_ENVIRONMENT"] = "Development",
-        ["ConnectionStrings__Comprexy"] = $"Data Source={_options.DatabasePath};Cache=Shared"
+        ["ConnectionStrings__Comprexy"] = $"Data Source={_options.DatabasePath};Cache=Shared",
+        // Bench spend reporting uses upstream usage.prompt_tokens when present (both arms).
+        ["Metrics__PromptTokenBasis"] = "ProviderActual"
     };
 
     public IReadOnlyDictionary<string, string> ArmEnvironment(BenchArm arm)

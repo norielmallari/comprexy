@@ -123,7 +123,9 @@ No new tables for bench runs or manifests.
 - **Timeouts** (harness options, not product config):
   - Per-completion / HTTP timeout (local 64k+ outputs can stall)
   - Per-conversation wall-clock cap
-  - Terminal status `timed_out` → excluded from paired headlines
+  - Terminal status `timed_out` / `completion_stalled` / `failed` → excluded from paired token headlines
+  - Terminal status `survived_baseline_failure` → survival headline (treatment cleared baseline kill zone under default early-stop); not a full-script token pair
+  - Opt out of early-stop with `--continue-past-baseline-failure`
 - **Local LLM**: cost/caching/order bias accepted; sequential arms avoid GPU contention
 - Temperature 0 / seed when the provider honors them
 

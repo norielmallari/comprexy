@@ -1,5 +1,6 @@
 using Comprexy.Bench.Hosting;
 using Comprexy.Bench.Model;
+using Comprexy.Bench.Running;
 
 namespace Comprexy.Bench.Reporting;
 
@@ -8,7 +9,8 @@ namespace Comprexy.Bench.Reporting;
 ///
 /// Cross-arm savings compare the tokens each arm actually sent upstream (the Comprexy turn
 /// ledger's compressed totals), with the treatment arm's compression overhead charged against it.
-/// Pairing is deterministic and lives here, not in the report agent.
+/// Pairing is deterministic and lives here, not in the report agent. Survival early-stops are a
+/// separate headline from full-script token pairs.
 /// </summary>
 internal static class MetricsJoiner
 {
@@ -20,6 +22,7 @@ internal static class MetricsJoiner
         var arms = manifest.Arms.ToDictionary(a => a.Name, StringComparer.Ordinal);
         var excluded = new List<BenchExcludedConversation>();
         var paired = new List<BenchPairedConversation>();
+        var survivals = new List<BenchSurvivalConversation>();
 
         if (!arms.TryGetValue(BenchArm.MafCompact, out var baselineArm) ||
             !arms.TryGetValue(BenchArm.Comprexy, out var treatmentArm))
@@ -31,7 +34,7 @@ internal static class MetricsJoiner
                     "run covered a single arm; a paired comparison needs both maf-compact and comprexy"));
             }
 
-            return Assemble(manifest, paired, excluded);
+            return Assemble(manifest, paired, survivals, excluded);
         }
 
         var treatmentByName = treatmentArm.Conversations.ToDictionary(c => c.Name, StringComparer.Ordinal);
@@ -48,6 +51,36 @@ internal static class MetricsJoiner
             {
                 excluded.Add(new BenchExcludedConversation(
                     baseline.Name, "prompt-list hash differs between arms"));
+                continue;
+            }
+
+            if (treatment.Status == ConversationStatus.SurvivedBaselineFailure &&
+                BaselineKillZone.IsProviderOrContextDeath(baseline))
+            {
+                var mafMetrics = await LoadAsync(controlApi, baseline, cancellationToken);
+                var cxMetrics = await LoadAsync(controlApi, treatment, cancellationToken);
+                SurvivalPrefixComparison? prefix = null;
+                if (baseline.ConversationId is { } mafId && treatment.ConversationId is { } cxId)
+                {
+                    prefix = SurvivalPrefixMetrics.TryCompute(
+                        manifest.DatabasePath,
+                        mafId,
+                        cxId,
+                        baseline.PromptsCompleted);
+                }
+
+                survivals.Add(new BenchSurvivalConversation(
+                    baseline.Name,
+                    baseline.PromptListHash,
+                    baseline.PromptCount,
+                    baseline.PromptsCompleted,
+                    treatment.PromptsCompleted,
+                    baseline.Status,
+                    baseline.FailureReason,
+                    treatment.FailureReason,
+                    mafMetrics,
+                    cxMetrics,
+                    prefix));
                 continue;
             }
 
@@ -94,7 +127,7 @@ internal static class MetricsJoiner
             excluded.Add(new BenchExcludedConversation(treatmentOnly.Name, "not run on the maf-compact arm"));
         }
 
-        return Assemble(manifest, paired, excluded);
+        return Assemble(manifest, paired, survivals, excluded);
     }
 
     private static string DescribeFailure(string armName, BenchConversationRun run) =>
@@ -176,6 +209,7 @@ internal static class MetricsJoiner
     private static BenchMetrics Assemble(
         BenchManifest manifest,
         IReadOnlyList<BenchPairedConversation> paired,
+        IReadOnlyList<BenchSurvivalConversation> survivals,
         IReadOnlyList<BenchExcludedConversation> excluded)
     {
         var baselineTokens = paired.Sum(p => p.MafCompact.CompressedTokensEstimated);
@@ -205,9 +239,11 @@ internal static class MetricsJoiner
                     c.FailureReason)))
                 .ToList(),
             Paired = paired,
+            Survivals = survivals,
             Excluded = excluded,
             Headline = new BenchHeadline(
                 paired.Count,
+                survivals.Count,
                 excluded.Count,
                 baselineTokens,
                 treatmentTokens,

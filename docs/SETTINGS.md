@@ -64,7 +64,7 @@ Soft token budget and the Inline fold retain window.
 
 | Key | Default | Description |
 | --- | --- | --- |
-| `SoftLimitTokens` | `32000` | Above this after a successful reply: Inline follow-up wrap-up on eligible turns (closed stored tool chain + cooldown). |
+| `SoftLimitTokens` | `32000` | Above this after a successful reply: Inline follow-up wrap-up on eligible turns outside cooldown. Open stored tool chains use MidChainPrefix when exclusion leaves a non-empty closed prefix. |
 | `MinTurnsBetweenGenerations` | `6` | Assistant turns after a successful Inline generation before another follow-up wrap-up. |
 | `CompressionRetainMessageCount` | `1` | Inline fold retain window: trailing unfolded messages kept raw, newest-first. Atomic assistant+tool groups count as one unit and the newest group is kept whole even if larger. `1` = tip only. |
 | `DedupeDuplicateFailedEdits` | `true` | Live chat: wire-only omit older identical failed file-edit tool results (path + `old_string` last-wins) so StrReplace failure loops do not stack. Applied to the retain window (baked into the Cache Alignment Prefix), never to the tip. |
@@ -148,6 +148,7 @@ Token proof ledger for successful compressed-path turns. Persisted in SQLite (no
 | Key | Default | Description |
 | --- | --- | --- |
 | `Enabled` | `true` | When true, records per-turn raw vs compressed token metrics and folds Inline wrap-up and Tool IR schema-mapping LLM usage into conversation summaries. |
+| `PromptTokenBasis` | `ProviderActual` | Read-side only. `ProviderActual` prefers upstream `usage.prompt_tokens` when present and scales the same-turn raw baseline by `actual / estimate` so both arms of a turn share one tokenizer basis; completion stays `usage.completion_tokens`. `Estimated` reports stored tiktoken proof (SoftBudget ledger). Persistence and SoftBudget math are unchanged. Override per request with `?promptTokenBasis=Estimated` (or `ProviderActual`) on metrics REST endpoints. |
 
 Operator read API (same `/v1/*` API-key gate as chat):
 
@@ -156,6 +157,8 @@ Operator read API (same `/v1/*` API-key gate as chat):
 | `GET` | `/v1/comprexy/conversations` | List conversation metric summaries |
 | `GET` | `/v1/comprexy/conversations/{conversationId}/metrics` | Conversation rollup |
 | `GET` | `/v1/comprexy/conversations/{conversationId}/metrics/turns` | Per-turn breakdown |
+
+Optional query: `promptTokenBasis=Estimated|ProviderActual` (defaults to `Metrics:PromptTokenBasis`). Response DTOs include `promptTokenBasis` showing which basis was applied.
 
 Pass-through turns and failed requests do not write turn metrics. See [`ARCHITECTURE.md`](ARCHITECTURE.md) and the internal metrics plan for formulas.
 
@@ -171,7 +174,7 @@ control-api only. Bounds and timeouts for the remote telemetry + retrieval MCP e
 | `MaxRowLimit` | `1000` | Hard cap applied before EF `Take(...)`. |
 | `QueryTimeoutSeconds` | `5` | Linked cancellation timeout for each MCP telemetry/retrieval query. |
 
-Telemetry summary semantics: `TurnCount`, weighted savings, simple average, peak, and final-turn fields are whole-conversation (rollup + final-turn query + EF aggregates). `NetTokensSaved` / savings ratios compare tiktoken **raw client** vs **prepared upstream** estimates only; `ActualPromptTokens` and `PromptEstimateError` measure estimate accuracy against upstream `usage.prompt_tokens` and do not enter the savings numerator. `MedianSavingsRatio` and `SavingsRegressions` use the bounded `TurnIndex`-ordered sample only; when `IsPartialTurnSample` is true, those sample fields cover `SampleFirstTurnIndex`–`SampleLastTurnIndex` (`SampleTurnCount` turns), not the full conversation.
+Telemetry summary semantics: `TurnCount`, weighted savings, simple average, peak, and final-turn fields are whole-conversation (rollup + final-turn query + EF aggregates). Under `PromptTokenBasis=ProviderActual` (default), read-side totals prefer `usage.prompt_tokens` when present and scale the same-turn raw baseline by `actual / estimate`. Under `Estimated`, `NetTokensSaved` / savings ratios compare tiktoken **raw client** vs **prepared upstream** estimates only; `ActualPromptTokens` and `PromptEstimateError` measure estimate accuracy against upstream `usage.prompt_tokens` and do not enter the savings numerator on the SoftBudget ledger. SoftBudget persistence is always estimate-based. `MedianSavingsRatio` and `SavingsRegressions` use the bounded `TurnIndex`-ordered sample only; when `IsPartialTurnSample` is true, those sample fields cover `SampleFirstTurnIndex`–`SampleLastTurnIndex` (`SampleTurnCount` turns), not the full conversation.
 
 Retrieval tools (keyword search, sequence windows, recent messages, working-memory snapshot, open tool chains) read `ConversationMessage` / `WorkingMemory` with snippet truncation (500 chars content / 4096 chars optional wire JSON). Message tools use `Sequence`; do not conflate with telemetry `TurnIndex`. Open tool chains reuse `ToolCallChainState` over unfolded messages.
 

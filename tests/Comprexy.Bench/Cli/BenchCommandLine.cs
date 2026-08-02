@@ -96,6 +96,12 @@ internal static class BenchCommandLine
                 case "--confirm":
                     options = options with { Confirm = true };
                     break;
+                case "--continue-past-baseline-failure":
+                    options = options with { StopAfterBaselineFailure = false };
+                    break;
+                case "--survival-margin":
+                    options = options with { SurvivalMarginPrompts = Math.Max(1, RequireInt(args, ref i)) };
+                    break;
                 case "--help" or "-h":
                     return options with { Command = BenchCommand.Help };
                 default:
@@ -166,6 +172,11 @@ run options:
   --model <name>                 Model sent upstream (default: proxy resolves Provider:Model)
   --seed <n> | --no-seed         Sampling seed when the provider honours it (default 7)
   --trace                        Write per-arm request trace files under the run directory
+  --continue-past-baseline-failure
+                                 Disable survival early-stop (default on): after maf-compact dies
+                                 of a provider/context failure after X prompts, comprexy stops at
+                                 X+margin instead of finishing the script
+  --survival-margin <n>          Prompts past baseline PromptsCompleted before early-stop (default 1)
 
 report options:
   --run-id <id>                  Run to report on (required)

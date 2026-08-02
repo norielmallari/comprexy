@@ -1835,32 +1835,106 @@ public class ProxyChatCompletionServiceTests
     }
 
     [Fact]
-    public async Task HandleAsync_InlineMode_WithOpenStoredToolChain_SkipsWrapUp()
+    public async Task HandleAsync_InlineMode_OpenStore_NoClosedPrefix_SkipsWrapUp()
+    {
+        _estimatedTokensToReturn = 150;
+        const string openAssistantWire =
+            """{"role":"assistant","tool_calls":[{"id":"call_1","type":"function","function":{"name":"lookup","arguments":"{}"}}]}""";
+
+        var now = DateTimeOffset.UtcNow;
+        var conversation = Conversation.Create("header:inline-open-empty", now);
+        conversation.CaptureSystemPromptIfAbsent("You are helpful.");
+        conversation.SetSyncedMessageCount(1, now);
+        var openAssistant = ConversationMessage.Create(
+            conversation.Id,
+            0,
+            MessageRole.Assistant,
+            string.Empty,
+            10,
+            now,
+            openAssistantWire);
+        var stored = new List<ConversationMessage> { openAssistant };
+        var workingMemory = WorkingMemory.Create(
+            conversation.Id,
+            1,
+            "# Working Memory\n## Current Goal\nExisting",
+            8,
+            now);
+
+        _conversationRepository.Setup(r => r.FindByKeyAsync("header:inline-open-empty", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(conversation);
+        _messageRepository.Setup(r => r.GetByConversationIdAsync(conversation.Id, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(stored);
+        _workingMemoryRepository.Setup(r => r.GetLatestAsync(conversation.Id, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(workingMemory);
+        _chatCompletionClient
+            .Setup(c => c.CompleteAsync(It.IsAny<ProviderEndpoint>(), It.IsAny<UpstreamRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new UpstreamChatResult("normal answer", "stop", 10, 2));
+
+        // Tip is the same open assistant (no closed prefix remains after exclusion).
+        var requestJson =
+            """
+            {
+              "model":"client-model",
+              "stream":false,
+              "temperature":0.2,
+              "tools":[{"type":"function","function":{"name":"lookup"}}],
+              "messages":[
+                {"role":"system","content":"You are helpful."},
+                {"role":"assistant","tool_calls":[{"id":"call_1","type":"function","function":{"name":"lookup","arguments":"{}"}}]}
+              ]
+            }
+            """;
+        using var document = JsonDocument.Parse(requestJson);
+        var request = Comprexy.Api.Mapping.ChatCompletionRequestParser.Parse(
+            document.RootElement.Clone(),
+            "inline-open-empty");
+
+        var service = CreateService();
+        await service.HandleAsync(request, CancellationToken.None);
+
+        _chatCompletionClient.Verify(
+            c => c.CompleteAsync(
+                It.IsAny<ProviderEndpoint>(),
+                It.Is<UpstreamRequest>(r => IsWrapUpRequest(r)),
+                It.IsAny<CancellationToken>()),
+            Times.Never);
+        _compressionEventRepository.Verify(r => r.Add(It.IsAny<CompressionEvent>()), Times.Never);
+        _workingMemoryRepository.Verify(r => r.Add(It.IsAny<WorkingMemory>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task HandleAsync_InlineMode_OpenStore_Unrepairable_SkipsWrapUp()
     {
         _estimatedTokensToReturn = 150;
 
-        var conversation = Conversation.Create("header:inline-open-tool", DateTimeOffset.UtcNow);
+        var now = DateTimeOffset.UtcNow;
+        var conversation = Conversation.Create("header:inline-open-unrepairable", now);
         conversation.CaptureSystemPromptIfAbsent("You are helpful.");
-        conversation.SetSyncedMessageCount(2, DateTimeOffset.UtcNow);
+        conversation.SetSyncedMessageCount(2, now);
+        const string openAssistantWire =
+            """{"role":"assistant","tool_calls":[{"id":"call_1","type":"function","function":{"name":"lookup","arguments":"{}"}}]}""";
         var stored = new List<ConversationMessage>
         {
             ConversationMessage.Create(
+                conversation.Id, 0, MessageRole.Assistant, string.Empty, 10, now, openAssistantWire),
+            ConversationMessage.Create(
                 conversation.Id,
-                0,
-                MessageRole.Assistant,
-                string.Empty,
-                10,
-                DateTimeOffset.UtcNow,
-                """{"role":"assistant","tool_calls":[{"id":"call_1","type":"function","function":{"name":"lookup","arguments":"{}"}}]}""")
+                1,
+                MessageRole.Tool,
+                "no id",
+                4,
+                now,
+                """{"role":"tool","content":"no id"}""")
         };
         var workingMemory = WorkingMemory.Create(
             conversation.Id,
             1,
             "# Working Memory\n## Current Goal\nExisting",
             8,
-            DateTimeOffset.UtcNow);
+            now);
 
-        _conversationRepository.Setup(r => r.FindByKeyAsync("header:inline-open-tool", It.IsAny<CancellationToken>()))
+        _conversationRepository.Setup(r => r.FindByKeyAsync("header:inline-open-unrepairable", It.IsAny<CancellationToken>()))
             .ReturnsAsync(conversation);
         _messageRepository.Setup(r => r.GetByConversationIdAsync(conversation.Id, It.IsAny<CancellationToken>()))
             .ReturnsAsync(stored);
@@ -1872,7 +1946,7 @@ public class ProxyChatCompletionServiceTests
 
         var service = CreateService();
         await service.HandleAsync(
-            BuildRequest(conversationHeader: "inline-open-tool", userContent: "next tip"),
+            BuildRequest(conversationHeader: "inline-open-unrepairable", userContent: "next hop"),
             CancellationToken.None);
 
         _chatCompletionClient.Verify(
@@ -1882,6 +1956,475 @@ public class ProxyChatCompletionServiceTests
                 It.IsAny<CancellationToken>()),
             Times.Never);
         _compressionEventRepository.Verify(r => r.Add(It.IsAny<CompressionEvent>()), Times.Never);
+        _workingMemoryRepository.Verify(r => r.Add(It.IsAny<WorkingMemory>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task HandleAsync_InlineMode_OpenStoreEmergency_TipAwaiting_RunsMidChainAccept()
+    {
+        _policy.CompressionRetainMessageCount = 1;
+        _estimatedTokensToReturn = 150;
+        _cacheAlignmentOptions = new CacheAlignmentOptions { Enabled = false, MaxConversations = 1024 };
+
+        var now = DateTimeOffset.UtcNow;
+        var conversation = Conversation.Create("header:inline-open-emergency", now);
+        conversation.CaptureSystemPromptIfAbsent("You are helpful.");
+        conversation.SetSyncedMessageCount(2, now);
+        const string priorAssistantWire =
+            """{"role":"assistant","tool_calls":[{"id":"call_prior","type":"function","function":{"name":"lookup","arguments":"{}"}}]}""";
+        const string priorToolWire =
+            """{"role":"tool","tool_call_id":"call_prior","content":"prior result"}""";
+        const string openTipWire =
+            """{"role":"assistant","tool_calls":[{"id":"call_open","type":"function","function":{"name":"lookup","arguments":"{}"}}]}""";
+        var olderUser = ConversationMessage.Create(conversation.Id, 0, MessageRole.User, "older context", 5, now);
+        var priorAssistant = ConversationMessage.Create(
+            conversation.Id, 1, MessageRole.Assistant, string.Empty, 8, now, priorAssistantWire);
+        var priorTool = ConversationMessage.Create(
+            conversation.Id, 2, MessageRole.Tool, "prior result", 4, now, priorToolWire);
+        var openTip = ConversationMessage.Create(
+            conversation.Id, 3, MessageRole.Assistant, string.Empty, 8, now, openTipWire);
+        var stored = new List<ConversationMessage> { olderUser, priorAssistant, priorTool, openTip };
+        var workingMemory = WorkingMemory.Create(
+            conversation.Id,
+            1,
+            "# Working Memory\n## Current Goal\nEarlier",
+            8,
+            now);
+
+        _conversationRepository.Setup(r => r.FindByKeyAsync("header:inline-open-emergency", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(conversation);
+        _messageRepository.Setup(r => r.GetByConversationIdAsync(conversation.Id, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(stored);
+        _workingMemoryRepository.Setup(r => r.GetLatestAsync(conversation.Id, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(workingMemory);
+
+        WorkingMemory? addedWorkingMemory = null;
+        CompressionEvent? addedEvent = null;
+        _workingMemoryRepository.Setup(r => r.Add(It.IsAny<WorkingMemory>()))
+            .Callback<WorkingMemory>(wm => addedWorkingMemory = wm);
+        _compressionEventRepository.Setup(r => r.Add(It.IsAny<CompressionEvent>()))
+            .Callback<CompressionEvent>(evt => addedEvent = evt);
+
+        var captured = new List<UpstreamRequest>();
+        _chatCompletionClient
+            .Setup(c => c.CompleteAsync(It.IsAny<ProviderEndpoint>(), It.IsAny<UpstreamRequest>(), It.IsAny<CancellationToken>()))
+            .Returns<ProviderEndpoint, UpstreamRequest, CancellationToken>((_, request, _) =>
+            {
+                captured.Add(request);
+                if (IsWrapUpRequest(request))
+                {
+                    return Task.FromResult(new UpstreamChatResult(ValidWorkingMemory, "stop", 30, 8));
+                }
+
+                return Task.FromResult(new UpstreamChatResult("normal answer", "stop", 40, 12));
+            });
+
+        var service = CreateService();
+        var result = await service.HandleAsync(
+            BuildRequest(conversationHeader: "inline-open-emergency", userContent: "next hop"),
+            CancellationToken.None);
+
+        Assert.Equal("stop", result.FinishReason);
+        Assert.Equal(2, captured.Count);
+        Assert.True(IsWrapUpRequest(captured[1]));
+        AssertWrapUpMessagesHaveNoOpenToolCalls(captured[1].Messages);
+        Assert.Equal(PromptFactory.BuildInlineWrapUpUserMessage().Content, captured[1].Messages[^1].Content);
+        // Live still carries the open tip; emergency wrap rebuilds a closed-world corpus without it.
+        Assert.Contains(captured[0].Messages, m => MessageHasToolCallId(m, "call_open"));
+        Assert.DoesNotContain(captured[1].Messages, m => MessageHasToolCallId(m, "call_open"));
+
+        Assert.False(openTip.IsFolded);
+        Assert.True(olderUser.IsFolded);
+        Assert.NotNull(addedWorkingMemory);
+        Assert.Equal(2, addedWorkingMemory!.Version);
+        Assert.NotNull(addedEvent);
+        Assert.Equal(CompressionStatus.Succeeded, addedEvent!.Status);
+        _unitOfWork.Verify(u => u.SaveChangesAsync(It.IsAny<CancellationToken>()), Times.Exactly(2));
+    }
+
+    [Fact]
+    public async Task HandleAsync_InlineMode_OpenStoreEmergency_PartialBatch_DoesNotFoldOpenAssistantOrTools()
+    {
+        _policy.CompressionRetainMessageCount = 1;
+        _estimatedTokensToReturn = 150;
+        _cacheAlignmentOptions = new CacheAlignmentOptions { Enabled = false, MaxConversations = 1024 };
+
+        var now = DateTimeOffset.UtcNow;
+        var conversation = Conversation.Create("header:inline-open-partial", now);
+        conversation.CaptureSystemPromptIfAbsent("You are helpful.");
+        conversation.SetSyncedMessageCount(2, now);
+        const string closedAssistantWire =
+            """{"role":"assistant","tool_calls":[{"id":"call_closed","type":"function","function":{"name":"lookup","arguments":"{}"}}]}""";
+        const string closedToolWire =
+            """{"role":"tool","tool_call_id":"call_closed","content":"closed result"}""";
+        const string openAssistantWire =
+            """{"role":"assistant","tool_calls":[{"id":"call_a","type":"function","function":{"name":"lookup","arguments":"{}"}},{"id":"call_b","type":"function","function":{"name":"lookup","arguments":"{}"}}]}""";
+        const string matchedToolWire =
+            """{"role":"tool","tool_call_id":"call_a","content":"partial a"}""";
+        var olderUser = ConversationMessage.Create(conversation.Id, 0, MessageRole.User, "older", 5, now);
+        var closedAssistant = ConversationMessage.Create(
+            conversation.Id, 1, MessageRole.Assistant, string.Empty, 8, now, closedAssistantWire);
+        var closedTool = ConversationMessage.Create(
+            conversation.Id, 2, MessageRole.Tool, "closed result", 4, now, closedToolWire);
+        var openAssistant = ConversationMessage.Create(
+            conversation.Id, 3, MessageRole.Assistant, string.Empty, 8, now, openAssistantWire);
+        var matchedTool = ConversationMessage.Create(
+            conversation.Id, 4, MessageRole.Tool, "partial a", 4, now, matchedToolWire);
+        var stored = new List<ConversationMessage>
+        {
+            olderUser, closedAssistant, closedTool, openAssistant, matchedTool
+        };
+        var workingMemory = WorkingMemory.Create(
+            conversation.Id,
+            1,
+            "# Working Memory\n## Current Goal\nEarlier",
+            8,
+            now);
+
+        _conversationRepository.Setup(r => r.FindByKeyAsync("header:inline-open-partial", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(conversation);
+        _messageRepository.Setup(r => r.GetByConversationIdAsync(conversation.Id, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(stored);
+        _workingMemoryRepository.Setup(r => r.GetLatestAsync(conversation.Id, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(workingMemory);
+
+        WorkingMemory? addedWorkingMemory = null;
+        CompressionEvent? addedEvent = null;
+        _workingMemoryRepository.Setup(r => r.Add(It.IsAny<WorkingMemory>()))
+            .Callback<WorkingMemory>(wm => addedWorkingMemory = wm);
+        _compressionEventRepository.Setup(r => r.Add(It.IsAny<CompressionEvent>()))
+            .Callback<CompressionEvent>(evt => addedEvent = evt);
+
+        UpstreamRequest? wrapRequest = null;
+        _chatCompletionClient
+            .Setup(c => c.CompleteAsync(It.IsAny<ProviderEndpoint>(), It.IsAny<UpstreamRequest>(), It.IsAny<CancellationToken>()))
+            .Returns<ProviderEndpoint, UpstreamRequest, CancellationToken>((_, request, _) =>
+            {
+                if (IsWrapUpRequest(request))
+                {
+                    wrapRequest = request;
+                    return Task.FromResult(new UpstreamChatResult(ValidWorkingMemory, "stop", 30, 8));
+                }
+
+                return Task.FromResult(new UpstreamChatResult("normal answer", "stop", 40, 12));
+            });
+
+        var service = CreateService();
+        await service.HandleAsync(
+            BuildRequest(conversationHeader: "inline-open-partial", userContent: "next hop"),
+            CancellationToken.None);
+
+        Assert.NotNull(wrapRequest);
+        AssertWrapUpMessagesHaveNoOpenToolCalls(wrapRequest!.Messages);
+        Assert.NotNull(addedWorkingMemory);
+        Assert.Equal(CompressionStatus.Succeeded, addedEvent!.Status);
+        Assert.False(openAssistant.IsFolded);
+        Assert.False(matchedTool.IsFolded);
+        Assert.True(olderUser.IsFolded);
+    }
+
+    [Fact]
+    public async Task HandleAsync_InlineMode_OpenStoreEmergency_FoldUnrepairable_SoftFailsWithoutWm()
+    {
+        _policy.CompressionRetainMessageCount = 1;
+        _estimatedTokensToReturn = 150;
+        _cacheAlignmentOptions = new CacheAlignmentOptions { Enabled = false, MaxConversations = 1024 };
+
+        var now = DateTimeOffset.UtcNow;
+        var conversation = Conversation.Create("header:inline-open-fold-unrepairable", now);
+        conversation.CaptureSystemPromptIfAbsent("You are helpful.");
+        conversation.SetSyncedMessageCount(2, now);
+        const string priorAssistantWire =
+            """{"role":"assistant","tool_calls":[{"id":"call_prior","type":"function","function":{"name":"lookup","arguments":"{}"}}]}""";
+        const string priorToolWire =
+            """{"role":"tool","tool_call_id":"call_prior","content":"prior result"}""";
+        const string openTipWire =
+            """{"role":"assistant","tool_calls":[{"id":"call_open","type":"function","function":{"name":"lookup","arguments":"{}"}}]}""";
+        var olderUser = ConversationMessage.Create(conversation.Id, 0, MessageRole.User, "older context", 5, now);
+        var priorAssistant = ConversationMessage.Create(
+            conversation.Id, 1, MessageRole.Assistant, string.Empty, 8, now, priorAssistantWire);
+        var priorTool = ConversationMessage.Create(
+            conversation.Id, 2, MessageRole.Tool, "prior result", 4, now, priorToolWire);
+        var openTip = ConversationMessage.Create(
+            conversation.Id, 3, MessageRole.Assistant, string.Empty, 8, now, openTipWire);
+        var repairableStore = new List<ConversationMessage> { olderUser, priorAssistant, priorTool, openTip };
+        var unrepairableStore = new List<ConversationMessage>
+        {
+            ConversationMessage.Create(
+                conversation.Id, 0, MessageRole.Assistant, string.Empty, 8, now, openTipWire),
+            ConversationMessage.Create(
+                conversation.Id,
+                1,
+                MessageRole.Tool,
+                "no id",
+                4,
+                now,
+                """{"role":"tool","content":"no id"}""")
+        };
+
+        var workingMemory = WorkingMemory.Create(
+            conversation.Id,
+            1,
+            "# Working Memory\n## Current Goal\nEarlier",
+            8,
+            now);
+
+        var getCount = 0;
+        _conversationRepository.Setup(r => r.FindByKeyAsync("header:inline-open-fold-unrepairable", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(conversation);
+        _messageRepository.Setup(r => r.GetByConversationIdAsync(conversation.Id, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(() =>
+            {
+                getCount++;
+                // Prepare sees a repairable open store; wrap-up fold sees an unrepairable frontier.
+                return getCount == 1 ? repairableStore.ToList() : unrepairableStore.ToList();
+            });
+        _messageRepository.Setup(r => r.Add(It.IsAny<ConversationMessage>()));
+        _workingMemoryRepository.Setup(r => r.GetLatestAsync(conversation.Id, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(workingMemory);
+
+        CompressionEvent? addedEvent = null;
+        _compressionEventRepository.Setup(r => r.Add(It.IsAny<CompressionEvent>()))
+            .Callback<CompressionEvent>(evt => addedEvent = evt);
+
+        _chatCompletionClient
+            .Setup(c => c.CompleteAsync(It.IsAny<ProviderEndpoint>(), It.IsAny<UpstreamRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new UpstreamChatResult("normal answer", "stop", 40, 12));
+
+        var service = CreateService();
+        await service.HandleAsync(
+            BuildRequest(conversationHeader: "inline-open-fold-unrepairable", userContent: "next hop"),
+            CancellationToken.None);
+
+        Assert.NotNull(addedEvent);
+        Assert.Equal(CompressionStatus.Failed, addedEvent!.Status);
+        Assert.Equal("wrapup_fold_unrepairable", addedEvent.ErrorMessage);
+        Assert.False(openTip.IsFolded);
+        Assert.False(olderUser.IsFolded);
+        _workingMemoryRepository.Verify(r => r.Add(It.IsAny<WorkingMemory>()), Times.Never);
+        _chatCompletionClient.Verify(
+            c => c.CompleteAsync(
+                It.IsAny<ProviderEndpoint>(),
+                It.Is<UpstreamRequest>(r => IsWrapUpRequest(r)),
+                It.IsAny<CancellationToken>()),
+            Times.Never);
+    }
+
+    [Fact]
+    public async Task HandleAsync_InlineMode_OpenStoreEmergency_WhenWrapUpReturnsToolCalls_SoftFailsWithoutWm()
+    {
+        _policy.CompressionRetainMessageCount = 1;
+        _estimatedTokensToReturn = 150;
+        _cacheAlignmentOptions = new CacheAlignmentOptions { Enabled = false, MaxConversations = 1024 };
+
+        var now = DateTimeOffset.UtcNow;
+        var conversation = Conversation.Create("header:inline-open-softfail", now);
+        conversation.CaptureSystemPromptIfAbsent("You are helpful.");
+        conversation.SetSyncedMessageCount(2, now);
+        const string priorAssistantWire =
+            """{"role":"assistant","tool_calls":[{"id":"call_prior","type":"function","function":{"name":"lookup","arguments":"{}"}}]}""";
+        const string priorToolWire =
+            """{"role":"tool","tool_call_id":"call_prior","content":"prior result"}""";
+        const string openTipWire =
+            """{"role":"assistant","tool_calls":[{"id":"call_open","type":"function","function":{"name":"lookup","arguments":"{}"}}]}""";
+        var olderUser = ConversationMessage.Create(conversation.Id, 0, MessageRole.User, "older context", 5, now);
+        var priorAssistant = ConversationMessage.Create(
+            conversation.Id, 1, MessageRole.Assistant, string.Empty, 8, now, priorAssistantWire);
+        var priorTool = ConversationMessage.Create(
+            conversation.Id, 2, MessageRole.Tool, "prior result", 4, now, priorToolWire);
+        var openTip = ConversationMessage.Create(
+            conversation.Id, 3, MessageRole.Assistant, string.Empty, 8, now, openTipWire);
+        var stored = new List<ConversationMessage> { olderUser, priorAssistant, priorTool, openTip };
+        var workingMemory = WorkingMemory.Create(
+            conversation.Id,
+            1,
+            "# Working Memory\n## Current Goal\nEarlier",
+            8,
+            now);
+
+        _conversationRepository.Setup(r => r.FindByKeyAsync("header:inline-open-softfail", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(conversation);
+        _messageRepository.Setup(r => r.GetByConversationIdAsync(conversation.Id, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(stored);
+        _workingMemoryRepository.Setup(r => r.GetLatestAsync(conversation.Id, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(workingMemory);
+
+        CompressionEvent? addedEvent = null;
+        _compressionEventRepository.Setup(r => r.Add(It.IsAny<CompressionEvent>()))
+            .Callback<CompressionEvent>(evt => addedEvent = evt);
+
+        _chatCompletionClient
+            .Setup(c => c.CompleteAsync(It.IsAny<ProviderEndpoint>(), It.IsAny<UpstreamRequest>(), It.IsAny<CancellationToken>()))
+            .Returns<ProviderEndpoint, UpstreamRequest, CancellationToken>((_, request, _) =>
+            {
+                if (IsWrapUpRequest(request))
+                {
+                    return Task.FromResult(new UpstreamChatResult(
+                        Content: string.Empty,
+                        FinishReason: "tool_calls",
+                        PromptTokens: 30,
+                        CompletionTokens: 8,
+                        AssistantMessageJson:
+                        """{"role":"assistant","content":null,"tool_calls":[{"id":"call_wrap","type":"function","function":{"name":"lookup","arguments":"{}"}}]}"""));
+                }
+
+                return Task.FromResult(new UpstreamChatResult("normal answer", "stop", 40, 12));
+            });
+
+        var service = CreateService();
+        await service.HandleAsync(
+            BuildRequest(conversationHeader: "inline-open-softfail", userContent: "next hop"),
+            CancellationToken.None);
+
+        Assert.NotNull(addedEvent);
+        Assert.Equal(CompressionStatus.Failed, addedEvent!.Status);
+        Assert.Equal("wrapup_tool_calls", addedEvent.ErrorMessage);
+        Assert.False(openTip.IsFolded);
+        Assert.False(olderUser.IsFolded);
+        _workingMemoryRepository.Verify(r => r.Add(It.IsAny<WorkingMemory>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task HandleAsync_InlineMode_OpenStoreEmergency_DuringCooldown_SkipsWrapUp()
+    {
+        // Two stored assistants after last success → need MinTurns > 2 to stay in cooldown.
+        _policy.MinTurnsBetweenGenerations = 3;
+        _estimatedTokensToReturn = 150;
+
+        var now = DateTimeOffset.UtcNow;
+        var conversation = Conversation.Create("header:inline-open-cooldown", now);
+        conversation.CaptureSystemPromptIfAbsent("You are helpful.");
+        conversation.SetSyncedMessageCount(2, now);
+        var latestSuccess = CompressionEvent.Start(
+            conversation.Id,
+            CompressionMode.Inline,
+            100,
+            1,
+            1,
+            now.AddMinutes(-10));
+        latestSuccess.Succeed(10, 2, now.AddMinutes(-5), 20, 5);
+        const string priorAssistantWire =
+            """{"role":"assistant","tool_calls":[{"id":"call_prior","type":"function","function":{"name":"lookup","arguments":"{}"}}]}""";
+        const string priorToolWire =
+            """{"role":"tool","tool_call_id":"call_prior","content":"prior result"}""";
+        const string openTipWire =
+            """{"role":"assistant","tool_calls":[{"id":"call_open","type":"function","function":{"name":"lookup","arguments":"{}"}}]}""";
+        var stored = new List<ConversationMessage>
+        {
+            ConversationMessage.Create(conversation.Id, 0, MessageRole.User, "older", 5, now.AddMinutes(-2)),
+            ConversationMessage.Create(
+                conversation.Id, 1, MessageRole.Assistant, string.Empty, 8, now.AddMinutes(-1), priorAssistantWire),
+            ConversationMessage.Create(
+                conversation.Id, 2, MessageRole.Tool, "prior result", 4, now.AddSeconds(-45), priorToolWire),
+            ConversationMessage.Create(
+                conversation.Id, 3, MessageRole.Assistant, string.Empty, 8, now.AddSeconds(-30), openTipWire)
+        };
+        var workingMemory = WorkingMemory.Create(
+            conversation.Id,
+            2,
+            "# Working Memory\n## Current Goal\nExisting",
+            8,
+            now.AddMinutes(-5));
+
+        _conversationRepository.Setup(r => r.FindByKeyAsync("header:inline-open-cooldown", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(conversation);
+        _messageRepository.Setup(r => r.GetByConversationIdAsync(conversation.Id, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(stored);
+        _workingMemoryRepository.Setup(r => r.GetLatestAsync(conversation.Id, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(workingMemory);
+        _chatCompletionClient
+            .Setup(c => c.CompleteAsync(It.IsAny<ProviderEndpoint>(), It.IsAny<UpstreamRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new UpstreamChatResult("normal answer", "stop", 10, 2));
+
+        var service = CreateService();
+        _compressionEventRepository
+            .Setup(r => r.GetLatestSucceededAsync(conversation.Id, CompressionMode.Inline, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(latestSuccess);
+        await service.HandleAsync(
+            BuildRequest(conversationHeader: "inline-open-cooldown", userContent: "next hop"),
+            CancellationToken.None);
+
+        _chatCompletionClient.Verify(
+            c => c.CompleteAsync(
+                It.IsAny<ProviderEndpoint>(),
+                It.Is<UpstreamRequest>(r => IsWrapUpRequest(r)),
+                It.IsAny<CancellationToken>()),
+            Times.Never);
+        _compressionEventRepository.Verify(r => r.Add(It.IsAny<CompressionEvent>()), Times.Never);
+    }
+
+    private static bool MessageHasToolCallId(ChatMessage message, string toolCallId)
+    {
+        if (message.Role != MessageRole.Assistant || message.RawWireMessage is not { } wire)
+        {
+            return false;
+        }
+
+        if (!wire.TryGetProperty("tool_calls", out var toolCalls)
+            || toolCalls.ValueKind != JsonValueKind.Array)
+        {
+            return false;
+        }
+
+        foreach (var call in toolCalls.EnumerateArray())
+        {
+            if (call.TryGetProperty("id", out var id)
+                && id.ValueKind == JsonValueKind.String
+                && string.Equals(id.GetString(), toolCallId, StringComparison.Ordinal))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static void AssertWrapUpMessagesHaveNoOpenToolCalls(IReadOnlyList<ChatMessage> messages)
+    {
+        var toolResults = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var message in messages)
+        {
+            if (message.Role != MessageRole.Tool || message.RawWireMessage is not { } toolWire)
+            {
+                continue;
+            }
+
+            if (toolWire.TryGetProperty("tool_call_id", out var toolCallId)
+                && toolCallId.ValueKind == JsonValueKind.String
+                && toolCallId.GetString() is { } id)
+            {
+                toolResults.Add(id);
+            }
+        }
+
+        foreach (var message in messages)
+        {
+            if (message.Role != MessageRole.Assistant || message.RawWireMessage is not { } wire)
+            {
+                continue;
+            }
+
+            if (!wire.TryGetProperty("tool_calls", out var toolCalls)
+                || toolCalls.ValueKind != JsonValueKind.Array
+                || toolCalls.GetArrayLength() == 0)
+            {
+                continue;
+            }
+
+            foreach (var call in toolCalls.EnumerateArray())
+            {
+                if (!call.TryGetProperty("id", out var idEl)
+                    || idEl.ValueKind != JsonValueKind.String
+                    || idEl.GetString() is not { } announcedId)
+                {
+                    continue;
+                }
+
+                Assert.True(
+                    toolResults.Contains(announcedId),
+                    "Wrap-up corpus must not include unresolved assistant tool_calls.");
+            }
+        }
     }
 
     [Fact]
@@ -2662,6 +3205,82 @@ public class ProxyChatCompletionServiceTests
         Assert.True(fixture.OlderUser.IsFolded);
         Assert.False(fixture.PriorAssistant.IsFolded);
         Assert.False(fixture.PriorTool.IsFolded);
+    }
+
+    [Fact]
+    public async Task HandleStreamingAsync_InlineMode_OpenStoreEmergency_HoldsToolCallsUntilWrapUp()
+    {
+        _policy.CompressionRetainMessageCount = 1;
+        _estimatedTokensToReturn = 150;
+        _cacheAlignmentOptions = new CacheAlignmentOptions { Enabled = false, MaxConversations = 1024 };
+
+        var now = DateTimeOffset.UtcNow;
+        var conversation = Conversation.Create("header:inline-open-stream", now);
+        conversation.CaptureSystemPromptIfAbsent("You are helpful.");
+        conversation.SetSyncedMessageCount(2, now);
+        const string priorAssistantWire =
+            """{"role":"assistant","tool_calls":[{"id":"call_prior","type":"function","function":{"name":"lookup","arguments":"{}"}}]}""";
+        const string priorToolWire =
+            """{"role":"tool","tool_call_id":"call_prior","content":"prior result"}""";
+        const string openTipWire =
+            """{"role":"assistant","tool_calls":[{"id":"call_open","type":"function","function":{"name":"lookup","arguments":"{}"}}]}""";
+        var olderUser = ConversationMessage.Create(conversation.Id, 0, MessageRole.User, "older", 5, now);
+        var priorAssistant = ConversationMessage.Create(
+            conversation.Id, 1, MessageRole.Assistant, string.Empty, 8, now, priorAssistantWire);
+        var priorTool = ConversationMessage.Create(
+            conversation.Id, 2, MessageRole.Tool, "prior result", 4, now, priorToolWire);
+        var openTip = ConversationMessage.Create(
+            conversation.Id, 3, MessageRole.Assistant, string.Empty, 8, now, openTipWire);
+        var stored = new List<ConversationMessage> { olderUser, priorAssistant, priorTool, openTip };
+        var existingWorkingMemory = WorkingMemory.Create(
+            conversation.Id,
+            1,
+            "# Working Memory\n## Current Goal\nExisting",
+            8,
+            now);
+
+        _conversationRepository.Setup(r => r.FindByKeyAsync("header:inline-open-stream", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(conversation);
+        _messageRepository.Setup(r => r.GetByConversationIdAsync(conversation.Id, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(stored);
+        _workingMemoryRepository.Setup(r => r.GetLatestAsync(conversation.Id, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(existingWorkingMemory);
+
+        var ledger = new List<string>();
+        WorkingMemory? addedWorkingMemory = null;
+        _workingMemoryRepository.Setup(r => r.Add(It.IsAny<WorkingMemory>()))
+            .Callback<WorkingMemory>(wm => addedWorkingMemory = wm);
+
+        SetupMidChainStream();
+        _chatCompletionClient
+            .Setup(c => c.CompleteAsync(It.IsAny<ProviderEndpoint>(), It.IsAny<UpstreamRequest>(), It.IsAny<CancellationToken>()))
+            .Returns<ProviderEndpoint, UpstreamRequest, CancellationToken>((_, request, _) =>
+            {
+                Assert.True(IsWrapUpRequest(request));
+                AssertWrapUpMessagesHaveNoOpenToolCalls(request.Messages);
+                Assert.DoesNotContain(WrittenSse(ledger), ToolCallWireHelper.StreamChunkHasToolCalls);
+                ledger.Add("wrapup:returned");
+                return Task.FromResult(new UpstreamChatResult(ValidWorkingMemory, "stop", 30, 8));
+            });
+
+        var service = CreateService();
+        var result = await service.HandleStreamingAsync(
+            BuildRequest(conversationHeader: "inline-open-stream", userContent: "next hop", stream: true),
+            _ => { },
+            (chunk, _) =>
+            {
+                ledger.Add("sse:" + chunk);
+                return Task.CompletedTask;
+            },
+            CancellationToken.None);
+
+        Assert.Equal("tool_calls", result.FinishReason);
+        var wrapUpIndex = ledger.IndexOf("wrapup:returned");
+        Assert.True(wrapUpIndex >= 0);
+        Assert.True(wrapUpIndex < ledger.IndexOf("sse:" + MidChainToolCallFrame));
+        Assert.NotNull(addedWorkingMemory);
+        Assert.False(openTip.IsFolded);
+        Assert.True(olderUser.IsFolded);
     }
 
     [Fact]

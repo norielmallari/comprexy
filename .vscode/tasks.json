@@ -48,6 +48,43 @@
                 "${workspaceFolder}/apps/proxy/Comprexy.Api.csproj"
             ],
             "problemMatcher": "$msCompile"
+        },
+        {
+            "label": "dashboard:dev",
+            "type": "shell",
+            "command": "npm run dev",
+            "options": {
+                "cwd": "${workspaceFolder}/apps/dashboard"
+            },
+            "problemMatcher": [],
+            "isBackground": true
+        },
+        {
+            "label": "dashboard:build",
+            "type": "shell",
+            "command": "npm run build",
+            "options": {
+                "cwd": "${workspaceFolder}/apps/dashboard"
+            },
+            "problemMatcher": []
+        },
+        {
+            "label": "dashboard:test",
+            "type": "shell",
+            "command": "npm test",
+            "options": {
+                "cwd": "${workspaceFolder}/apps/dashboard"
+            },
+            "problemMatcher": []
+        },
+        {
+            "label": "dashboard:test:e2e",
+            "type": "shell",
+            "command": "npm run test:e2e",
+            "options": {
+                "cwd": "${workspaceFolder}/apps/dashboard"
+            },
+            "problemMatcher": []
         }
     ]
 }

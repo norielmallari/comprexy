@@ -44,6 +44,19 @@ internal static class BenchRunCommand
         var startedAt = DateTimeOffset.UtcNow;
         var runner = new MafConversationRunner(options);
         var armManifests = new List<BenchArmManifest>();
+        // Baseline results keyed by script name so the treatment arm can early-stop at X+margin.
+        var baselineByScript = new Dictionary<string, BenchConversationRun>(StringComparer.Ordinal);
+
+        if (options.StopAfterBaselineFailure)
+        {
+            Console.Error.WriteLine(
+                $"  survival    early-stop on (margin {options.SurvivalMarginPrompts}); " +
+                "--continue-past-baseline-failure to run full scripts after a baseline kill");
+        }
+        else
+        {
+            Console.Error.WriteLine("  survival    early-stop off (--continue-past-baseline-failure)");
+        }
 
         await using var fleet = await BenchHostFleet.StartAsync(options, arms, cancellationToken);
 
@@ -61,16 +74,43 @@ internal static class BenchRunCommand
 
             foreach (var script in scripts)
             {
-                Console.Error.Write($"  {script.Name} … ");
-                var run = await runner.RunAsync(arm, resolved, script, git.Commit, cancellationToken);
+                SurvivalEarlyStop? survival = null;
+                if (options.StopAfterBaselineFailure &&
+                    arm.Name == BenchArm.Comprexy &&
+                    baselineByScript.TryGetValue(script.Name, out var baseline) &&
+                    BaselineKillZone.SurvivalStopAfterPrompts(baseline, options.SurvivalMarginPrompts) is { } stopAfter)
+                {
+                    survival = new SurvivalEarlyStop(stopAfter, baseline, options.SurvivalMarginPrompts);
+                    Console.Error.Write(
+                        $"  {script.Name} … (survival stop after {stopAfter} prompts; baseline {baseline.Status} at {baseline.PromptsCompleted}/{baseline.PromptCount}) ");
+                }
+                else
+                {
+                    Console.Error.Write($"  {script.Name} … ");
+                }
+
+                var run = await runner.RunAsync(
+                    arm, resolved, script, git.Commit, survival, cancellationToken);
                 conversationRuns.Add(run);
+
+                if (arm.Name == BenchArm.MafCompact)
+                {
+                    baselineByScript[script.Name] = run;
+                }
+
                 Console.Error.WriteLine(
                     $"{run.Status} ({run.PromptsCompleted}/{run.PromptCount} prompts, {run.ConversationWallClockMs / 1000.0:0.0}s, client compaction {(run.ClientCompactionCount is { } fired ? $"x{fired}" : "off")})");
 
                 if (run.FailureReason is not null)
                 {
                     Console.Error.WriteLine($"    reason: {run.FailureReason}");
-                    Console.Error.WriteLine($"    arm log tail:{System.Environment.NewLine}{fleet.ReadArmLogTail(arm.Name)}");
+                    if (run.Status is ConversationStatus.Failed
+                        or ConversationStatus.TimedOut
+                        or ConversationStatus.CompletionStalled)
+                    {
+                        Console.Error.WriteLine(
+                            $"    arm log tail:{System.Environment.NewLine}{fleet.ReadArmLogTail(arm.Name)}");
+                    }
                 }
             }
 
@@ -120,7 +160,7 @@ internal static class BenchRunCommand
         Console.Error.WriteLine($"next: ./comprexy.sh bench report --run-id {options.RunId}");
 
         return manifest.Arms.SelectMany(a => a.Conversations)
-            .All(c => c.Status == ConversationStatus.Completed)
+            .All(c => ConversationStatus.IsSuccessfulTerminal(c.Status))
             ? 0
             : 1;
     }

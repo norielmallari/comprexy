@@ -1,6 +1,6 @@
 namespace Comprexy.Bench.Model;
 
-/// <summary>Terminal state of one conversation run. Only <c>completed</c> pairs into headlines.</summary>
+/// <summary>Terminal state of one conversation run. Only <c>completed</c> pairs into token headlines.</summary>
 internal static class ConversationStatus
 {
     public const string Completed = "completed";
@@ -16,6 +16,15 @@ internal static class ConversationStatus
     public const string CompletionStalled = "completion_stalled";
 
     public const string Failed = "failed";
+
+    /// <summary>
+    /// Treatment stopped after clearing the baseline kill zone (default harness behavior). Not a
+    /// paired full-script token result; survival past the baseline failure is the result.
+    /// </summary>
+    public const string SurvivedBaselineFailure = "survived_baseline_failure";
+
+    public static bool IsSuccessfulTerminal(string status) =>
+        status is Completed or SurvivedBaselineFailure;
 }
 
 /// <summary>

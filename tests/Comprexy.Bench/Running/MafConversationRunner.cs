@@ -24,6 +24,7 @@ internal sealed class MafConversationRunner(BenchOptions options)
         ResolvedArmConfiguration resolvedConfiguration,
         ConversationScript script,
         string workspaceCommit,
+        SurvivalEarlyStop? survivalEarlyStop,
         CancellationToken cancellationToken)
     {
         var model = options.Model
@@ -66,6 +67,17 @@ internal sealed class MafConversationRunner(BenchOptions options)
             {
                 await agent.RunAsync(prompt, session, cancellationToken: conversationCts.Token);
                 completedPrompts++;
+
+                if (survivalEarlyStop is { } stop && completedPrompts >= stop.StopAfterPrompts)
+                {
+                    status = ConversationStatus.SurvivedBaselineFailure;
+                    failureReason = BaselineKillZone.FormatSurvivalReason(
+                        stop.Baseline,
+                        completedPrompts,
+                        script.Prompts.Count,
+                        stop.MarginPrompts);
+                    break;
+                }
             }
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)

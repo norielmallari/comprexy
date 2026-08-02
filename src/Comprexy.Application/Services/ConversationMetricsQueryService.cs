@@ -1,6 +1,7 @@
 using Comprexy.Application.Abstractions;
 using Comprexy.Application.Models.Telemetry;
 using Comprexy.Domain.Entities;
+using Comprexy.Domain.Enums;
 
 namespace Comprexy.Application.Services;
 
@@ -13,6 +14,7 @@ public sealed class ConversationMetricsQueryService : IConversationMetricsQueryS
     private readonly ITokenEstimator _tokenEstimator;
     private readonly IEvidenceMarkdownService _evidenceMarkdownService;
     private readonly IRegressionDetector _regressionDetector;
+    private readonly PromptTokenBasisContext _promptTokenBasis;
 
     public ConversationMetricsQueryService(
         IConversationMetricsSummaryRepository summaryRepository,
@@ -21,7 +23,8 @@ public sealed class ConversationMetricsQueryService : IConversationMetricsQueryS
         IWorkingMemoryRepository workingMemoryRepository,
         ITokenEstimator tokenEstimator,
         IEvidenceMarkdownService evidenceMarkdownService,
-        IRegressionDetector regressionDetector)
+        IRegressionDetector regressionDetector,
+        PromptTokenBasisContext promptTokenBasis)
     {
         _summaryRepository = summaryRepository;
         _turnMetricRepository = turnMetricRepository;
@@ -30,7 +33,10 @@ public sealed class ConversationMetricsQueryService : IConversationMetricsQueryS
         _tokenEstimator = tokenEstimator;
         _evidenceMarkdownService = evidenceMarkdownService;
         _regressionDetector = regressionDetector;
+        _promptTokenBasis = promptTokenBasis;
     }
+
+    private PromptTokenBasis Basis => _promptTokenBasis.Resolve();
 
     public Task<IReadOnlyList<ConversationMetricsSummary>> ListConversationSummariesAsync(
         CancellationToken cancellationToken) =>
@@ -79,11 +85,17 @@ public sealed class ConversationMetricsQueryService : IConversationMetricsQueryS
                         ? stored
                         : 0;
 
+                var preparedPromptTokens = Basis == PromptTokenBasis.ProviderActual
+                    && turn.ActualPromptTokens is int actual
+                    && actual > 0
+                        ? actual
+                        : turn.CompressedInputTokensEstimated;
+
                 // Clamp only the residual: system + WM can exceed a tiny prepared prompt when the
                 // captured prompt was re-estimated with a different encoding.
                 var remainder = Math.Max(
                     0,
-                    turn.CompressedInputTokensEstimated - systemPromptTokens - workingMemoryTokens);
+                    preparedPromptTokens - systemPromptTokens - workingMemoryTokens);
 
                 return new ConversationTurnContextBreakdown
                 {
@@ -110,19 +122,46 @@ public sealed class ConversationMetricsQueryService : IConversationMetricsQueryS
             return null;
         }
 
+        var basis = Basis;
         var take = TelemetryQueryLimits.ClampTake(maxTurns);
         // Same DbContext scope: sequential EF calls only.
-        var turns = await _turnMetricRepository.ListBoundedProjectionsAsync(
+        var turns = PromptTokenBasisProjector.ApplyBasis(
+            await _turnMetricRepository.ListBoundedProjectionsAsync(
+                conversationId,
+                take,
+                cancellationToken),
+            basis);
+        var rawFinal = await _turnMetricRepository.GetFinalTurnProjectionAsync(
             conversationId,
-            take,
             cancellationToken);
-        var finalTurn = await _turnMetricRepository.GetFinalTurnProjectionAsync(
-            conversationId,
-            cancellationToken);
-        var savingsAggregates = await _turnMetricRepository.GetSavingsAggregatesAsync(
-            conversationId,
-            cancellationToken);
+        var finalTurn = rawFinal is null
+            ? null
+            : PromptTokenBasisProjector.ApplyBasis(rawFinal, basis);
 
+        ConversationTurnSavingsAggregates? savingsAggregates;
+        if (basis == PromptTokenBasis.ProviderActual)
+        {
+            var allMetrics = await _turnMetricRepository.ListByConversationIdAsync(
+                conversationId,
+                cancellationToken) ?? [];
+            var projected = allMetrics
+                .Select(m => PromptTokenBasisProjector.Project(m, basis))
+                .ToList();
+            savingsAggregates = projected.Count == 0
+                ? null
+                : new ConversationTurnSavingsAggregates
+                {
+                    SimpleAverageNetTokenSavingsRatio = projected.Average(p => p.NetTokenSavingsRatio),
+                    PeakNetTokenSavingsRatio = projected.Max(p => p.NetTokenSavingsRatio),
+                    TurnCount = projected.Count
+                };
+
+            return MapSummaryFromProjected(rollup, turns, finalTurn, savingsAggregates, projected);
+        }
+
+        savingsAggregates = await _turnMetricRepository.GetSavingsAggregatesAsync(
+            conversationId,
+            cancellationToken);
         return MapSummary(rollup, turns, finalTurn, savingsAggregates);
     }
 
@@ -132,10 +171,12 @@ public sealed class ConversationMetricsQueryService : IConversationMetricsQueryS
         CancellationToken cancellationToken)
     {
         var take = TelemetryQueryLimits.ClampTake(maxTurns);
-        var turns = await _turnMetricRepository.ListBoundedProjectionsAsync(
-            conversationId,
-            take,
-            cancellationToken);
+        var turns = PromptTokenBasisProjector.ApplyBasis(
+            await _turnMetricRepository.ListBoundedProjectionsAsync(
+                conversationId,
+                take,
+                cancellationToken),
+            Basis);
 
         return turns.Select(MapTurn).ToList();
     }
@@ -144,12 +185,13 @@ public sealed class ConversationMetricsQueryService : IConversationMetricsQueryS
         Guid conversationId,
         CancellationToken cancellationToken)
     {
-        var final = await _turnMetricRepository.GetFinalTurnProjectionAsync(conversationId, cancellationToken);
-        if (final is null)
+        var raw = await _turnMetricRepository.GetFinalTurnProjectionAsync(conversationId, cancellationToken);
+        if (raw is null)
         {
             return null;
         }
 
+        var final = PromptTokenBasisProjector.ApplyBasis(raw, Basis);
         return new FinalTurnSnapshotDto
         {
             ConversationId = conversationId,
@@ -171,10 +213,12 @@ public sealed class ConversationMetricsQueryService : IConversationMetricsQueryS
         CancellationToken cancellationToken)
     {
         var take = TelemetryQueryLimits.ClampTake(maxTurns);
-        var turns = await _turnMetricRepository.ListBoundedProjectionsAsync(
-            conversationId,
-            take,
-            cancellationToken);
+        var turns = PromptTokenBasisProjector.ApplyBasis(
+            await _turnMetricRepository.ListBoundedProjectionsAsync(
+                conversationId,
+                take,
+                cancellationToken),
+            Basis);
 
         return PhaseCalculator.Calculate(turns);
     }
@@ -185,10 +229,12 @@ public sealed class ConversationMetricsQueryService : IConversationMetricsQueryS
         CancellationToken cancellationToken)
     {
         var take = TelemetryQueryLimits.ClampTake(maxTurns);
-        var turns = await _turnMetricRepository.ListBoundedProjectionsAsync(
-            conversationId,
-            take,
-            cancellationToken);
+        var turns = PromptTokenBasisProjector.ApplyBasis(
+            await _turnMetricRepository.ListBoundedProjectionsAsync(
+                conversationId,
+                take,
+                cancellationToken),
+            Basis);
         if (turns.Count == 0)
         {
             return null;
@@ -260,6 +306,67 @@ public sealed class ConversationMetricsQueryService : IConversationMetricsQueryS
         };
     }
 
+    private ConversationSummaryDto MapSummaryFromProjected(
+        ConversationSummaryRollup rollup,
+        IReadOnlyList<ConversationTurnProjection> sampleTurns,
+        ConversationTurnProjection? finalTurn,
+        ConversationTurnSavingsAggregates? savingsAggregates,
+        IReadOnlyList<PromptTokenBasisProjector.ProjectedTurn> allProjected)
+    {
+        long baseline = 0;
+        long compressedPromptAndCompletion = 0;
+        long netExcludingOverhead = 0;
+        foreach (var p in allProjected)
+        {
+            baseline += p.BaselineTotalTokens;
+            compressedPromptAndCompletion += p.CompressedTotalTokens;
+            netExcludingOverhead += p.NetTokensSaved;
+        }
+
+        // Match stored rollup: TotalActual includes compression overhead; net subtracts it.
+        var overhead = rollup.TotalCompressionOverheadTokens;
+        var totalNet = netExcludingOverhead - overhead;
+        var weighted = baseline > 0
+            ? Math.Round((double)totalNet / baseline, 6)
+            : 0d;
+
+        var ratios = sampleTurns.Select(t => t.NetTokenSavingsRatio).OrderBy(r => r).ToList();
+        var median = ratios.Count == 0
+            ? 0d
+            : ratios.Count % 2 == 1
+                ? ratios[ratios.Count / 2]
+                : (ratios[(ratios.Count / 2) - 1] + ratios[ratios.Count / 2]) / 2d;
+
+        var simpleAverage = savingsAggregates is null
+            ? 0d
+            : Math.Round(savingsAggregates.SimpleAverageNetTokenSavingsRatio, 6);
+        var peak = savingsAggregates is null
+            ? 0d
+            : Math.Round(savingsAggregates.PeakNetTokenSavingsRatio, 6);
+
+        var sampleCount = sampleTurns.Count;
+        return new ConversationSummaryDto
+        {
+            ConversationId = rollup.ConversationId,
+            TurnCount = rollup.TotalTurns,
+            Model = finalTurn?.Model,
+            TotalBaselineTokensEstimated = baseline,
+            TotalCompressedTokensEstimated = compressedPromptAndCompletion,
+            TotalNetTokensSaved = totalNet,
+            TotalCompressionOverheadTokens = overhead,
+            WeightedSavingsRatio = weighted,
+            SimpleAverageSavingsRatio = simpleAverage,
+            MedianSavingsRatio = Math.Round(median, 6),
+            PeakSavingsRatio = peak,
+            FinalTurnSavingsRatio = Math.Round(finalTurn?.NetTokenSavingsRatio ?? 0d, 6),
+            SampleTurnCount = sampleCount,
+            SampleFirstTurnIndex = sampleCount == 0 ? null : sampleTurns[0].TurnIndex,
+            SampleLastTurnIndex = sampleCount == 0 ? null : sampleTurns[^1].TurnIndex,
+            IsPartialTurnSample = sampleCount < rollup.TotalTurns,
+            SavingsRegressions = _regressionDetector.DetectSavingsRegressions(sampleTurns)
+        };
+    }
+
     private ConversationSummaryDto MapSummary(
         ConversationSummaryRollup rollup,
         IReadOnlyList<ConversationTurnProjection> sampleTurns,
@@ -322,6 +429,11 @@ public sealed class ConversationMetricsQueryService : IConversationMetricsQueryS
                 (double)turn.CompressedTotalTokensEstimated / turn.BaselineTotalTokensEstimated,
                 6)
             : 0d;
+        // PromptEstimateError always compares provider usage to the stored tiktoken estimate.
+        // When ProviderActual rewrites CompressedInputTokensEstimated, use Actual when both match
+        // would zero the error — keep the stored estimate via Actual - (Actual when projected).
+        // After ApplyBasis, CompressedInputTokensEstimated may equal Actual; error is then 0, which
+        // is correct for the projected view. For Estimated basis, this is actual - estimate.
         int? promptEstimateError = turn.ActualPromptTokens.HasValue
             ? turn.ActualPromptTokens.Value - turn.CompressedInputTokensEstimated
             : null;

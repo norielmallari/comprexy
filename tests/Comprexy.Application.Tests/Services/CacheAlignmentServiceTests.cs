@@ -147,6 +147,112 @@ public class CacheAlignmentServiceTests
     }
 
     [Fact]
+    public void ProjectWrapUp_MidChain_OpenRepairableSuffix_RebuildsClosedWorld_IgnoresOpenLive()
+    {
+        var service = CreateService();
+        var conversationId = Guid.NewGuid();
+        var now = DateTimeOffset.UtcNow;
+        var closedUser = ConversationMessage.Create(conversationId, 0, MessageRole.User, "closed", 1, now);
+        var openAssistant = ConversationMessage.Create(
+            conversationId,
+            1,
+            MessageRole.Assistant,
+            string.Empty,
+            1,
+            now,
+            """{"role":"assistant","tool_calls":[{"id":"call_open","type":"function","function":{"name":"lookup","arguments":"{}"}}]}""");
+        var tipUser = ConversationMessage.Create(conversationId, 2, MessageRole.User, "next", 1, now);
+        var prefix = new List<ChatMessage>
+        {
+            new(MessageRole.System, "sys"),
+            new(MessageRole.User, "closed")
+        };
+        Assert.True(service.TryStorePrefix(conversationId, prefix, [closedUser.Id], 0, 0, null));
+        service.ReplaceSuffix(conversationId, [openAssistant.Id, tipUser.Id]);
+
+        var openLive = new List<ChatMessage>
+        {
+            new(MessageRole.System, "sys"),
+            new(MessageRole.User, "closed"),
+            new(
+                MessageRole.Assistant,
+                string.Empty,
+                System.Text.Json.JsonDocument.Parse(
+                    """{"role":"assistant","tool_calls":[{"id":"call_open","type":"function","function":{"name":"lookup","arguments":"{}"}}]}""")
+                    .RootElement.Clone()),
+            new(MessageRole.User, "next")
+        };
+
+        var projection = service.ProjectWrapUp(
+            conversationId,
+            CacheAlignmentWrapUpMode.MidChainPrefix,
+            visibleAssistant: null,
+            wrapUpTip: new ChatMessage(MessageRole.User, "wrap-up tip"),
+            messagesById: new Dictionary<Guid, ConversationMessage>
+            {
+                [closedUser.Id] = closedUser,
+                [openAssistant.Id] = openAssistant,
+                [tipUser.Id] = tipUser
+            },
+            liveMessages: openLive);
+
+        Assert.False(projection.SoftFailed);
+        Assert.Equal("wrap-up tip", projection.Messages[^1].Content);
+        Assert.DoesNotContain(
+            projection.Messages,
+            m => m.Role == MessageRole.Assistant
+                 && m.RawWireMessage is { } wire
+                 && wire.TryGetProperty("tool_calls", out var toolCalls)
+                 && toolCalls.ValueKind == System.Text.Json.JsonValueKind.Array
+                 && toolCalls.GetArrayLength() > 0);
+        Assert.Contains(projection.Messages, m => m.Content == "next");
+    }
+
+    [Fact]
+    public void ProjectWrapUp_MidChain_OpenUnrepairableSuffix_SoftFails()
+    {
+        var service = CreateService();
+        var conversationId = Guid.NewGuid();
+        var now = DateTimeOffset.UtcNow;
+        // Open assistant excluded, but a following tool with no extractable tool_call_id stays
+        // and becomes an orphan after exclusion → TryEnsureWrapUpReady fails closed.
+        var openAssistant = ConversationMessage.Create(
+            conversationId,
+            0,
+            MessageRole.Assistant,
+            string.Empty,
+            1,
+            now,
+            """{"role":"assistant","tool_calls":[{"id":"call_open","type":"function","function":{"name":"lookup","arguments":"{}"}}]}""");
+        var orphanShapedTool = ConversationMessage.Create(
+            conversationId,
+            1,
+            MessageRole.Tool,
+            "no id",
+            1,
+            now,
+            """{"role":"tool","content":"no id"}""");
+        var prefix = new List<ChatMessage> { new(MessageRole.System, "sys") };
+        Assert.True(service.TryStorePrefix(conversationId, prefix, [], 0, 0, null));
+        service.ReplaceSuffix(conversationId, [openAssistant.Id, orphanShapedTool.Id]);
+
+        var projection = service.ProjectWrapUp(
+            conversationId,
+            CacheAlignmentWrapUpMode.MidChainPrefix,
+            visibleAssistant: null,
+            wrapUpTip: new ChatMessage(MessageRole.User, "wrap-up tip"),
+            messagesById: new Dictionary<Guid, ConversationMessage>
+            {
+                [openAssistant.Id] = openAssistant,
+                [orphanShapedTool.Id] = orphanShapedTool
+            });
+
+        Assert.True(projection.SoftFailed);
+        Assert.Equal("suffix_open_unrepairable", projection.SoftFailReason);
+        Assert.Empty(projection.Messages);
+    }
+
+    [Fact]
     public void Eviction_WhenOverMaxConversations_RemovesLeastRecentlyUsed()
     {
         var service = CreateService(maxConversations: 2);

@@ -28,9 +28,25 @@ internal sealed class ReportAgent(BenchOptions options, string controlApiBaseUrl
         - Quote only figures that appear in the numbers block or that a tool returned. Never
           estimate, round differently, or extrapolate a number.
         - Write two to four short paragraphs of plain prose. No headings, no bullet lists, no table.
+        - Output ONLY those final paragraphs. Do not include plans, critiques, checklists,
+          scratch notes, or XML/thinking tags — the response body is pasted into summary.md as-is.
         - Say what the run shows and what it does not. A single local run on one model is not a
           general benchmark; say so plainly rather than hedging vaguely.
         - If the treatment arm's client-side compaction fired, name it as a limit on the result.
+        - Outcome status `survived_baseline_failure` is intentional harness early-stop: after
+          maf-compact died of a provider/context failure on prompt X (having completed X-1),
+          comprexy stopped once it completed past that kill zone (default stop at prompt X).
+          Treat that as a survival / kill-zone result, not as a crash and not as a full-script
+          token pair.
+        - When the numbers block includes a "Common completed prefix" table, that is the fair token
+          and wall-clock comparison for survival runs: prompts 1..X-1 on both arms. Quote those
+          sent / saved / reduction / peak / wall clock figures. Do not use full-run treatment
+          wall clock or totals against a shorter baseline conversation, and do not invent prefix
+          figures the block does not list. Token figures in the numbers block use provider-actual
+          prompt basis (usage.prompt_tokens when present) on both arms — do not re-derive from
+          tiktoken estimates in tool output if the numbers block already states the basis.
+        - Status `failed` with an operator-abort reason is different from `survived_baseline_failure`;
+          only the latter is the harness's first-class survival outcome.
         - No marketing language, no severity labels, no local file paths, no request-log content.
         """;
 
@@ -101,23 +117,45 @@ internal sealed class ReportAgent(BenchOptions options, string controlApiBaseUrl
 
     private static string BuildPrompt(BenchMetrics metrics, string numbersBlock)
     {
-        var conversationIds = metrics.Paired.Select(p => new
+        var conversationIds = new List<object>();
+        foreach (var pair in metrics.Paired)
         {
-            p.Name,
-            MafCompactConversationId = p.MafCompact.ConversationId,
-            ComprexyConversationId = p.Comprexy.ConversationId
-        });
+            conversationIds.Add(new
+            {
+                pair.Name,
+                Kind = "paired",
+                MafCompactConversationId = pair.MafCompact.ConversationId,
+                ComprexyConversationId = pair.Comprexy.ConversationId
+            });
+        }
+
+        foreach (var survival in metrics.Survivals)
+        {
+            if (survival.MafCompact is null && survival.Comprexy is null)
+            {
+                continue;
+            }
+
+            conversationIds.Add(new
+            {
+                survival.Name,
+                Kind = "survival",
+                MafCompactConversationId = survival.MafCompact?.ConversationId,
+                ComprexyConversationId = survival.Comprexy?.ConversationId
+            });
+        }
 
         return $"""
             Deterministic numbers block for this run:
 
             {numbersBlock}
 
-            Paired conversation ids, if you want to inspect a run with the telemetry tools:
+            Conversation ids (paired full-script and survival early-stop), if you want to inspect
+            a run with the telemetry tools:
 
             {JsonSerializer.Serialize(conversationIds, BenchJson.Options)}
 
-            Write the interpretation section now.
+            Write the interpretation section now. Reply with only the final two to four paragraphs.
             """;
     }
 

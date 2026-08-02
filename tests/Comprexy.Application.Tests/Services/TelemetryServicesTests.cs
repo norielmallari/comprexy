@@ -1,7 +1,10 @@
 using Comprexy.Application.Abstractions;
+using Comprexy.Application.Configuration;
 using Comprexy.Application.Models.Telemetry;
 using Comprexy.Application.Services;
 using Comprexy.Domain.Entities;
+using Comprexy.Domain.Enums;
+using Microsoft.Extensions.Options;
 using Moq;
 
 namespace Comprexy.Application.Tests.Services;
@@ -458,15 +461,24 @@ public class ConversationMetricsTelemetryTests
                 + breakdown.HistoryAndToolsTokensEstimated);
     }
 
-    private ConversationMetricsQueryService CreateService() =>
-        new(
+    private ConversationMetricsQueryService CreateService()
+    {
+        var options = new Mock<IOptionsMonitor<MetricsOptions>>();
+        options.Setup(o => o.CurrentValue).Returns(new MetricsOptions
+        {
+            // Telemetry rollup unit tests assert estimate-ledger MapSummary paths.
+            PromptTokenBasis = PromptTokenBasis.Estimated
+        });
+        return new ConversationMetricsQueryService(
             _summaries.Object,
             _turns.Object,
             _conversations.Object,
             _workingMemories.Object,
             _tokenEstimator.Object,
             new EvidenceMarkdownService(),
-            new RegressionDetector());
+            new RegressionDetector(),
+            new PromptTokenBasisContext(options.Object));
+    }
 
     private void SetupTurns(Guid id, IReadOnlyList<ConversationTurnProjection> turns) =>
         _turns

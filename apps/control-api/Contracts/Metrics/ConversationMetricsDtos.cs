@@ -1,5 +1,7 @@
 using Comprexy.Application.Models.Telemetry;
+using Comprexy.Application.Services;
 using Comprexy.Domain.Entities;
+using Comprexy.Domain.Enums;
 
 namespace Comprexy.ControlApi.Contracts.Metrics;
 
@@ -20,6 +22,8 @@ public sealed class ConversationMetricsListItemDto
     public long TotalCompressionOverheadTokens { get; init; }
 
     public DateTimeOffset UpdatedAt { get; init; }
+
+    public PromptTokenBasis PromptTokenBasis { get; init; }
 }
 
 public sealed class ConversationMetricsSummaryDto
@@ -49,6 +53,8 @@ public sealed class ConversationMetricsSummaryDto
     public DateTimeOffset CreatedAt { get; init; }
 
     public DateTimeOffset UpdatedAt { get; init; }
+
+    public PromptTokenBasis PromptTokenBasis { get; init; }
 }
 
 public sealed class ConversationTurnMetricDto
@@ -110,62 +116,125 @@ public sealed class ConversationTurnMetricDto
     public int? PrepareDurationMs { get; init; }
 
     public DateTimeOffset CreatedAt { get; init; }
+
+    public PromptTokenBasis PromptTokenBasis { get; init; }
 }
 
 public static class ConversationMetricsMapper
 {
     public static ConversationMetricsListItemDto ToListItem(ConversationMetricsSummary summary) =>
-        new()
+        ToListItem(summary, turns: null, PromptTokenBasis.Estimated);
+
+    public static ConversationMetricsListItemDto ToListItem(
+        ConversationMetricsSummary summary,
+        IReadOnlyList<ConversationTurnMetric>? turns,
+        PromptTokenBasis basis)
+    {
+        if (basis == PromptTokenBasis.Estimated || turns is null)
+        {
+            return new ConversationMetricsListItemDto
+            {
+                ConversationId = summary.ConversationId,
+                TotalTurns = summary.TotalTurns,
+                TotalRawInputTokensEstimated = summary.TotalRawInputTokensEstimated,
+                TotalActualTokensEstimated = summary.TotalActualTokensEstimated,
+                TotalNetTokensSaved = summary.TotalNetTokensSaved,
+                AverageTokenSavingsRatio = summary.AverageTokenSavingsRatio,
+                TotalCompressionOverheadTokens = summary.TotalCompressionOverheadTokens,
+                UpdatedAt = summary.UpdatedAt,
+                PromptTokenBasis = PromptTokenBasis.Estimated
+            };
+        }
+
+        var projected = ProjectSummary(summary, turns);
+        return new ConversationMetricsListItemDto
         {
             ConversationId = summary.ConversationId,
             TotalTurns = summary.TotalTurns,
-            TotalRawInputTokensEstimated = summary.TotalRawInputTokensEstimated,
-            TotalActualTokensEstimated = summary.TotalActualTokensEstimated,
-            TotalNetTokensSaved = summary.TotalNetTokensSaved,
-            AverageTokenSavingsRatio = summary.AverageTokenSavingsRatio,
+            TotalRawInputTokensEstimated = projected.TotalRawInputTokens,
+            TotalActualTokensEstimated = projected.TotalActualTokens,
+            TotalNetTokensSaved = projected.TotalNetTokensSaved,
+            AverageTokenSavingsRatio = projected.AverageTokenSavingsRatio,
             TotalCompressionOverheadTokens = summary.TotalCompressionOverheadTokens,
-            UpdatedAt = summary.UpdatedAt
+            UpdatedAt = summary.UpdatedAt,
+            PromptTokenBasis = PromptTokenBasis.ProviderActual
         };
+    }
 
     public static ConversationMetricsSummaryDto ToSummaryDto(ConversationMetricsSummary summary) =>
-        new()
+        ToSummaryDto(summary, turns: null, PromptTokenBasis.Estimated);
+
+    public static ConversationMetricsSummaryDto ToSummaryDto(
+        ConversationMetricsSummary summary,
+        IReadOnlyList<ConversationTurnMetric>? turns,
+        PromptTokenBasis basis)
+    {
+        if (basis == PromptTokenBasis.Estimated || turns is null)
+        {
+            return new ConversationMetricsSummaryDto
+            {
+                ConversationId = summary.ConversationId,
+                TotalTurns = summary.TotalTurns,
+                TotalRawInputTokensEstimated = summary.TotalRawInputTokensEstimated,
+                TotalCompressedPromptTokens = summary.TotalCompressedPromptTokens,
+                TotalCompletionTokens = summary.TotalCompletionTokens,
+                TotalCompressionOverheadTokens = summary.TotalCompressionOverheadTokens,
+                TotalBaselineTokensEstimated = summary.TotalBaselineTokensEstimated,
+                TotalActualTokensEstimated = summary.TotalActualTokensEstimated,
+                TotalNetTokensSaved = summary.TotalNetTokensSaved,
+                AverageTokenSavingsRatio = summary.AverageTokenSavingsRatio,
+                CompressionEventCount = summary.CompressionEventCount,
+                CreatedAt = summary.CreatedAt,
+                UpdatedAt = summary.UpdatedAt,
+                PromptTokenBasis = PromptTokenBasis.Estimated
+            };
+        }
+
+        var projected = ProjectSummary(summary, turns);
+        return new ConversationMetricsSummaryDto
         {
             ConversationId = summary.ConversationId,
             TotalTurns = summary.TotalTurns,
-            TotalRawInputTokensEstimated = summary.TotalRawInputTokensEstimated,
-            TotalCompressedPromptTokens = summary.TotalCompressedPromptTokens,
-            TotalCompletionTokens = summary.TotalCompletionTokens,
+            TotalRawInputTokensEstimated = projected.TotalRawInputTokens,
+            TotalCompressedPromptTokens = projected.TotalCompressedPromptTokens,
+            TotalCompletionTokens = projected.TotalCompletionTokens,
             TotalCompressionOverheadTokens = summary.TotalCompressionOverheadTokens,
-            TotalBaselineTokensEstimated = summary.TotalBaselineTokensEstimated,
-            TotalActualTokensEstimated = summary.TotalActualTokensEstimated,
-            TotalNetTokensSaved = summary.TotalNetTokensSaved,
-            AverageTokenSavingsRatio = summary.AverageTokenSavingsRatio,
+            TotalBaselineTokensEstimated = projected.TotalBaselineTokens,
+            TotalActualTokensEstimated = projected.TotalActualTokens,
+            TotalNetTokensSaved = projected.TotalNetTokensSaved,
+            AverageTokenSavingsRatio = projected.AverageTokenSavingsRatio,
             CompressionEventCount = summary.CompressionEventCount,
             CreatedAt = summary.CreatedAt,
-            UpdatedAt = summary.UpdatedAt
+            UpdatedAt = summary.UpdatedAt,
+            PromptTokenBasis = PromptTokenBasis.ProviderActual
         };
+    }
 
     public static ConversationTurnMetricDto ToTurnDto(
         ConversationTurnMetric turn,
-        ConversationTurnContextBreakdown? breakdown = null) =>
-        new()
+        ConversationTurnContextBreakdown? breakdown = null,
+        PromptTokenBasis basis = PromptTokenBasis.Estimated)
+    {
+        var projected = PromptTokenBasisProjector.Project(turn, basis);
+        var compressedInput = projected.CompressedInputTokens;
+        return new ConversationTurnMetricDto
         {
             Id = turn.Id,
             TurnIndex = turn.TurnIndex,
             RequestStartedAt = turn.RequestStartedAt,
             Model = turn.Model,
-            RawInputTokensEstimated = turn.RawInputTokensEstimated,
-            CompressedInputTokensEstimated = turn.CompressedInputTokensEstimated,
+            RawInputTokensEstimated = projected.RawInputTokens,
+            CompressedInputTokensEstimated = compressedInput,
             SystemPromptTokensEstimated = breakdown?.SystemPromptTokensEstimated ?? 0,
             WorkingMemoryTokensEstimated = breakdown?.WorkingMemoryTokensEstimated ?? 0,
             HistoryAndToolsTokensEstimated =
-                breakdown?.HistoryAndToolsTokensEstimated ?? turn.CompressedInputTokensEstimated,
+                breakdown?.HistoryAndToolsTokensEstimated ?? compressedInput,
             ActualPromptTokens = turn.ActualPromptTokens,
             ActualCompletionTokens = turn.ActualCompletionTokens,
-            BaselineTotalTokensEstimated = turn.BaselineTotalTokensEstimated,
-            CompressedTotalTokensEstimated = turn.CompressedTotalTokensEstimated,
-            NetTokensSaved = turn.NetTokensSaved,
-            NetTokenSavingsRatio = turn.NetTokenSavingsRatio,
+            BaselineTotalTokensEstimated = projected.BaselineTotalTokens,
+            CompressedTotalTokensEstimated = projected.CompressedTotalTokens,
+            NetTokensSaved = projected.NetTokensSaved,
+            NetTokenSavingsRatio = projected.NetTokenSavingsRatio,
             SoftBudgetExceeded = turn.SoftBudgetExceeded,
             HardBudgetExceeded = turn.HardBudgetExceeded,
             TrimTriggered = turn.TrimTriggered,
@@ -175,6 +244,43 @@ public static class ConversationMetricsMapper
             DurationMs = turn.DurationMs,
             UpstreamDurationMs = turn.UpstreamDurationMs,
             PrepareDurationMs = turn.PrepareDurationMs,
-            CreatedAt = turn.CreatedAt
+            CreatedAt = turn.CreatedAt,
+            PromptTokenBasis = basis
         };
+    }
+
+    private static (
+        long TotalRawInputTokens,
+        long TotalCompressedPromptTokens,
+        long TotalCompletionTokens,
+        long TotalBaselineTokens,
+        long TotalActualTokens,
+        long TotalNetTokensSaved,
+        double AverageTokenSavingsRatio) ProjectSummary(
+        ConversationMetricsSummary summary,
+        IReadOnlyList<ConversationTurnMetric> turns)
+    {
+        long raw = 0;
+        long compressedPrompt = 0;
+        long completion = 0;
+        long baseline = 0;
+        long compressedTotals = 0;
+        foreach (var turn in turns)
+        {
+            var p = PromptTokenBasisProjector.Project(turn, PromptTokenBasis.ProviderActual);
+            raw += p.RawInputTokens;
+            compressedPrompt += p.CompressedInputTokens;
+            completion += p.ActualCompletionTokens;
+            baseline += p.BaselineTotalTokens;
+            compressedTotals += p.CompressedTotalTokens;
+        }
+
+        var totalActual = compressedTotals + summary.TotalCompressionOverheadTokens;
+        var totalNet = baseline - totalActual;
+        var average = baseline > 0
+            ? Math.Round((double)totalNet / baseline, 6)
+            : 0d;
+
+        return (raw, compressedPrompt, completion, baseline, totalActual, totalNet, average);
+    }
 }

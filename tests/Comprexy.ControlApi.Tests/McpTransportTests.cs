@@ -1,8 +1,10 @@
 using System.Net;
 using System.Text.Json;
 using Comprexy.Application.Abstractions;
+using Comprexy.Application.Configuration;
 using Comprexy.Application.Models.Retrieval;
 using Comprexy.Application.Models.Telemetry;
+using Comprexy.Application.Services;
 using Comprexy.ControlApi.Configuration;
 using Comprexy.ControlApi.Endpoints;
 using Comprexy.ControlApi.Mcp;
@@ -115,6 +117,8 @@ public sealed class McpTransportTests
                 services.AddRouting();
                 services.AddLogging();
                 services.AddHttpContextAccessor();
+                services.AddOptions<MetricsOptions>();
+                services.AddScoped<PromptTokenBasisContext>();
                 services.AddSingleton(metrics);
                 services.AddSingleton(retrieval);
                 services.Configure<McpTelemetryOptions>(_ => { });

@@ -1436,11 +1436,18 @@ public class ProxyChatCompletionService
             // Phase 1: durable visible transcript + turn metrics before wrap-up.
             await _unitOfWork.SaveChangesAsync(cancellationToken);
 
-            var midChainPrefix = ToolCallChainState.HasOpenToolCalls([assistantEntity]);
-            var wrapUpMode = midChainPrefix
+            var forceMidChain = prepared.InlineOpenStoreEmergency
+                || ToolCallChainState.HasOpenToolCalls([assistantEntity]);
+            var wrapUpMode = forceMidChain
                 ? InlineWrapUpMode.MidChainPrefix
                 : InlineWrapUpMode.StopTurn;
-            if (wrapUpMode == InlineWrapUpMode.MidChainPrefix)
+            if (prepared.InlineOpenStoreEmergency)
+            {
+                _logger.LogInformation(
+                    "Inline mid-chain prefix wrap-up forced for conversation {ConversationId}: prepare observed an open stored tool chain; folding closed prefix only.",
+                    prepared.Conversation.Id);
+            }
+            else if (wrapUpMode == InlineWrapUpMode.MidChainPrefix)
             {
                 _logger.LogInformation(
                     "Inline mid-chain prefix wrap-up for conversation {ConversationId}: final assistant has open tool calls; folding closed prefix only.",
@@ -1517,14 +1524,42 @@ public class ProxyChatCompletionService
         var storedMessages = await _messageRepository.GetByConversationIdAsync(
             prepared.Conversation.Id,
             cancellationToken);
-        var unfoldedStored = storedMessages.Where(m => !m.IsFolded);
+        var unfoldedStored = storedMessages
+            .Where(m => !m.IsFolded)
+            .OrderBy(m => m.Sequence)
+            .ToList();
+        IReadOnlyList<ConversationMessage> closedPrefix = Array.Empty<ConversationMessage>();
         List<ConversationMessage> foldUniverse;
         if (wrapUpMode == InlineWrapUpMode.MidChainPrefix)
         {
-            foldUniverse = unfoldedStored
-                .Where(m => m.Id != assistantEntity.Id)
-                .OrderBy(m => m.Sequence)
-                .ToList();
+            if (!WrapUpReadiness.TryEnsureWrapUpReady(
+                    unfoldedStored,
+                    out closedPrefix,
+                    out var excludedOpen))
+            {
+                var failedEvent = CompressionEvent.Start(
+                    prepared.Conversation.Id,
+                    CompressionMode.Inline,
+                    prepared.PreFollowUpEstimatedTokens,
+                    existingWorkingMemory?.Version,
+                    foldedMessageCount: 0,
+                    now: acceptStartedAt);
+                failedEvent.Fail("wrapup_fold_unrepairable", _clock.UtcNow);
+                _compressionEventRepository.Add(failedEvent);
+                _logger.LogWarning(
+                    "Inline mid-chain prefix wrap-up soft-failed for conversation {ConversationId}: wrapup_fold_unrepairable.",
+                    prepared.Conversation.Id);
+                return;
+            }
+
+            foldUniverse = closedPrefix.OrderBy(m => m.Sequence).ToList();
+            if (excludedOpen.Count > 0)
+            {
+                _logger.LogInformation(
+                    "Inline mid-chain prefix wrap-up excluded open messages for conversation {ConversationId}: sequences={Sequences}.",
+                    prepared.Conversation.Id,
+                    string.Join(',', excludedOpen.OrderBy(m => m.Sequence).Select(m => m.Sequence)));
+            }
         }
         else
         {
@@ -1603,7 +1638,9 @@ public class ProxyChatCompletionService
                     visibleAssistant,
                     wrapUpUser,
                     messagesById,
-                    prepared.UpstreamRequest.Messages);
+                    prepared.InlineOpenStoreEmergency
+                        ? null
+                        : prepared.UpstreamRequest.Messages);
                 if (projection.SoftFailed)
                 {
                     compressionEvent.Fail(
@@ -1621,7 +1658,15 @@ public class ProxyChatCompletionService
             else
             {
                 IEnumerable<ChatMessage> wrapPrefix = prepared.UpstreamRequest.Messages;
-                if (wrapUpMode == InlineWrapUpMode.StopTurn)
+                if (wrapUpMode == InlineWrapUpMode.MidChainPrefix
+                    && prepared.InlineOpenStoreEmergency)
+                {
+                    wrapPrefix = _contextBuilder.BuildLivePrefix(
+                        prepared.Conversation.SystemPrompt,
+                        existingWorkingMemory,
+                        closedPrefix);
+                }
+                else if (wrapUpMode == InlineWrapUpMode.StopTurn)
                 {
                     // Prefer the upstream assistant wire object (incl. reasoning_content) so the follow-up
                     // continues the live turn's exact message shape for KV-cache prefix alignment.

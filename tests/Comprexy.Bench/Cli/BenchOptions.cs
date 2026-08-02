@@ -75,5 +75,18 @@ internal sealed record BenchOptions
     /// <summary><c>publish</c>: required acknowledgement that a human reviewed the summary.</summary>
     public bool Confirm { get; init; }
 
+    /// <summary>
+    /// When true (default), after <c>maf-compact</c> dies of a provider/context failure at prompt
+    /// X completed, the <c>comprexy</c> arm stops once it completes X+margin prompts
+    /// (<see cref="SurvivalMarginPrompts"/>). Opt out with <c>--continue-past-baseline-failure</c>.
+    /// </summary>
+    public bool StopAfterBaselineFailure { get; init; } = true;
+
+    /// <summary>
+    /// Extra prompts the treatment arm must complete past the baseline's
+    /// <c>PromptsCompleted</c> before survival early-stop (default 1 → stop at X+1).
+    /// </summary>
+    public int SurvivalMarginPrompts { get; init; } = 1;
+
     public string RunDirectory => BenchPaths.RunDirectory(RunId);
 }

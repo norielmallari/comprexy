@@ -1,3 +1,4 @@
+using Comprexy.Application.Services;
 using Comprexy.Domain.Entities;
 using Comprexy.Domain.Enums;
 
@@ -252,5 +253,107 @@ public class CompressionEventUsageTests
         Assert.Equal(3, evt.FoldedMessageCount);
         Assert.Equal(120, evt.TotalTokens);
         Assert.True(evt.TokensAreEstimated);
+    }
+}
+
+public class PromptTokenBasisProjectorTests
+{
+    [Fact]
+    public void ProviderActual_ScalesRawBaseline_AndUsesActualCompressedInput()
+    {
+        var turn = ConversationTurnMetric.Create(
+            Guid.NewGuid(),
+            turnIndex: 1,
+            requestStartedAt: DateTimeOffset.UtcNow,
+            model: "test-model",
+            rawInputTokensEstimated: 80_000,
+            compressedInputTokensEstimated: 20_000,
+            actualPromptTokens: 30_000,
+            actualCompletionTokens: 1_000,
+            softBudgetExceeded: false,
+            hardBudgetExceeded: false,
+            trimTriggered: false,
+            workingMemoryVersionUsed: null,
+            rawMessageCount: 10,
+            sentMessageCount: 4,
+            requestHash: "r",
+            sentPayloadHash: "s",
+            durationMs: null,
+            upstreamDurationMs: null,
+            prepareDurationMs: null,
+            createdAt: DateTimeOffset.UtcNow);
+
+        var projected = PromptTokenBasisProjector.Project(turn, PromptTokenBasis.ProviderActual);
+
+        Assert.Equal(120_000, projected.RawInputTokens);
+        Assert.Equal(30_000, projected.CompressedInputTokens);
+        Assert.Equal(121_000, projected.BaselineTotalTokens);
+        Assert.Equal(31_000, projected.CompressedTotalTokens);
+        Assert.Equal(90_000, projected.NetTokensSaved);
+    }
+
+    [Fact]
+    public void Estimated_LeavesStoredProofUnchanged()
+    {
+        var turn = ConversationTurnMetric.Create(
+            Guid.NewGuid(),
+            turnIndex: 1,
+            requestStartedAt: DateTimeOffset.UtcNow,
+            model: "test-model",
+            rawInputTokensEstimated: 80_000,
+            compressedInputTokensEstimated: 20_000,
+            actualPromptTokens: 30_000,
+            actualCompletionTokens: 1_000,
+            softBudgetExceeded: false,
+            hardBudgetExceeded: false,
+            trimTriggered: false,
+            workingMemoryVersionUsed: null,
+            rawMessageCount: 10,
+            sentMessageCount: 4,
+            requestHash: "r",
+            sentPayloadHash: "s",
+            durationMs: null,
+            upstreamDurationMs: null,
+            prepareDurationMs: null,
+            createdAt: DateTimeOffset.UtcNow);
+
+        var projected = PromptTokenBasisProjector.Project(turn, PromptTokenBasis.Estimated);
+
+        Assert.Equal(turn.RawInputTokensEstimated, projected.RawInputTokens);
+        Assert.Equal(turn.CompressedInputTokensEstimated, projected.CompressedInputTokens);
+        Assert.Equal(turn.BaselineTotalTokensEstimated, projected.BaselineTotalTokens);
+        Assert.Equal(turn.CompressedTotalTokensEstimated, projected.CompressedTotalTokens);
+        Assert.Equal(turn.NetTokensSaved, projected.NetTokensSaved);
+    }
+
+    [Fact]
+    public void ProviderActual_FallsBackToEstimate_WhenUsageMissing()
+    {
+        var turn = ConversationTurnMetric.Create(
+            Guid.NewGuid(),
+            turnIndex: 1,
+            requestStartedAt: DateTimeOffset.UtcNow,
+            model: "test-model",
+            rawInputTokensEstimated: 10_000,
+            compressedInputTokensEstimated: 8_000,
+            actualPromptTokens: null,
+            actualCompletionTokens: 500,
+            softBudgetExceeded: false,
+            hardBudgetExceeded: false,
+            trimTriggered: false,
+            workingMemoryVersionUsed: null,
+            rawMessageCount: 3,
+            sentMessageCount: 3,
+            requestHash: "r",
+            sentPayloadHash: "s",
+            durationMs: null,
+            upstreamDurationMs: null,
+            prepareDurationMs: null,
+            createdAt: DateTimeOffset.UtcNow);
+
+        var projected = PromptTokenBasisProjector.Project(turn, PromptTokenBasis.ProviderActual);
+
+        Assert.Equal(turn.CompressedTotalTokensEstimated, projected.CompressedTotalTokens);
+        Assert.Equal(turn.NetTokensSaved, projected.NetTokensSaved);
     }
 }

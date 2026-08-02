@@ -28,6 +28,7 @@ public static class ServiceCollectionExtensions
 
         services.AddSingleton<IEvidenceMarkdownService, EvidenceMarkdownService>();
         services.AddSingleton<IRegressionDetector, RegressionDetector>();
+        services.AddScoped<PromptTokenBasisContext>();
         services.AddScoped<IConversationMetricsQueryService, ConversationMetricsQueryService>();
         services.AddScoped<IConversationRetrievalQueryService, ConversationRetrievalQueryService>();
 

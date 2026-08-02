@@ -43,7 +43,7 @@ internal static class SummaryComposer
             $"Model: `{metrics.Model ?? "resolved by the proxy"}`. Comprexy commit `{Short(metrics.ComprexyCommit)}`{(metrics.RepositoryDirty ? " (working tree dirty)" : string.Empty)}.");
         builder.AppendLine();
         builder.AppendLine(
-            "Token figures are Comprexy's stored per-turn tiktoken estimates read back from control-api. \"Sent\" is what each arm's proxy forwarded upstream; the treatment arm is additionally charged its compression overhead. Proxy turn timing covers prepare, upstream, and persist for a turn — it is not the full agent loop, which includes local tool execution.");
+            "Token figures use control-api Metrics:PromptTokenBasis=ProviderActual: per-turn prompt tokens prefer upstream usage.prompt_tokens when present (tiktoken estimate otherwise); completion stays usage.completion_tokens; both arms are projected the same way. \"Sent\" is what each arm's proxy forwarded upstream under that basis; the treatment arm is additionally charged its compression overhead. Proxy turn timing covers prepare, upstream, and persist for a turn — it is not the full agent loop, which includes local tool execution.");
         builder.AppendLine();
 
         builder.AppendLine("## Results");
@@ -70,8 +70,11 @@ internal static class SummaryComposer
 
         if (metrics.Paired.Count == 0)
         {
-            builder.AppendLine("No conversation completed on both arms, so there is no paired token comparison. Where one arm finished and the other did not, that difference in outcome is the result.");
-            builder.AppendLine();
+            if (metrics.Survivals.Count == 0)
+            {
+                builder.AppendLine("No conversation completed on both arms, so there is no paired token comparison. Where one arm finished and the other did not, that difference in outcome is the result.");
+                builder.AppendLine();
+            }
         }
         else
         {
@@ -107,6 +110,54 @@ internal static class SummaryComposer
             }
         }
 
+        if (metrics.Survivals.Count > 0)
+        {
+            builder.AppendLine("### Survival past baseline kill zone");
+            builder.AppendLine();
+            builder.AppendLine(
+                "Default harness behavior: when `maf-compact` dies of a provider/context failure after X prompts, `comprexy` stops once it completes X+margin (default margin 1). That is not a full-script token pair — clearing the kill zone is the result. Opt out at run time with `--continue-past-baseline-failure`.");
+            builder.AppendLine();
+            builder.AppendLine("| Conversation | Baseline end | Treatment stop | Peak sent full run (maf / cx) |");
+            builder.AppendLine("| --- | --- | --- | ---: |");
+            foreach (var survival in metrics.Survivals)
+            {
+                var baselineEnd =
+                    $"{survival.BaselineStatus} @ {survival.BaselinePromptsCompleted}/{survival.PromptCount}";
+                var treatmentStop =
+                    $"{ConversationStatus.SurvivedBaselineFailure} @ {survival.TreatmentPromptsCompleted}/{survival.PromptCount}";
+                var peakMaf = survival.MafCompact is { } m ? Format(m.PeakPromptTokensSent) : "n/a";
+                var peakCx = survival.Comprexy is { } c ? Format(c.PeakPromptTokensSent) : "n/a";
+                builder.AppendLine(
+                    $"| {survival.Name} | {baselineEnd} | {treatmentStop} | {peakMaf} / {peakCx} |");
+            }
+
+            builder.AppendLine();
+            var withPrefix = metrics.Survivals.Where(s => s.CommonPrefix is not null).ToList();
+            if (withPrefix.Count > 0)
+            {
+                builder.AppendLine(
+                    "Common completed prefix (prompts 1..X-1, where X is the baseline's erroring prompt): token totals from stored turns before the next script user message, projected with Metrics:PromptTokenBasis=ProviderActual (upstream usage when present), with Comprexy compression-event overhead in the same window charged against the treatment arm. Wall clock is first script user → start of prompt X (includes local tool time); proxy-turn ms is the sum of per-turn DurationMs in that window.");
+                builder.AppendLine();
+                builder.AppendLine(
+                    "| Conversation | Prefix prompts | Sent (maf-compact) | Sent + overhead (comprexy) | Saved | Reduction | Peak sent (maf / cx) | Turns (maf / cx) | Wall clock (maf / cx) | Proxy turn ms (maf / cx) |");
+                builder.AppendLine("| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |");
+                foreach (var survival in withPrefix)
+                {
+                    var p = survival.CommonPrefix!;
+                    builder.AppendLine(
+                        $"| {survival.Name} | 1..{p.CommonCompletedPrompts} (X={p.ErroringBaselinePrompt}) | {Format(p.MafCompactTokensSent)} | {Format(p.ComprexyTokensSentIncludingOverhead)} | {Format(p.TokensSavedVersusBaseline)} | {Percent(p.TokenReductionRatio)} | {Format(p.MafCompactPeakPromptTokensSent)} / {Format(p.ComprexyPeakPromptTokensSent)} | {p.MafCompactTurnCount} / {p.ComprexyTurnCount} | {Seconds(p.MafCompactWallClockMs)} / {Seconds(p.ComprexyWallClockMs)} | {Seconds(p.MafCompactProxyTurnDurationMs)} / {Seconds(p.ComprexyProxyTurnDurationMs)} |");
+                }
+
+                builder.AppendLine();
+            }
+
+            foreach (var survival in metrics.Survivals.Where(s => s.TreatmentDetail is not null))
+            {
+                builder.AppendLine($"`comprexy` / {survival.Name}: {survival.TreatmentDetail}");
+                builder.AppendLine();
+            }
+        }
+
         return builder.ToString();
     }
 
@@ -125,6 +176,13 @@ internal static class SummaryComposer
                 builder.AppendLine($"- {pair.Name}: {caveat}");
                 wrote = true;
             }
+        }
+
+        foreach (var survival in metrics.Survivals)
+        {
+            builder.AppendLine(
+                $"- {survival.Name}: survival — baseline {survival.BaselineStatus} after {survival.BaselinePromptsCompleted}/{survival.PromptCount}; treatment stopped at {survival.TreatmentPromptsCompleted}/{survival.PromptCount} (`survived_baseline_failure`). Not a full-script token pair.");
+            wrote = true;
         }
 
         foreach (var excluded in metrics.Excluded)
@@ -171,15 +229,37 @@ internal static class SummaryComposer
 
     public static string ComposeDeterministicInterpretation(BenchMetrics metrics)
     {
+        if (metrics.Survivals.Count > 0 && metrics.Paired.Count == 0)
+        {
+            var bits = metrics.Survivals.Select(s =>
+            {
+                var head =
+                    $"{s.Name}: maf-compact {s.BaselineStatus} after {s.BaselinePromptsCompleted}/{s.PromptCount}, " +
+                    $"comprexy {ConversationStatus.SurvivedBaselineFailure} at {s.TreatmentPromptsCompleted}/{s.PromptCount}";
+                if (s.CommonPrefix is { } p)
+                {
+                    return head +
+                           $"; common prefix prompts 1..{p.CommonCompletedPrompts}: maf-compact sent {Format(p.MafCompactTokensSent)} versus comprexy {Format(p.ComprexyTokensSentIncludingOverhead)} including overhead ({Percent(p.TokenReductionRatio)}, peak {Format(p.MafCompactPeakPromptTokensSent)} / {Format(p.ComprexyPeakPromptTokensSent)}, wall clock {Seconds(p.MafCompactWallClockMs)} / {Seconds(p.ComprexyWallClockMs)})";
+                }
+
+                return head;
+            });
+            return
+                $"No full-script paired token comparison because survival early-stop ended the treatment arm after it cleared the baseline kill zone. " +
+                string.Join("; ", bits) +
+                ". Prefer the common-prefix figures when contrasting spend; the survival latch itself is the outcome asymmetry. " +
+                "Narrative interpretation was not generated for this run (--no-agent).";
+        }
+
         if (metrics.Paired.Count == 0)
         {
             var finished = metrics.Outcomes
-                .Where(o => o.Status == ConversationStatus.Completed)
-                .Select(o => o.Arm)
+                .Where(o => ConversationStatus.IsSuccessfulTerminal(o.Status))
+                .Select(o => $"{o.Arm} ({o.Status})")
                 .Distinct(StringComparer.Ordinal)
                 .ToList();
             var unfinished = metrics.Outcomes
-                .Where(o => o.Status != ConversationStatus.Completed)
+                .Where(o => !ConversationStatus.IsSuccessfulTerminal(o.Status))
                 .Select(o => $"{o.Arm} ({o.Status})")
                 .Distinct(StringComparer.Ordinal)
                 .ToList();
@@ -199,9 +279,14 @@ internal static class SummaryComposer
             _ => "sent the same number of tokens upstream as the baseline arm"
         };
 
+        var survivalNote = metrics.Survivals.Count > 0
+            ? $" Separately, {metrics.Headline.SurvivalConversationCount} conversation(s) used survival early-stop rather than a full-script pair."
+            : string.Empty;
+
         return
-            $"On this workload the `comprexy` arm {direction} once compression overhead is charged against it. " +
-            "Narrative interpretation was not generated for this run (--no-agent).";
+            $"On this workload the `comprexy` arm {direction} once compression overhead is charged against it." +
+            survivalNote +
+            " Narrative interpretation was not generated for this run (--no-agent).";
     }
 
     private static string Format(long value) => value.ToString("N0", CultureInfo.InvariantCulture);

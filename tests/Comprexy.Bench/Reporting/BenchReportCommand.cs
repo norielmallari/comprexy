@@ -39,7 +39,7 @@ internal static class BenchReportCommand
         await BenchJson.WriteAsync(metricsPath, metrics, cancellationToken);
         Console.Error.WriteLine($"metrics: {metricsPath}");
         Console.Error.WriteLine(
-            $"  paired {metrics.Headline.PairedConversationCount}, excluded {metrics.Headline.ExcludedConversationCount}");
+            $"  paired {metrics.Headline.PairedConversationCount}, survivals {metrics.Headline.SurvivalConversationCount}, excluded {metrics.Headline.ExcludedConversationCount}");
 
         var interpretation = SummaryComposer.ComposeDeterministicInterpretation(metrics);
         if (!options.NoAgent)
