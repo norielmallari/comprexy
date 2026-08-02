@@ -346,7 +346,7 @@ By default, if `maf-compact` dies of a provider/context failure after X prompts 
 ./comprexy.sh bench publish --run-id <runId> --confirm  # copy the reviewed summary to docs/evidence/
 ```
 
-Each run writes to a gitignored directory named for the UTC minute it started, `reports/bench/20260801-1200/`, so a repeat never overwrites earlier artifacts; `--run-id <label>` appends a label to that stamp (`20260801-1200-short-deep`), and `report` and `publish` take the resulting directory name. Only reviewed summaries are committed. Token numbers come from Comprexy's own turn metrics, so a run needs a configured provider and enough wall clock for two full passes. Design notes: [`docs/plans/benchmarking-implementation-plan.md`](docs/plans/benchmarking-implementation-plan.md).
+Each run writes to a gitignored directory named for the UTC minute it started, `reports/bench/20260801-1200/`, so a repeat never overwrites earlier artifacts; `--run-id <label>` appends a label to that stamp (`20260801-1200-short-deep`), and `report` and `publish` take the resulting directory name. Only reviewed summaries are committed. Token numbers come from Comprexy's own turn metrics, so a run needs a configured provider and enough wall clock for two full passes.
 
 ## Architecture
 
