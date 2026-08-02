@@ -11,7 +11,9 @@ public sealed record ToolIrCachedFileBody(
     string Path,
     string Body,
     string ContentHash,
-    IReadOnlyList<int> LineStartOffsets);
+    IReadOnlyList<int> LineStartOffsets,
+    bool BodyComplete = false,
+    int? TotalLineCount = null);
 
 /// <summary>
 /// Process-local file-body cache keyed by conversationId + path. Owns a private MemoryCache.
@@ -46,17 +48,35 @@ public sealed class ToolIrFileBodyCache : IDisposable
         return false;
     }
 
-    public ToolIrCachedFileBody Set(Guid conversationId, string path, string body) =>
-        SetCore(conversationId, path, body, replaceShorter: true);
+    public ToolIrCachedFileBody Set(
+        Guid conversationId,
+        string path,
+        string body,
+        bool bodyComplete,
+        int? totalLineCount = null) =>
+        SetCore(conversationId, path, body, bodyComplete, totalLineCount, replaceShorter: true);
 
     /// <summary>
     /// Caches a file body, but will not replace an existing entry that has more content lines
-    /// (guards against partial Read windows overwriting a fuller cache).
+    /// (guards against partial Read windows overwriting a fuller cache). Prefers a complete entry
+    /// over an incomplete one regardless of line count, and never replaces a complete entry with
+    /// an incomplete one.
     /// </summary>
-    public ToolIrCachedFileBody SetIfRicher(Guid conversationId, string path, string body) =>
-        SetCore(conversationId, path, body, replaceShorter: false);
+    public ToolIrCachedFileBody SetIfRicher(
+        Guid conversationId,
+        string path,
+        string body,
+        bool bodyComplete,
+        int? totalLineCount = null) =>
+        SetCore(conversationId, path, body, bodyComplete, totalLineCount, replaceShorter: false);
 
-    private ToolIrCachedFileBody SetCore(Guid conversationId, string path, string body, bool replaceShorter)
+    private ToolIrCachedFileBody SetCore(
+        Guid conversationId,
+        string path,
+        string body,
+        bool bodyComplete,
+        int? totalLineCount,
+        bool replaceShorter)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
         var normalizedPath = NormalizePath(path);
@@ -66,13 +86,23 @@ public sealed class ToolIrFileBodyCache : IDisposable
         {
             lock (lockObj)
             {
-                var entry = BuildEntry(normalizedPath, body);
+                var entry = BuildEntry(normalizedPath, body, bodyComplete, totalLineCount);
                 if (!replaceShorter &&
                     _cache.TryGetValue(key, out ToolIrCachedFileBody? existing) &&
-                    existing is not null &&
-                    ContentLineCount(existing) > ContentLineCount(entry))
+                    existing is not null)
                 {
-                    return existing;
+                    // Prefer complete over incomplete regardless of line count; never replace
+                    // a complete entry with an incomplete one. Equal completeness → line-count rule.
+                    if (existing.BodyComplete && !entry.BodyComplete)
+                    {
+                        return existing;
+                    }
+
+                    if (existing.BodyComplete == entry.BodyComplete &&
+                        ContentLineCount(existing) > ContentLineCount(entry))
+                    {
+                        return existing;
+                    }
                 }
 
                 _cache.Set(
@@ -99,7 +129,9 @@ public sealed class ToolIrFileBodyCache : IDisposable
     }
 
     /// <summary>
-    /// True when the cache holds enough lines to answer an absolute <paramref name="startLine"/>..<paramref name="endLine"/> range.
+    /// True when the cache holds a <see cref="ToolIrCachedFileBody.BodyComplete"/> entry that covers
+    /// absolute <paramref name="startLine"/>..<paramref name="endLine"/>. Incomplete entries never
+    /// local-satisfy (full rematerialize).
     /// </summary>
     public bool TryGetCovering(
         Guid conversationId,
@@ -110,6 +142,11 @@ public sealed class ToolIrFileBodyCache : IDisposable
     {
         entry = null;
         if (!TryGet(conversationId, path, out var cached) || cached is null)
+        {
+            return false;
+        }
+
+        if (!cached.BodyComplete)
         {
             return false;
         }
@@ -221,12 +258,20 @@ public sealed class ToolIrFileBodyCache : IDisposable
 
     public static string NormalizePath(string path) => path.Trim().Replace('\\', '/');
 
-    public static ToolIrCachedFileBody BuildEntry(string path, string body)
+    /// <summary>Build an entry for line-offset arithmetic only (defaults to incomplete).</summary>
+    public static ToolIrCachedFileBody BuildEntry(string path, string body) =>
+        BuildEntry(path, body, bodyComplete: false, totalLineCount: null);
+
+    public static ToolIrCachedFileBody BuildEntry(
+        string path,
+        string body,
+        bool bodyComplete,
+        int? totalLineCount)
     {
         var normalized = NormalizePath(path);
         var hash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(body))).ToLowerInvariant();
         var offsets = BuildLineStartOffsets(body);
-        return new ToolIrCachedFileBody(normalized, body, hash, offsets);
+        return new ToolIrCachedFileBody(normalized, body, hash, offsets, bodyComplete, totalLineCount);
     }
 
     public static IReadOnlyList<int> BuildLineStartOffsets(string body)

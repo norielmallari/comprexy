@@ -25,6 +25,7 @@ public class ToolSchemaOrchestratorTests
     private InMemoryConversationToolCallMapRepository _callIdMapRepo = null!;
     private IToolIrCallIdMapService _callIdMapService = null!;
     private ToolIrFileBodyCache _fileCache = null!;
+    private ToolIrResultShapeStore _shapeStore = null!;
     private DateTimeOffset _now = DateTimeOffset.UtcNow;
 
     private ToolSchemaOptions _options = new()
@@ -42,6 +43,25 @@ public class ToolSchemaOrchestratorTests
             .Setup(r => r.GetByConversationIdAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync((Guid id, CancellationToken _) =>
                 _catalogs.TryGetValue(id, out var catalog) ? catalog : null);
+        // Distinct instance from GetByConversationIdAsync so tests can prove tracking vs detached reads.
+        _catalogRepository
+            .Setup(r => r.GetTrackedByConversationIdAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((Guid id, CancellationToken _) =>
+            {
+                if (!_catalogs.TryGetValue(id, out var catalog))
+                {
+                    return null;
+                }
+
+                var tracked = ConversationToolCatalog.Create(
+                    catalog.ConversationId,
+                    catalog.CatalogHash,
+                    catalog.MappingJson,
+                    _now,
+                    catalog.ToolIrDisabled);
+                _catalogs[id] = tracked;
+                return tracked;
+            });
         _catalogRepository
             .Setup(r => r.Add(It.IsAny<ConversationToolCatalog>()))
             .Callback<ConversationToolCatalog>(c => _catalogs[c.ConversationId] = c);
@@ -90,12 +110,13 @@ public class ToolSchemaOrchestratorTests
                 _metricsRecorder.Object,
                 NullLogger<ToolIrSchemaMapper>.Instance),
             new ToolIrPlanner(toolOptions, _fileCache),
-            new ToolIrResultDistiller(toolOptions, _fileCache),
+            ToolIrTestFactory.CreateDistiller(toolOptions, _fileCache, _shapeStore = ToolIrTestFactory.CreateShapeStore(_options)),
             _callIdMapService,
             _catalogRepository.Object,
             _definitionRepository.Object,
             _chatCompletionClient.Object,
             _clock.Object,
+            _shapeStore,
             NullLogger<ToolSchemaOrchestrator>.Instance);
     }
 
@@ -1034,7 +1055,7 @@ public class ToolSchemaOrchestratorTests
         var conversationId = Guid.NewGuid();
         var orchestrator = CreateOrchestrator();
         SetupMapperReturns(ValidReadShellMappingJson(hash));
-        _fileCache.Set(conversationId, "src/A.cs", "alpha\nbeta\ngamma\n");
+        _fileCache.Set(conversationId, "src/A.cs", "alpha\nbeta\ngamma\n", bodyComplete: true);
 
         var prepare = await orchestrator.TryPrepareRewriteAsync(
             conversationId,
@@ -1080,6 +1101,14 @@ public class ToolSchemaOrchestratorTests
         Assert.Equal("done", loop.FinalUpstreamResult.Content);
         Assert.Equal(1, chatRounds);
         Assert.DoesNotContain(_callIdMap.GetPendingClientIds(conversationId), id => true);
+        Assert.Single(prepare.Result!.Session.PendingPersistedTurns);
+        var persisted = prepare.Result.Session.PendingPersistedTurns[0];
+        Assert.Single(persisted.ToolMessages);
+        Assert.Empty(prepare.Result.Session.PendingLocalToolResults);
+        Assert.NotNull(persisted.AssistantMessage.RawWireMessage);
+        var toolCalls = persisted.AssistantMessage.RawWireMessage!.Value.GetProperty("tool_calls");
+        Assert.Equal(irCallId, toolCalls[0].GetProperty("id").GetString());
+        Assert.Equal(irCallId, ExtractToolCallId(persisted.ToolMessages[0]));
     }
 
     [Fact]
@@ -1732,7 +1761,7 @@ public class ToolSchemaOrchestratorTests
     {
         var orchestrator = CreateOrchestrator();
         var conversationId = Guid.NewGuid();
-        _fileCache.Set(conversationId, "docs/a.md", "stale body line-1\nstale body line-2");
+        _fileCache.Set(conversationId, "docs/a.md", "stale body line-1\nstale body line-2", bodyComplete: true);
         Assert.True(_fileCache.TryGet(conversationId, "docs/a.md", out _));
 
         const string editCallId = "call_edit_1";
@@ -1873,5 +1902,139 @@ public class ToolSchemaOrchestratorTests
         }
 
         return null;
+    }
+
+    [Fact]
+    public async Task BuildRewrittenClientRequest_CapDisclosure_ParametersByteIdentical()
+    {
+        _options.FirstReadMaxLines = 123;
+        _options.MaxRangeLines = 77;
+        var request = ReadAndShellToolsRequest();
+        var hash = CatalogHashFor(request);
+        var orchestrator = CreateOrchestrator();
+        SetupMapperReturns(ValidReadShellMappingJson(hash));
+        var prepare = await orchestrator.TryPrepareRewriteAsync(
+            Guid.NewGuid(),
+            [new ChatMessage(MessageRole.User, "hello")],
+            request,
+            CancellationToken.None);
+        Assert.NotNull(prepare.Result);
+        using var rewritten = JsonDocument.Parse(prepare.Result!.RewrittenClientRequest.GetRawText());
+        var tools = rewritten.RootElement.GetProperty("tools");
+        JsonElement? range = null;
+        foreach (var tool in tools.EnumerateArray())
+        {
+            if (tool.GetProperty("function").GetProperty("name").GetString() == "comprexy_read_file_range")
+            {
+                range = tool;
+                break;
+            }
+        }
+
+        Assert.NotNull(range);
+        var description = range!.Value.GetProperty("function").GetProperty("description").GetString()!;
+        Assert.Contains("123", description, StringComparison.Ordinal);
+        Assert.Contains("77", description, StringComparison.Ordinal);
+
+        using var built = JsonDocument.Parse(
+            ToolIrVirtualToolDefinitions.BuildWireJson(ToolSchemaConstants.FileRangeToolName, _options));
+        using var canonical = JsonDocument.Parse(
+            ToolIrVirtualToolDefinitions.GetWireJson(ToolSchemaConstants.FileRangeToolName));
+        Assert.Equal(
+            canonical.RootElement.GetProperty("function").GetProperty("parameters").GetRawText(),
+            built.RootElement.GetProperty("function").GetProperty("parameters").GetRawText());
+
+        // Rewritten request re-serializes the tool catalog; parameters must stay semantically identical.
+        using var emittedParams = JsonDocument.Parse(
+            range.Value.GetProperty("function").GetProperty("parameters").GetRawText());
+        Assert.True(
+            JsonElement.DeepEquals(
+                emittedParams.RootElement,
+                canonical.RootElement.GetProperty("function").GetProperty("parameters")));
+    }
+
+    [Fact]
+    public void Hydrate_LeavesDurableClean_AndDoesNotClobberDirty()
+    {
+        var orchestrator = CreateOrchestrator();
+        var conversationId = Guid.NewGuid();
+        var durable = new ToolIrResultShape
+        {
+            Envelope = ToolIrEnvelopeKind.Plain,
+            LinePrefix = ToolIrLinePrefixStyle.None,
+            Source = ToolIrShapeSource.Probe,
+            ObservedAt = DateTimeOffset.UtcNow
+        };
+        _shapeStore.Hydrate(conversationId, new Dictionary<string, ToolIrResultShape> { ["Read"] = durable });
+        Assert.Empty(_shapeStore.PeekDirty(conversationId));
+
+        _shapeStore.Promote((conversationId, "Grep"), new ToolIrResultShape
+        {
+            Envelope = ToolIrEnvelopeKind.JsonField,
+            JsonField = ToolIrJsonFieldToken.Content,
+            LinePrefix = ToolIrLinePrefixStyle.None,
+            Source = ToolIrShapeSource.Learner,
+            ObservedAt = DateTimeOffset.UtcNow
+        });
+        Assert.NotEmpty(_shapeStore.PeekDirty(conversationId));
+        _shapeStore.Hydrate(conversationId, new Dictionary<string, ToolIrResultShape>());
+        Assert.True(_shapeStore.PeekDirty(conversationId).ContainsKey("Grep"));
+        _ = orchestrator;
+    }
+
+    [Fact]
+    public async Task ValidateInbound_StagedShapes_UsesTrackedRead_DirtySurvivesWithoutConfirm()
+    {
+        var request = ReadAndShellToolsRequest();
+        var hash = CatalogHashFor(request);
+        var conversationId = Guid.NewGuid();
+        var orchestrator = CreateOrchestrator();
+        SetupMapperReturns(ValidReadShellMappingJson(hash));
+        _catalogs[conversationId] = ConversationToolCatalog.Create(
+            conversationId, hash, ValidReadShellMappingJson(hash), _now);
+
+        await _callIdMapService.RegisterAsync(
+            new ToolIrCallMapping(
+                conversationId,
+                "ir_shape",
+                "cur_cccccccccccccccccccccccccccccccc",
+                ToolSchemaConstants.FileRangeToolName,
+                "Read",
+                """{"path":"docs/a.md","start_line":1,"end_line":1}""",
+                """{"path":"docs/a.md"}""",
+                "direct",
+                "docs/a.md",
+                1,
+                1,
+                Pending: true),
+            CancellationToken.None);
+
+        var first = await orchestrator.ValidateAndRewriteInboundToolResultsAsync(
+            conversationId,
+            [ToolCallWireHelper.BuildToolResultMessage(
+                "cur_cccccccccccccccccccccccccccccccc",
+                "<path>docs/a.md</path><type>file</type><content>\nhi\n</content>")],
+            [],
+            [],
+            CancellationToken.None);
+        Assert.Contains("Read", first.StagedShapeClientToolNames);
+        _catalogRepository.Verify(
+            r => r.GetTrackedByConversationIdAsync(conversationId, It.IsAny<CancellationToken>()),
+            Times.AtLeastOnce);
+
+        // No confirm → dirty survives
+        Assert.NotEmpty(_shapeStore.PeekDirty(conversationId));
+        var second = await orchestrator.ValidateAndRewriteInboundToolResultsAsync(
+            conversationId,
+            [],
+            [],
+            [],
+            CancellationToken.None);
+        Assert.Contains("Read", second.StagedShapeClientToolNames);
+
+        orchestrator.ConfirmShapeMirrorPersisted(conversationId, second.StagedShapeClientToolNames);
+        var third = await orchestrator.ValidateAndRewriteInboundToolResultsAsync(
+            conversationId, [], [], [], CancellationToken.None);
+        Assert.Empty(third.StagedShapeClientToolNames);
     }
 }

@@ -5,6 +5,7 @@ using Comprexy.Application.Services.CacheAlignment;
 using Comprexy.Application.Services.ToolIr;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Options;
 
 namespace Comprexy.Application.DependencyInjection;
@@ -31,6 +32,10 @@ public static class ServiceCollectionExtensions
         services.AddScoped<PromptTokenBasisContext>();
         services.AddScoped<IConversationMetricsQueryService, ConversationMetricsQueryService>();
         services.AddScoped<IConversationRetrievalQueryService, ConversationRetrievalQueryService>();
+
+        // Required by Infrastructure's IChatCompletionClient decorator even when proxy services are off.
+        services.TryAddSingleton(TimeProvider.System);
+        services.AddSingleton<IUpstreamActivityGate, UpstreamActivityGate>();
 
         if (!enableProxyServices)
         {
@@ -77,6 +82,8 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<ToolIrCallIdMap>();
         services.AddScoped<IToolIrCallIdMapService, ToolIrCallIdMapService>();
         services.AddSingleton<ToolIrFileBodyCache>();
+        services.AddSingleton<ToolIrResultShapeStore>();
+        services.AddSingleton<IToolIrShapeLearnQueue, ToolIrShapeLearnQueue>();
         services.AddSingleton<ToolIrPlanner>();
         services.AddSingleton<ToolIrResultDistiller>();
         services.AddScoped<ToolIrSchemaMapper>();
@@ -84,6 +91,16 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<ProviderEndpointResolver>();
         services.AddScoped<IConversationMetricsRecorder, ConversationMetricsRecorder>();
         services.AddScoped<ProxyChatCompletionService>();
+
+        var learnerEnabled = configuration
+            .GetSection(ToolSchemaOptions.SectionName)
+            .GetSection("ResultShape")
+            .GetSection("Learner")
+            .GetValue<bool>("Enabled");
+        if (learnerEnabled)
+        {
+            services.AddHostedService<ToolIrShapeLearnerService>();
+        }
 
         return services;
     }

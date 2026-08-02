@@ -282,4 +282,142 @@ public class ToolIrPlannerTests
         Assert.Equal(ToolIrPlanKind.LocalObservation, items[0].Kind);
         Assert.Contains("command", items[0].ObservationJson, StringComparison.OrdinalIgnoreCase);
     }
+
+    private static ToolIrMappingDocument DocumentWithReadRange() =>
+        JsonSerializer.Deserialize<ToolIrMappingDocument>(JsonSerializer.Serialize(new
+        {
+            schema_hash = "h",
+            client_capabilities = new object[]
+            {
+                new
+                {
+                    client_tool = "Read",
+                    capability = "FILE_READ_RAW",
+                    risk = "low",
+                    supports = new { path = true, offset = true, limit = true, query = false }
+                }
+            },
+            bindings = new object[]
+            {
+                new
+                {
+                    comprexy_tool = "comprexy_read_file_range",
+                    primary_client_tool = "Read",
+                    strategy = "direct",
+                    arg_map = new { path = "path", start_line = "offset", end_line = "limit" }
+                },
+                new
+                {
+                    comprexy_tool = "comprexy_read_file_manifest",
+                    primary_client_tool = "Read",
+                    strategy = "direct",
+                    arg_map = new { path = "path" }
+                }
+            }
+        }))!;
+
+    [Fact]
+    public void PlanFileRange_IncompleteCache_RematerializesEvenInPrefix()
+    {
+        var options = Options.Create(new ToolSchemaOptions());
+        var cache = new ToolIrFileBodyCache(options);
+        var planner = new ToolIrPlanner(options, cache);
+        var conversationId = Guid.NewGuid();
+        var body = string.Join('\n', Enumerable.Range(1, 80).Select(i => $"line-{i}")) + "\n";
+        cache.Set(conversationId, "docs/a.md", body, bodyComplete: false, totalLineCount: 267);
+
+        var call = new ParsedToolCall(
+            "call_1",
+            ToolSchemaConstants.FileRangeToolName,
+            """{"path":"docs/a.md","start_line":10,"end_line":40}""");
+        var items = planner.Plan(conversationId, [call], DocumentWithReadRange());
+
+        Assert.Equal(ToolIrPlanKind.NativeClientCall, items[0].Kind);
+    }
+
+    [Fact]
+    public void PlanFileRange_CompleteCache_LocalObservation()
+    {
+        var options = Options.Create(new ToolSchemaOptions());
+        var cache = new ToolIrFileBodyCache(options);
+        var planner = new ToolIrPlanner(options, cache);
+        var conversationId = Guid.NewGuid();
+        cache.Set(conversationId, "docs/a.md", "a\nb\nc\nd\n", bodyComplete: true);
+
+        var call = new ParsedToolCall(
+            "call_1",
+            ToolSchemaConstants.FileRangeToolName,
+            """{"path":"docs/a.md","start_line":1,"end_line":2}""");
+        var items = planner.Plan(conversationId, [call], DocumentWithReadRange());
+
+        Assert.Equal(ToolIrPlanKind.LocalObservation, items[0].Kind);
+        Assert.Contains("file_range", items[0].ObservationJson, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void PlanManifest_IncompleteVsCompleteCache()
+    {
+        var options = Options.Create(new ToolSchemaOptions());
+        var cache = new ToolIrFileBodyCache(options);
+        var planner = new ToolIrPlanner(options, cache);
+        var conversationId = Guid.NewGuid();
+        cache.Set(conversationId, "docs/a.md", "using X;\n", bodyComplete: false);
+
+        var call = new ParsedToolCall(
+            "call_m",
+            ToolSchemaConstants.FileManifestToolName,
+            """{"path":"docs/a.md"}""");
+        Assert.Equal(ToolIrPlanKind.NativeClientCall, planner.Plan(conversationId, [call], DocumentWithReadRange())[0].Kind);
+
+        cache.Set(conversationId, "docs/a.md", "using X;\n", bodyComplete: true);
+        Assert.Equal(ToolIrPlanKind.LocalObservation, planner.Plan(conversationId, [call], DocumentWithReadRange())[0].Kind);
+    }
+
+    [Fact]
+    public void PlanFileRange_EndLineOmitted_ReadThenSlice_NoOffsetLimit()
+    {
+        var options = Options.Create(new ToolSchemaOptions { FirstReadUnwindowedMaxLines = 2000 });
+        var cache = new ToolIrFileBodyCache(options);
+        var planner = new ToolIrPlanner(options, cache);
+        var conversationId = Guid.NewGuid();
+        var call = new ParsedToolCall(
+            "call_1",
+            ToolSchemaConstants.FileRangeToolName,
+            """{"path":"docs/a.md","start_line":1}""");
+        var items = planner.Plan(conversationId, [call], DocumentWithReadRange());
+
+        Assert.Equal(ToolIrPlanKind.NativeClientCall, items[0].Kind);
+        Assert.Equal(ToolIrStrategies.ReadThenSlice, items[0].Mapping!.Strategy);
+        using var args = JsonDocument.Parse(items[0].ClientArgumentsJson!);
+        Assert.False(args.RootElement.TryGetProperty("offset", out _));
+        Assert.False(args.RootElement.TryGetProperty("limit", out _));
+    }
+
+    [Fact]
+    public void PlanFileRange_EndLineOmitted_HugeManifest_FallsBackToWindowedDirect()
+    {
+        var options = Options.Create(new ToolSchemaOptions
+        {
+            FirstReadUnwindowedMaxLines = 10,
+            FirstReadMaxLines = 5
+        });
+        var cache = new ToolIrFileBodyCache(options);
+        var planner = new ToolIrPlanner(options, cache);
+        var conversationId = Guid.NewGuid();
+        var body = string.Join('\n', Enumerable.Range(1, 50).Select(i => $"line-{i}")) + "\n";
+        cache.Set(conversationId, "docs/a.md", body, bodyComplete: true, totalLineCount: 50);
+
+        var call = new ParsedToolCall(
+            "call_1",
+            ToolSchemaConstants.FileRangeToolName,
+            """{"path":"docs/a.md","start_line":1}""");
+        var items = planner.Plan(conversationId, [call], DocumentWithReadRange());
+
+        Assert.Equal(ToolIrPlanKind.NativeClientCall, items[0].Kind);
+        Assert.Equal(ToolIrStrategies.Direct, items[0].Mapping!.Strategy);
+        using var args = JsonDocument.Parse(items[0].ClientArgumentsJson!);
+        Assert.True(
+            args.RootElement.TryGetProperty("offset", out _) ||
+            args.RootElement.TryGetProperty("limit", out _));
+    }
 }

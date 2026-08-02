@@ -93,15 +93,37 @@ Virtual Tools (Tool IR) is a primary Comprexy capability for OpenAI-compatible `
 | --- | --- | --- |
 | `Mode` | `Virtual` | `Off` or `Virtual`. |
 | `MappingMaxRetries` | `2` | Extra mapper attempts after the first on invalid MappingJson (total attempts = 1 + this value). Invalid maps are never persisted. After the last attempt, bindings that failed validation are dropped and the rest are kept; Tool IR is disabled for the hash only when nothing usable survives. |
-| `MaxRangeLines` | `250` | Cap for `comprexy_read_file_range` observations (`truncated: true` when capped). |
+| `MaxRangeLines` | `250` | Cap for explicitly windowed `comprexy_read_file_range` observations (`end_line` set; `truncated: true` when capped). |
 | `MaxSearchMatches` | `40` | Cap for `comprexy_read_file_search` hits. |
 | `MaxDirListEntries` | `200` | Cap for `comprexy_dir_list` entries. |
 | `MaxShellObservationChars` | `4000` | Cap for distilled `comprexy_shell` observation content (`truncated: true` when capped). |
+| `MaxPassthroughObservationChars` | `4000` | Cap for distilled passthrough-family observation content. |
+| `MaxSearchPreviewChars` | `200` | Cap for search-match preview text. |
+| `MaxManifestImports` | `20` | Cap for import hints in `comprexy_read_file_manifest`. |
+| `MaxManifestSymbols` | `30` | Cap for symbol hints in `comprexy_read_file_manifest`. |
+| `MaxManifestImportChars` | `160` | Cap per import-hint string. |
+| `FirstReadMaxLines` | `400` | Line cap for an unwindowed first read (`end_line` omitted). |
+| `FirstReadMaxChars` | `60000` | Character cap on emitted `content` for an unwindowed first read (binds with `FirstReadMaxLines`). |
+| `FirstReadUnwindowedMaxLines` | `2000` | When a complete cached manifest reports more lines than this, an unwindowed first read falls back to a windowed `direct` request of `FirstReadMaxLines` lines. |
+| `SearchSentinelMaxChars` | `400` | Max payload length for the plain-text search sentinel rule (no-match / error → zero matches). |
 | `ExcludeFromModelTools` | `ReadLints`, `TodoWrite`, `AwaitShell`, `UpdateCurrentStep`, `EditNotebook`, `SwitchMode`, `agent_manager`, `agent_manager_models`, `background_process`, `kilo_local_recall` | Client tool names omitted from the model-facing `tools[]` when Virtual is active (case-insensitive ordinal match after trim). Still hashed/mapped as part of the inbound catalog; model calls are rejected locally; inbound orphans are swallowed like Virtual-replaced tools. Empty list disables. Ignored when `Mode=Off` or `Proxy:PassThrough`. |
 | `FileCacheAbsoluteExpiration` | `00:20:00` | TTL for in-memory file-body cache entries. |
 | `FileCacheSizeLimit` | `256` | Max cached file bodies (each entry size 1). |
 | `CallIdMapPendingAbsoluteExpiration` | `00:30:00` | TTL for abandoned pending IR↔client call-id map rows (EF + in-memory hot cache). |
 | `CallIdMapMaxConversations` | `1024` | Max conversations retained in the process-local call-id hot cache. |
+| `ResultShape:MaxConversations` | `256` | Max conversations in the process-local result-shape store (**always live** — probe/store are not learner-gated). |
+| `ResultShape:MaxSamplesRetained` | `4` | Max samples per ring (anchor / ambiguous) when the learner is enabled. |
+| `ResultShape:MaxSampleLines` | `512` | Caps `LineLengths` per sanitized sample (learner memory knob). |
+| `ResultShape:MinSamplesBeforeProposal` | `2` | Minimum samples before a learn job may enqueue / promote. |
+| `ResultShape:MaxProposalAttemptsPerKey` | `2` | Max promote attempts per (conversation, client tool). |
+| `ResultShape:LearnQueueCapacity` | `64` | Bounded learn-queue capacity (`DropWrite` on overflow). |
+| `ResultShape:Learner:Enabled` | `false` | Hosted idle learner + sampling/enqueue. Default off; never blocks a chat turn. |
+| `ResultShape:Learner:IdleDebounce` | `00:00:05` | Debounce after upstream busy reaches zero before a learn job runs. |
+| `ResultShape:Learner:MaxPromotionsPerConversation` | `8` | Max promotions retained per conversation. |
+
+Worst-case sample memory ≈ `MaxConversations` × keys-per-conversation × 2 rings × `MaxSamplesRetained` × (`MaxSampleLines` × 4 bytes + ~200-byte header). With defaults and 8 file-family client tools: roughly **32 MB** if every slot held a maximal sample; typical usage is far lower because rings drop on promotion / attempt exhaustion and sampling stops for terminal keys.
+
+The idle learner (when enabled) never blocks a chat turn, is cancelled by any client-driven upstream call (`IUpstreamActivityGate`), sends only sanitized structural features (no payload text), promotes only when a proposal reproduces heuristic-decided body boundaries, and can only choose among branches the deterministic extractor already implements. Keep it disabled under `Proxy:PassThrough`-heavy deployments (Virtual Tools is off there, so the gate does not see passthrough traffic as busy).
 
 When `Virtual` is active:
 

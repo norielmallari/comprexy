@@ -131,57 +131,114 @@ public class ToolIrPlanner
         Dictionary<string, JsonElement> args)
     {
         if (!TryGetString(args, "path", out var path) ||
-            !TryGetInt(args, "start_line", out var startLine) ||
-            !TryGetInt(args, "end_line", out var endLine))
+            !TryGetInt(args, "start_line", out var startLine))
         {
-            return LocalError(call, "invalid_args", "comprexy_read_file_range requires path, start_line, and end_line.");
+            return LocalError(call, "invalid_args", "comprexy_read_file_range requires path and start_line.");
         }
 
-        if (startLine < 1 || endLine < startLine)
+        var hasEndLine = TryGetInt(args, "end_line", out var endLine);
+        if (hasEndLine && (startLine < 1 || endLine < startLine))
         {
             return LocalError(call, "invalid_args", "start_line/end_line must be 1-based with end_line >= start_line.");
         }
 
-        if (_fileCache.TryGetCovering(conversationId, path!, startLine, endLine, out var cached) &&
-            cached is not null &&
-            ToolIrFileBodyCache.TrySliceLines(
-                cached,
-                startLine,
-                endLine,
-                _options.MaxRangeLines,
-                out var text,
-                out var truncated))
+        if (startLine < 1)
         {
-            var observation = JsonSerializer.Serialize(new
+            return LocalError(call, "invalid_args", "start_line must be 1-based.");
+        }
+
+        if (hasEndLine)
+        {
+            if (_fileCache.TryGetCovering(conversationId, path!, startLine, endLine, out var cached) &&
+                cached is not null &&
+                ToolIrFileBodyCache.TrySliceLines(
+                    cached,
+                    startLine,
+                    endLine,
+                    _options.MaxRangeLines,
+                    out var text,
+                    out var truncated))
             {
-                type = "file_range",
-                path = cached.Path,
-                start_line = startLine,
-                end_line = Math.Min(endLine, startLine + _options.MaxRangeLines - 1),
-                truncated,
-                content_hash = cached.ContentHash,
-                content = text
-            });
-            return new ToolIrPlanItem(
-                ToolIrPlanKind.LocalObservation,
-                call,
-                observation,
-                null,
-                null,
-                null,
-                null);
+                var observation = BuildLocalFileRangeObservation(
+                    cached, startLine, endLine, text, truncated, _options.MaxRangeLines);
+                return new ToolIrPlanItem(
+                    ToolIrPlanKind.LocalObservation,
+                    call,
+                    observation,
+                    null,
+                    null,
+                    null,
+                    null);
+            }
+        }
+        else
+        {
+            // Unwindowed first read: local-satisfy from a complete cache up to FirstReadMaxLines,
+            // unless the complete body is huge — then fall through to a windowed direct native call.
+            var hugeComplete =
+                _fileCache.TryGet(conversationId, path!, out var sized) &&
+                sized is not null &&
+                sized.BodyComplete &&
+                ToolIrFileBodyCache.ContentLineCount(sized) > _options.FirstReadUnwindowedMaxLines;
+
+            if (!hugeComplete)
+            {
+                var localEnd = startLine + _options.FirstReadMaxLines - 1;
+                if (_fileCache.TryGetCovering(conversationId, path!, startLine, startLine, out var cached) &&
+                    cached is not null &&
+                    ToolIrFileBodyCache.TrySliceLines(
+                        cached,
+                        startLine,
+                        localEnd,
+                        _options.FirstReadMaxLines,
+                        out var text,
+                        out var truncated))
+                {
+                    var observation = BuildLocalFileRangeObservation(
+                        cached, startLine, localEnd, text, truncated, _options.FirstReadMaxLines);
+                    return new ToolIrPlanItem(
+                        ToolIrPlanKind.LocalObservation,
+                        call,
+                        observation,
+                        null,
+                        null,
+                        null,
+                        null);
+                }
+            }
         }
 
         var capability = ToolIrMappingValidator.FindCapability(mapping, binding.PrimaryClientTool);
         var strategy = binding.Strategy;
-        if (string.Equals(strategy, ToolIrStrategies.Direct, StringComparison.Ordinal) &&
-            capability is not null &&
-            (!capability.Supports.Offset || !capability.Supports.Limit))
+        int nativeStart = startLine;
+        int nativeEnd = hasEndLine ? endLine : startLine + _options.FirstReadMaxLines - 1;
+
+        if (!hasEndLine)
+        {
+            // Prefer read_then_slice (no offset/limit) unless a complete manifest says the file is huge.
+            if (_fileCache.TryGet(conversationId, path!, out var manifestCached) &&
+                manifestCached is not null &&
+                manifestCached.BodyComplete &&
+                ToolIrFileBodyCache.ContentLineCount(manifestCached) > _options.FirstReadUnwindowedMaxLines)
+            {
+                strategy = ToolIrStrategies.Direct;
+                nativeEnd = startLine + _options.FirstReadMaxLines - 1;
+            }
+            else
+            {
+                strategy = ToolIrStrategies.ReadThenSlice;
+                nativeStart = 0;
+                nativeEnd = 0;
+            }
+        }
+        else if (string.Equals(strategy, ToolIrStrategies.Direct, StringComparison.Ordinal) &&
+                 capability is not null &&
+                 (!capability.Supports.Offset || !capability.Supports.Limit))
         {
             strategy = ToolIrStrategies.ReadThenSlice;
         }
 
-        var clientArgs = BuildNativeArgs(binding, args, strategy, startLine, endLine);
+        var clientArgs = BuildNativeArgs(binding, args, strategy, nativeStart, nativeEnd);
         var clientCallId = NewClientCallId(call.Id);
         var map = new ToolIrCallMapping(
             conversationId,
@@ -194,7 +251,7 @@ public class ToolIrPlanner
             strategy,
             path,
             startLine,
-            endLine,
+            hasEndLine ? endLine : null,
             Pending: true);
 
         return new ToolIrPlanItem(
@@ -205,6 +262,37 @@ public class ToolIrPlanner
             binding.PrimaryClientTool,
             clientArgs,
             map);
+    }
+
+    private static string BuildLocalFileRangeObservation(
+        ToolIrCachedFileBody cached,
+        int startLine,
+        int endLine,
+        string text,
+        bool truncated,
+        int maxLines)
+    {
+        var returnedEnd = Math.Min(endLine, startLine + maxLines - 1);
+        var bodyComplete = cached.BodyComplete;
+        var complete = bodyComplete && !truncated;
+        return JsonSerializer.Serialize(new
+        {
+            type = "file_range",
+            path = cached.Path,
+            requested_start_line = startLine,
+            requested_end_line = endLine,
+            returned_start_line = startLine,
+            returned_end_line = returnedEnd,
+            start_line = startLine,
+            end_line = returnedEnd,
+            body_complete = bodyComplete,
+            complete,
+            total_line_count = cached.TotalLineCount ?? (bodyComplete ? ToolIrFileBodyCache.ContentLineCount(cached) : null),
+            next_start_line = complete ? (int?)null : returnedEnd + 1,
+            truncated,
+            content_hash = cached.ContentHash,
+            content = text
+        });
     }
 
     private ToolIrPlanItem PlanFileManifest(
@@ -289,16 +377,21 @@ public class ToolIrPlanner
         TryGetInt(args, "start_line", out var startLine);
         TryGetInt(args, "end_line", out var endLine);
 
-        // Manifest can be satisfied from cache without a native round-trip.
+        // Manifest can be satisfied from cache without a native round-trip (complete bodies only).
         if (string.Equals(call.Name, ToolSchemaConstants.FileManifestToolName, StringComparison.Ordinal) &&
             path is not null &&
             _fileCache.TryGet(conversationId, path, out var cached) &&
-            cached is not null)
+            cached is not null &&
+            cached.BodyComplete)
         {
             return new ToolIrPlanItem(
                 ToolIrPlanKind.LocalObservation,
                 call,
-                ToolIrResultDistiller.BuildManifestFromCache(cached),
+                ToolIrResultDistiller.BuildManifestFromCache(
+                    cached,
+                    _options.MaxManifestImports,
+                    _options.MaxManifestSymbols,
+                    _options.MaxManifestImportChars),
                 null,
                 null,
                 null,

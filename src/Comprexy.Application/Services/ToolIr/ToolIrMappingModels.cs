@@ -13,6 +13,10 @@ public sealed class ToolIrMappingDocument
 
     [JsonPropertyName("bindings")]
     public List<ToolIrBinding> Bindings { get; set; } = [];
+
+    [JsonPropertyName("result_shapes")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public Dictionary<string, ToolIrResultShape>? ResultShapes { get; set; }
 }
 
 public sealed class ToolIrClientCapability

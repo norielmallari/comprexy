@@ -56,7 +56,7 @@ public sealed class ToolSchemaSession
 
 public sealed record ToolSchemaPersistedTurn(
     ChatMessage AssistantMessage,
-    ChatMessage ToolMessage);
+    IReadOnlyList<ChatMessage> ToolMessages);
 
 public sealed record ToolSchemaPrepareResult(
     IReadOnlyList<ChatMessage> OutgoingMessages,
@@ -72,11 +72,13 @@ public sealed record ToolSchemaPrepareOutcome(
     bool CatalogMutated);
 
 /// <summary>
-/// Inbound tool rewrite: IR observations ready to persist, plus client ids to complete after save.
+/// Inbound tool rewrite: IR observations ready to persist, plus client ids to complete after save,
+/// and client tool names whose result_shapes were staged on the tracked catalog row.
 /// </summary>
 public sealed record ToolInboundRewriteResult(
     IReadOnlyList<ChatMessage> Messages,
-    IReadOnlyList<string> CompletedClientCallIds);
+    IReadOnlyList<string> CompletedClientCallIds,
+    IReadOnlyList<string> StagedShapeClientToolNames);
 
 public sealed record ToolSchemaLoopResult(
     UpstreamChatResult FinalUpstreamResult,
@@ -99,6 +101,7 @@ public class ToolSchemaOrchestrator
     private readonly IConversationToolDefinitionRepository _definitionRepository;
     private readonly IChatCompletionClient _chatCompletionClient;
     private readonly IClock _clock;
+    private readonly ToolIrResultShapeStore _shapeStore;
     private readonly ILogger<ToolSchemaOrchestrator> _logger;
 
     public ToolSchemaOrchestrator(
@@ -113,6 +116,7 @@ public class ToolSchemaOrchestrator
         IConversationToolDefinitionRepository definitionRepository,
         IChatCompletionClient chatCompletionClient,
         IClock clock,
+        ToolIrResultShapeStore shapeStore,
         ILogger<ToolSchemaOrchestrator> logger)
     {
         _options = options.Value;
@@ -126,6 +130,7 @@ public class ToolSchemaOrchestrator
         _definitionRepository = definitionRepository;
         _chatCompletionClient = chatCompletionClient;
         _clock = clock;
+        _shapeStore = shapeStore;
         _logger = logger;
     }
 
@@ -238,7 +243,67 @@ public class ToolSchemaOrchestrator
             closed.Add(toolCallId);
         }
 
-        return new ToolInboundRewriteResult(rewritten, completedClientIds);
+        var stagedShapeNames = await MirrorDirtyShapesAsync(conversationId, cancellationToken);
+        return new ToolInboundRewriteResult(rewritten, completedClientIds, stagedShapeNames);
+    }
+
+    /// <summary>Marks in-memory shape dirty flags clear after a successful inbound-distill flush.</summary>
+    public void ConfirmShapeMirrorPersisted(Guid conversationId, IReadOnlyList<string> clientToolNames) =>
+        _shapeStore.MarkPersisted(conversationId, clientToolNames);
+
+    private async Task<IReadOnlyList<string>> MirrorDirtyShapesAsync(
+        Guid conversationId,
+        CancellationToken cancellationToken)
+    {
+        if (_shapeStore.IsMirrorSuppressed(conversationId))
+        {
+            return Array.Empty<string>();
+        }
+
+        var dirty = _shapeStore.PeekDirty(conversationId);
+        if (dirty.Count == 0)
+        {
+            return Array.Empty<string>();
+        }
+
+        var catalog = await _catalogRepository.GetTrackedByConversationIdAsync(conversationId, cancellationToken);
+        if (catalog is null ||
+            string.IsNullOrWhiteSpace(catalog.MappingJson) ||
+            catalog.ToolIrDisabled)
+        {
+            _shapeStore.SuppressMirror(conversationId);
+            _logger.LogDebug(
+                "Skipping result_shapes mirror for conversation {ConversationId} (no catalog / empty map / ToolIrDisabled).",
+                conversationId);
+            return Array.Empty<string>();
+        }
+
+        try
+        {
+            var document = JsonSerializer.Deserialize<ToolIrMappingDocument>(catalog.MappingJson)
+                           ?? new ToolIrMappingDocument();
+            document.ResultShapes ??= new Dictionary<string, ToolIrResultShape>(StringComparer.Ordinal);
+            foreach (var (tool, shape) in dirty)
+            {
+                document.ResultShapes[tool] = shape;
+            }
+
+            var mappingJson = JsonSerializer.Serialize(document);
+            catalog.ReplaceMapping(catalog.CatalogHash, mappingJson, _clock.UtcNow);
+            _logger.LogDebug(
+                "Staged result_shapes mirror for conversation {ConversationId}: {Tools}",
+                conversationId,
+                string.Join(", ", dirty.Keys));
+            return dirty.Keys.ToList();
+        }
+        catch (JsonException ex)
+        {
+            _logger.LogWarning(
+                ex,
+                "Failed to stage result_shapes mirror for conversation {ConversationId}",
+                conversationId);
+            return Array.Empty<string>();
+        }
     }
 
     private static bool AssistantUsesReplacedClientTool(
@@ -489,6 +554,7 @@ public class ToolSchemaOrchestrator
 
         var catalogToolNames = parsed.CompactEntries.Select(e => e.Name).ToHashSet(StringComparer.Ordinal);
         ToolIrMappingDocument? cachedMapping = null;
+        Dictionary<string, ToolIrResultShape>? carriedShapes = null;
         if (existingCatalog is not null &&
             string.Equals(existingCatalog.CatalogHash, parsed.CatalogHash, StringComparison.Ordinal) &&
             !existingCatalog.ToolIrDisabled &&
@@ -505,6 +571,7 @@ public class ToolSchemaOrchestrator
             }
             else
             {
+                carriedShapes = ToolIrMappingValidator.TryReadResultShapes(existingCatalog.MappingJson);
                 _logger.LogWarning(
                     "Persisted MappingJson failed validation for conversation {ConversationId}: {Error}. Remapping.",
                     conversationId,
@@ -558,6 +625,20 @@ public class ToolSchemaOrchestrator
             }
 
             mapping = mapped.Document;
+            if (carriedShapes is not null && carriedShapes.Count > 0)
+            {
+                var present = mapping.ClientCapabilities
+                    .Select(c => c.ClientTool)
+                    .ToHashSet(StringComparer.Ordinal);
+                mapping.ResultShapes = carriedShapes
+                    .Where(kv => present.Contains(kv.Key))
+                    .ToDictionary(kv => kv.Key, kv => kv.Value, StringComparer.Ordinal);
+                if (mapping.ResultShapes.Count == 0)
+                {
+                    mapping.ResultShapes = null;
+                }
+            }
+
             var mappingJson = JsonSerializer.Serialize(mapping);
             if (existingCatalog is null)
             {
@@ -572,6 +653,8 @@ public class ToolSchemaOrchestrator
                 existingCatalog.ReplaceMapping(parsed.CatalogHash, mappingJson, _clock.UtcNow);
             }
         }
+
+        _shapeStore.Hydrate(conversationId, mapping.ResultShapes);
 
         await UpsertDefinitionsAsync(conversationId, parsed.FullDefinitionsByName, cancellationToken);
 
@@ -956,11 +1039,28 @@ public class ToolSchemaOrchestrator
 
         if (metaHandled && localOnly && passthroughCalls.Count == 0 && nativePlans.Count == 0)
         {
-            // Pure local-satisfy / meta internal round: IR assistant+observation live only in
-            // ephemeral loopMessages for this request (not PendingPersistedTurns). Cleared so a
-            // later final assistant does not double-persist; stored transcript rebuild will not
-            // see these intermediate cache-hit turns (MVP ephemeral semantics).
-            session.PendingLocalToolResults.Clear();
+            if (irCallsForPlan.Count > 0 && session.PendingLocalToolResults.Count > 0)
+            {
+                var locallySatisfiedCalls = irCallsForPlan
+                    .Where(c => session.PendingLocalToolResults.Any(t =>
+                        string.Equals(ExtractToolCallIdFromChatMessage(t), c.Id, StringComparison.Ordinal)))
+                    .ToList();
+                var assistantWire = BuildAssistantToolCallsJson(assistantJson, locallySatisfiedCalls, current.Content);
+                using var assistantDoc = JsonDocument.Parse(assistantWire);
+                var assistant = new ChatMessage(
+                    MessageRole.Assistant,
+                    current.Content ?? string.Empty,
+                    assistantDoc.RootElement.Clone());
+                session.PendingPersistedTurns.Add(
+                    new ToolSchemaPersistedTurn(assistant, [.. session.PendingLocalToolResults]));
+                session.PendingLocalToolResults.Clear();
+            }
+            else
+            {
+                // Meta-only / error-only: keep today's clear-and-continue path.
+                session.PendingLocalToolResults.Clear();
+            }
+
             return new AssistantRoundOutcome(
                 NeedsAnotherRound: true,
                 [],
@@ -1127,7 +1227,7 @@ public class ToolSchemaOrchestrator
         {
             if (session.BoundVirtualToolNames.Contains(name))
             {
-                tools.Add(ToolIrVirtualToolDefinitions.ParseWire(name));
+                tools.Add(ToolIrVirtualToolDefinitions.ParseWire(name, _options));
             }
         }
 
@@ -1195,7 +1295,7 @@ public class ToolSchemaOrchestrator
         using var assistantDoc = JsonDocument.Parse(assistantWire);
         var assistant = new ChatMessage(MessageRole.Assistant, string.Empty, assistantDoc.RootElement.Clone());
         var tool = ToolCallWireHelper.BuildToolResultMessage(call.Id, toolContent);
-        return new ToolSchemaPersistedTurn(assistant, tool);
+        return new ToolSchemaPersistedTurn(assistant, [tool]);
     }
 
     private static string ExtractVirtualParametersSchema(string toolName)

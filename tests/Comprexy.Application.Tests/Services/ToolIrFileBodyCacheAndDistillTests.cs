@@ -13,7 +13,7 @@ public class ToolIrFileBodyCacheAndDistillTests
     {
         var options = Options.Create(new ToolSchemaOptions());
         var cache = new ToolIrFileBodyCache(options);
-        var distiller = new ToolIrResultDistiller(options, cache);
+        var distiller = ToolIrTestFactory.CreateDistiller(options, cache);
         var conversationId = Guid.NewGuid();
         var mapping = new ToolIrCallMapping(
             conversationId,
@@ -55,7 +55,7 @@ public class ToolIrFileBodyCacheAndDistillTests
     {
         var options = Options.Create(new ToolSchemaOptions { MaxShellObservationChars = 20 });
         var cache = new ToolIrFileBodyCache(options);
-        var distiller = new ToolIrResultDistiller(options, cache);
+        var distiller = ToolIrTestFactory.CreateDistiller(options, cache);
         var conversationId = Guid.NewGuid();
         var mapping = new ToolIrCallMapping(
             conversationId,
@@ -86,7 +86,7 @@ public class ToolIrFileBodyCacheAndDistillTests
     {
         var options = Options.Create(new ToolSchemaOptions { MaxRangeLines = 200 });
         var cache = new ToolIrFileBodyCache(options);
-        var distiller = new ToolIrResultDistiller(options, cache);
+        var distiller = ToolIrTestFactory.CreateDistiller(options, cache);
         var conversationId = Guid.NewGuid();
         var mapping = new ToolIrCallMapping(
             conversationId,
@@ -131,9 +131,9 @@ public class ToolIrFileBodyCacheAndDistillTests
         var options = Options.Create(new ToolSchemaOptions());
         var cache = new ToolIrFileBodyCache(options);
         var conversationId = Guid.NewGuid();
-        cache.Set(conversationId, "docs/a.md", "l1\nl2\nl3\nl4\nl5\n");
+        cache.Set(conversationId, "docs/a.md", "l1\nl2\nl3\nl4\nl5\n", bodyComplete: true);
 
-        var kept = cache.SetIfRicher(conversationId, "docs/a.md", "partial\n");
+        var kept = cache.SetIfRicher(conversationId, "docs/a.md", "partial\n", bodyComplete: true);
 
         Assert.Equal(5, ToolIrFileBodyCache.ContentLineCount(kept));
         Assert.True(cache.TryGet(conversationId, "docs/a.md", out var cached));
@@ -159,7 +159,7 @@ public class ToolIrFileBodyCacheAndDistillTests
         var cache = new ToolIrFileBodyCache(options);
         var conversationId = Guid.NewGuid();
         // Simulate the old poison: stripped window stored as lines 1..n
-        cache.Set(conversationId, "docs/a.md", "---\n\n## Theme Support\nbody\n");
+        cache.Set(conversationId, "docs/a.md", "---\n\n## Theme Support\nbody\n", bodyComplete: true);
 
         Assert.True(cache.TryGetCovering(conversationId, "docs/a.md", 1, 2, out _));
         Assert.False(cache.TryGetCovering(conversationId, "docs/a.md", 175, 200, out _));
@@ -173,7 +173,7 @@ public class ToolIrFileBodyCacheAndDistillTests
         var conversationId = Guid.NewGuid();
         // Native Read returned only lines 1-80 of a longer file (pagination truncated).
         var body = string.Join('\n', Enumerable.Range(1, 80).Select(i => $"line-{i}")) + "\n";
-        cache.Set(conversationId, "comprexy/evidence.md", body);
+        cache.Set(conversationId, "comprexy/evidence.md", body, bodyComplete: true);
 
         Assert.True(cache.TryGetCovering(conversationId, "comprexy/evidence.md", 1, 80, out _));
         Assert.True(cache.TryGetCovering(conversationId, "comprexy/evidence.md", 80, 80, out _));
@@ -188,7 +188,7 @@ public class ToolIrFileBodyCacheAndDistillTests
     {
         var options = Options.Create(new ToolSchemaOptions { MaxRangeLines = 250 });
         var cache = new ToolIrFileBodyCache(options);
-        var distiller = new ToolIrResultDistiller(options, cache);
+        var distiller = ToolIrTestFactory.CreateDistiller(options, cache);
         var conversationId = Guid.NewGuid();
         var mapping = new ToolIrCallMapping(
             conversationId,
@@ -236,7 +236,7 @@ public class ToolIrFileBodyCacheAndDistillTests
         });
         var cache = new ToolIrFileBodyCache(options);
         var conversationId = Guid.NewGuid();
-        cache.Set(conversationId, "docs/a.md", "old body");
+        cache.Set(conversationId, "docs/a.md", "old body", bodyComplete: true);
 
         Assert.Equal(1, cache.Invalidate(conversationId, "/workspace/repo/docs/a.md"));
         Assert.False(cache.TryGet(conversationId, "docs/a.md", out _));
@@ -408,7 +408,7 @@ public class ToolIrFileBodyCacheAndDistillTests
     {
         var options = Options.Create(new ToolSchemaOptions());
         using var cache = new ToolIrFileBodyCache(options);
-        var distiller = new ToolIrResultDistiller(options, cache);
+        var distiller = ToolIrTestFactory.CreateDistiller(options, cache);
         var conversationId = Guid.NewGuid();
         var mapping = BuildMapping(
             conversationId,
@@ -439,7 +439,7 @@ public class ToolIrFileBodyCacheAndDistillTests
     {
         var options = Options.Create(new ToolSchemaOptions { MaxRangeLines = 250 });
         using var cache = new ToolIrFileBodyCache(options);
-        var distiller = new ToolIrResultDistiller(options, cache);
+        var distiller = ToolIrTestFactory.CreateDistiller(options, cache);
         var conversationId = Guid.NewGuid();
         var mapping = BuildMapping(
             conversationId,
@@ -467,7 +467,7 @@ public class ToolIrFileBodyCacheAndDistillTests
     {
         var options = Options.Create(new ToolSchemaOptions());
         using var cache = new ToolIrFileBodyCache(options);
-        var distiller = new ToolIrResultDistiller(options, cache);
+        var distiller = ToolIrTestFactory.CreateDistiller(options, cache);
         var conversationId = Guid.NewGuid();
         var mapping = BuildMapping(
             conversationId,
@@ -494,7 +494,7 @@ public class ToolIrFileBodyCacheAndDistillTests
     {
         var options = Options.Create(new ToolSchemaOptions { MaxShellObservationChars = 4000 });
         using var cache = new ToolIrFileBodyCache(options);
-        var distiller = new ToolIrResultDistiller(options, cache);
+        var distiller = ToolIrTestFactory.CreateDistiller(options, cache);
         var conversationId = Guid.NewGuid();
         var mapping = BuildMapping(
             conversationId,
@@ -515,7 +515,7 @@ public class ToolIrFileBodyCacheAndDistillTests
     {
         var options = Options.Create(new ToolSchemaOptions());
         using var cache = new ToolIrFileBodyCache(options);
-        var distiller = new ToolIrResultDistiller(options, cache);
+        var distiller = ToolIrTestFactory.CreateDistiller(options, cache);
         var conversationId = Guid.NewGuid();
         var mapping = BuildMapping(conversationId, "client_custom_tool", """{"input":"x"}""");
 
@@ -540,6 +540,215 @@ public class ToolIrFileBodyCacheAndDistillTests
         Assert.DoesNotContain("\\n", content, StringComparison.Ordinal);
     }
 
+
+    [Fact]
+    public void EnvelopeGate_EmbeddedContentInCode_NotUnwrapped_RealEnvelopeIs()
+    {
+        Assert.False(ToolIrResultDistiller.TryExtractTaggedContent(
+            "var x = \"<content>fragment</content>\";", out _));
+        Assert.True(ToolIrResultDistiller.TryExtractTaggedContent(
+            "<path>docs/a.md</path><type>file</type><content>hello\nworld</content>", out var body));
+        Assert.Equal("hello\nworld", body);
+    }
+
+    [Fact]
+    public void DistillFileRange_FooterPrefix_CachesIncompleteWithTotal()
+    {
+        var options = Options.Create(new ToolSchemaOptions { MaxRangeLines = 250 });
+        using var cache = new ToolIrFileBodyCache(options);
+        var distiller = ToolIrTestFactory.CreateDistiller(options, cache);
+        var conversationId = Guid.NewGuid();
+        var mapping = BuildMapping(
+            conversationId,
+            ToolSchemaConstants.FileRangeToolName,
+            """{"path":"docs/a.md","start_line":1,"end_line":80}""",
+            path: "docs/a.md",
+            startLine: 1,
+            endLine: 80);
+
+        var lines = string.Join('\n', Enumerable.Range(1, 80).Select(i => $"{i}: line-{i}"));
+        var native = $"<path>docs/a.md</path><type>file</type><content>\n{lines}\n\n(Showing lines 1-80 of 267. Use offset=81 to continue.)\n</content>";
+        using var observation = JsonDocument.Parse(distiller.Distill(conversationId, mapping, native));
+        Assert.False(observation.RootElement.GetProperty("complete").GetBoolean());
+        Assert.False(observation.RootElement.GetProperty("body_complete").GetBoolean());
+        Assert.Equal(267, observation.RootElement.GetProperty("total_line_count").GetInt32());
+        Assert.Equal(81, observation.RootElement.GetProperty("next_start_line").GetInt32());
+        Assert.True(cache.TryGet(conversationId, "docs/a.md", out var entry));
+        Assert.False(entry!.BodyComplete);
+        Assert.Equal(267, entry.TotalLineCount);
+        Assert.DoesNotContain("Showing lines", entry.Body, StringComparison.OrdinalIgnoreCase);
+        Assert.False(cache.TryGetCovering(conversationId, "docs/a.md", 10, 40, out _));
+    }
+
+    [Fact]
+    public void DistillFileRange_BodyComplete_ReflectsReturnedRicherEntry()
+    {
+        var options = Options.Create(new ToolSchemaOptions { MaxRangeLines = 250 });
+        using var cache = new ToolIrFileBodyCache(options);
+        var conversationId = Guid.NewGuid();
+        var full = string.Join('\n', Enumerable.Range(1, 100).Select(i => $"line-{i}")) + "\n";
+        cache.Set(conversationId, "docs/a.md", full, bodyComplete: true, totalLineCount: 100);
+        var distiller = ToolIrTestFactory.CreateDistiller(options, cache);
+        var mapping = BuildMapping(
+            conversationId,
+            ToolSchemaConstants.FileRangeToolName,
+            """{"path":"docs/a.md","start_line":1,"end_line":10}""",
+            path: "docs/a.md",
+            startLine: 1,
+            endLine: 10);
+        var window = string.Join('\n', Enumerable.Range(1, 10).Select(i => $"{i}: window-{i}"));
+        var native = $"<path>docs/a.md</path><content>\n{window}\n\n(Showing lines 1-10 of 267. Use offset=11 to continue.)\n</content>";
+        using var observation = JsonDocument.Parse(distiller.Distill(conversationId, mapping, native));
+        Assert.True(observation.RootElement.GetProperty("body_complete").GetBoolean());
+        Assert.Contains("line-1", observation.RootElement.GetProperty("content").GetString()!, StringComparison.Ordinal);
+        Assert.DoesNotContain("window-1", observation.RootElement.GetProperty("content").GetString()!, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void DistillFileRange_FirstReadCaps_LinesAndChars()
+    {
+        var options = Options.Create(new ToolSchemaOptions
+        {
+            FirstReadMaxLines = 5,
+            FirstReadMaxChars = 60000,
+            MaxRangeLines = 250
+        });
+        using var cache = new ToolIrFileBodyCache(options);
+        var distiller = ToolIrTestFactory.CreateDistiller(options, cache);
+        var conversationId = Guid.NewGuid();
+        var body = string.Join('\n', Enumerable.Range(1, 40).Select(i => $"line-{i}"));
+        var mapping = BuildMapping(
+            conversationId,
+            ToolSchemaConstants.FileRangeToolName,
+            """{"path":"docs/a.md","start_line":1}""",
+            path: "docs/a.md",
+            startLine: 1,
+            endLine: null);
+        var native = $"<path>docs/a.md</path><content>\n{body}\n</content>";
+        using var obs = JsonDocument.Parse(distiller.Distill(conversationId, mapping, native));
+        Assert.True(obs.RootElement.GetProperty("truncated").GetBoolean());
+        Assert.Equal(5, obs.RootElement.GetProperty("content").GetString()!.Split('\n').Length);
+
+        var charOptions = Options.Create(new ToolSchemaOptions
+        {
+            FirstReadMaxLines = 400,
+            FirstReadMaxChars = 20,
+            MaxRangeLines = 250
+        });
+        using var cache2 = new ToolIrFileBodyCache(charOptions);
+        var distiller2 = ToolIrTestFactory.CreateDistiller(charOptions, cache2);
+        using var obs2 = JsonDocument.Parse(distiller2.Distill(conversationId, mapping with { ConversationId = conversationId }, native));
+        Assert.True(obs2.RootElement.GetProperty("truncated").GetBoolean());
+        Assert.True(obs2.RootElement.GetProperty("content").GetString()!.Length <= 21);
+
+        var windowed = Options.Create(new ToolSchemaOptions { MaxRangeLines = 3, FirstReadMaxLines = 400 });
+        using var cache3 = new ToolIrFileBodyCache(windowed);
+        var distiller3 = ToolIrTestFactory.CreateDistiller(windowed, cache3);
+        var mappingWindowed = BuildMapping(
+            conversationId,
+            ToolSchemaConstants.FileRangeToolName,
+            """{"path":"docs/a.md","start_line":1,"end_line":40}""",
+            path: "docs/a.md",
+            startLine: 1,
+            endLine: 40);
+        using var obs3 = JsonDocument.Parse(distiller3.Distill(conversationId, mappingWindowed, native));
+        Assert.True(obs3.RootElement.GetProperty("truncated").GetBoolean());
+        Assert.Equal(3, obs3.RootElement.GetProperty("content").GetString()!.Split('\n').Length);
+    }
+
+    [Fact]
+    public void DistillFileManifest_LineCountAndTruncationFlags()
+    {
+        var body = "using A;\nusing B;\nusing C;\npublic class Foo {}\npublic class Bar {}\n";
+        var entry = ToolIrFileBodyCache.BuildEntry("src/Foo.cs", body, bodyComplete: true, totalLineCount: null);
+        using var json = JsonDocument.Parse(
+            ToolIrResultDistiller.BuildManifestFromCache(entry, maxImports: 2, maxSymbols: 1, maxImportChars: 160));
+        Assert.Equal(ToolIrFileBodyCache.ContentLineCount(entry), json.RootElement.GetProperty("line_count").GetInt32());
+        Assert.True(json.RootElement.GetProperty("body_complete").GetBoolean());
+        Assert.True(json.RootElement.GetProperty("imports_truncated").GetBoolean());
+        Assert.True(json.RootElement.GetProperty("symbols_truncated").GetBoolean());
+
+        using var below = JsonDocument.Parse(
+            ToolIrResultDistiller.BuildManifestFromCache(entry, maxImports: 20, maxSymbols: 30, maxImportChars: 160));
+        Assert.False(below.RootElement.GetProperty("imports_truncated").GetBoolean());
+        Assert.False(below.RootElement.GetProperty("symbols_truncated").GetBoolean());
+
+        var incomplete = ToolIrFileBodyCache.BuildEntry("src/Foo.cs", body, bodyComplete: false, totalLineCount: 99);
+        using var win = JsonDocument.Parse(ToolIrResultDistiller.BuildManifestFromCache(incomplete, 20, 30, 160));
+        Assert.False(win.RootElement.GetProperty("body_complete").GetBoolean());
+    }
+
+    [Fact]
+    public void DistillFileSearch_SplitFlags_AndSentinels()
+    {
+        using var cap = DistillFileSearch(
+            string.Join('\n', Enumerable.Range(1, 5).Select(i => $"src/a.cs:{i}: hit-{i}")),
+            maxSearchMatches: 2);
+        Assert.True(cap.RootElement.GetProperty("matches_truncated").GetBoolean());
+        Assert.False(cap.RootElement.GetProperty("preview_truncated").GetBoolean());
+        Assert.True(cap.RootElement.GetProperty("truncated").GetBoolean());
+
+        var options = Options.Create(new ToolSchemaOptions { MaxSearchMatches = 40, MaxSearchPreviewChars = 5 });
+        using var cache = new ToolIrFileBodyCache(options);
+        var distiller = ToolIrTestFactory.CreateDistiller(options, cache);
+        var conversationId = Guid.NewGuid();
+        var mapping = BuildMapping(conversationId, ToolSchemaConstants.FileSearchToolName, """{"query":"q"}""", path: "src");
+        using var preview = JsonDocument.Parse(distiller.Distill(conversationId, mapping, "src/a.cs:1: long-preview-text"));
+        Assert.False(preview.RootElement.GetProperty("matches_truncated").GetBoolean());
+        Assert.True(preview.RootElement.GetProperty("preview_truncated").GetBoolean());
+        Assert.True(preview.RootElement.GetProperty("truncated").GetBoolean());
+
+        using var none = DistillFileSearch("No matches found");
+        Assert.Equal(0, none.RootElement.GetProperty("match_count").GetInt32());
+        Assert.Equal(0, none.RootElement.GetProperty("total_match_count").GetInt32());
+        Assert.Equal("no_matches", none.RootElement.GetProperty("status").GetString());
+
+        using var err = DistillFileSearch("Error: search failed");
+        Assert.Equal(0, err.RootElement.GetProperty("match_count").GetInt32());
+        Assert.Equal("error", err.RootElement.GetProperty("status").GetString());
+
+        using var unstructured = DistillFileSearch("alpha result\nbeta result\ngamma result");
+        Assert.Equal("unstructured", unstructured.RootElement.GetProperty("parse_mode").GetString());
+        Assert.Equal(3, unstructured.RootElement.GetProperty("match_count").GetInt32());
+    }
+
+    [Fact]
+    public void DistillDirList_TotalEntryCount_PreCap()
+    {
+        var options = Options.Create(new ToolSchemaOptions { MaxDirListEntries = 2 });
+        using var cache = new ToolIrFileBodyCache(options);
+        var distiller = ToolIrTestFactory.CreateDistiller(options, cache);
+        var conversationId = Guid.NewGuid();
+        var mapping = BuildMapping(conversationId, ToolSchemaConstants.DirListToolName, """{"path":"src"}""", path: "src");
+        var native = JsonSerializer.Serialize(new { entries = new[] { "a", "b", "c", "d" } });
+        using var obs = JsonDocument.Parse(distiller.Distill(conversationId, mapping, native));
+        Assert.Equal(2, obs.RootElement.GetProperty("entry_count").GetInt32());
+        Assert.Equal(4, obs.RootElement.GetProperty("total_entry_count").GetInt32());
+        Assert.True(obs.RootElement.GetProperty("truncated").GetBoolean());
+    }
+
+    [Fact]
+    public void Distill_CapsFromOptions_SearchPreviewAndPassthrough()
+    {
+        var options = Options.Create(new ToolSchemaOptions
+        {
+            MaxSearchPreviewChars = 4,
+            MaxPassthroughObservationChars = 6
+        });
+        using var cache = new ToolIrFileBodyCache(options);
+        var distiller = ToolIrTestFactory.CreateDistiller(options, cache);
+        var conversationId = Guid.NewGuid();
+        var search = BuildMapping(conversationId, ToolSchemaConstants.FileSearchToolName, """{"query":"q"}""");
+        using var s = JsonDocument.Parse(distiller.Distill(conversationId, search, "src/a.cs:1: abcdefgh"));
+        Assert.True(s.RootElement.GetProperty("preview_truncated").GetBoolean());
+        Assert.True(s.RootElement.GetProperty("matches")[0].GetProperty("preview").GetString()!.StartsWith("abcd", StringComparison.Ordinal));
+
+        var pass = BuildMapping(conversationId, "client_custom_tool", "{}");
+        using var p = JsonDocument.Parse(distiller.Distill(conversationId, pass, "1234567890"));
+        Assert.True(p.RootElement.GetProperty("truncated").GetBoolean());
+        Assert.Equal(7, p.RootElement.GetProperty("content").GetString()!.Length);
+    }
+
     private const string SearchResultLines =
         "src/alpha.py:12: def f():\nsrc/beta.py:3: x = 1\ndocs/notes.md:7: note";
 
@@ -547,7 +756,7 @@ public class ToolIrFileBodyCacheAndDistillTests
     {
         var options = Options.Create(new ToolSchemaOptions { MaxSearchMatches = maxSearchMatches });
         using var cache = new ToolIrFileBodyCache(options);
-        var distiller = new ToolIrResultDistiller(options, cache);
+        var distiller = ToolIrTestFactory.CreateDistiller(options, cache);
         var conversationId = Guid.NewGuid();
         var mapping = BuildMapping(
             conversationId,

@@ -5,7 +5,8 @@ namespace Comprexy.Application.Models;
 public enum UpstreamRequestPurpose
 {
     Chat,
-    Compression
+    Compression,
+    ShapeLearner
 }
 
 /// <summary>

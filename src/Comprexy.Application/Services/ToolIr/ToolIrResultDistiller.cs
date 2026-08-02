@@ -1,6 +1,7 @@
 using System.Text;
 using System.Text.Json;
-using System.Text.Json.Nodes;
+using System.Text.RegularExpressions;
+using Comprexy.Application.Abstractions;
 using Comprexy.Application.Configuration;
 using Microsoft.Extensions.Options;
 
@@ -13,13 +14,36 @@ public class ToolIrResultDistiller
 {
     private const int MaxJsonStringUnwrapDepth = 2;
 
+    private static readonly HashSet<string> EnvelopeAllowlistTags = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "path", "type", "notice", "file", "error", "warning", "lines", "truncated"
+    };
+
+    private static readonly string[] SearchNoMatchSentinels =
+        ["no matches", "no results", "no files"];
+
+    private static readonly string[] SearchErrorSentinels =
+        ["error:", "error"];
+
+    private static readonly Regex FooterTotalRegex = new(
+        @"of\s+(\d+)",
+        RegexOptions.IgnoreCase | RegexOptions.CultureInvariant | RegexOptions.Compiled);
+
     private readonly ToolSchemaOptions _options;
     private readonly ToolIrFileBodyCache _fileCache;
+    private readonly ToolIrResultShapeStore _shapeStore;
+    private readonly IToolIrShapeLearnQueue _shapeLearnQueue;
 
-    public ToolIrResultDistiller(IOptions<ToolSchemaOptions> options, ToolIrFileBodyCache fileCache)
+    public ToolIrResultDistiller(
+        IOptions<ToolSchemaOptions> options,
+        ToolIrFileBodyCache fileCache,
+        ToolIrResultShapeStore shapeStore,
+        IToolIrShapeLearnQueue shapeLearnQueue)
     {
         _options = options.Value;
         _fileCache = fileCache;
+        _shapeStore = shapeStore;
+        _shapeLearnQueue = shapeLearnQueue;
     }
 
     /// <summary>
@@ -44,9 +68,12 @@ public class ToolIrResultDistiller
         };
     }
 
-    private static string DistillPassthrough(ToolIrCallMapping mapping, string nativeContent)
+    private string DistillPassthrough(ToolIrCallMapping mapping, string nativeContent)
     {
-        var content = Truncate(UnwrapJsonEncodedText(nativeContent), 4000, out var truncated);
+        var content = Truncate(
+            UnwrapJsonEncodedText(nativeContent),
+            _options.MaxPassthroughObservationChars,
+            out var truncated);
         return JsonSerializer.Serialize(new
         {
             type = "passthrough",
@@ -73,36 +100,149 @@ public class ToolIrResultDistiller
     private string DistillFileRange(Guid conversationId, ToolIrCallMapping mapping, string nativeContent)
     {
         var path = mapping.Path ?? "unknown";
-        var extracted = ExtractFileBody(nativeContent);
-        var start = mapping.StartLine ?? 1;
-        var end = mapping.EndLine ?? start;
-        var absoluteStart = extracted.FirstLineNumber ?? start;
-        var isPartialWindow = absoluteStart > 1;
+        var extracted = ExtractFileBody(conversationId, mapping.ClientToolName, nativeContent);
+        var requestedStart = mapping.StartLine ?? 1;
+        var requestedEnd = mapping.EndLine;
+        var isUnwindowedFirstRead = mapping.EndLine is null;
+        var lineCap = isUnwindowedFirstRead ? _options.FirstReadMaxLines : _options.MaxRangeLines;
+        var absoluteStart = extracted.FirstLineNumber ?? requestedStart;
+        var (bodyWithoutFooter, strippedFooterTotal) = StripReadPaginationFooterWithTotal(extracted.Body);
+        var footerTotal = strippedFooterTotal ?? extracted.FooterTotalLineCount;
+        extracted = extracted with { Body = bodyWithoutFooter };
+
+        var observationCapHit = false;
+        var bodyStartedAtOne = absoluteStart <= 1;
+        var bodyCompleteCandidate = bodyStartedAtOne && footerTotal is null;
 
         ToolIrCachedFileBody? cached = null;
         string text;
         bool truncated;
+        int returnedStart;
+        int returnedEnd;
 
-        if (isPartialWindow)
+        if (!bodyStartedAtOne)
         {
             // Windowed native Read: body is already the requested slice (line prefixes stripped).
             // Do not store it as a full-file cache entry — that would poison later absolute ranges.
-            text = CapWindowLines(extracted.Body, _options.MaxRangeLines, out truncated);
+            text = CapWindowLines(extracted.Body, lineCap, out truncated);
+            observationCapHit = truncated;
+            if (isUnwindowedFirstRead && text.Length > _options.FirstReadMaxChars)
+            {
+                text = Truncate(text, _options.FirstReadMaxChars, out _);
+                truncated = true;
+                observationCapHit = true;
+            }
+
+            returnedStart = absoluteStart;
+            returnedEnd = absoluteStart + CountContentLines(text) - (string.IsNullOrEmpty(text) ? 0 : 1);
+            if (string.IsNullOrEmpty(text))
+            {
+                returnedEnd = absoluteStart - 1;
+            }
+            else if (CountContentLines(text) > 0)
+            {
+                returnedEnd = absoluteStart + CountContentLines(text) - 1;
+            }
+
+            // Incomplete: never cache as complete.
+            bodyCompleteCandidate = false;
         }
         else
         {
-            cached = _fileCache.SetIfRicher(conversationId, path, extracted.Body);
+            // Cap hit on observation means the cached body was also cut — mark incomplete.
+            var cacheBody = extracted.Body;
+            if (isUnwindowedFirstRead)
+            {
+                // Cache the full native body; observation may still be capped below.
+                cached = _fileCache.SetIfRicher(
+                    conversationId,
+                    path,
+                    cacheBody,
+                    bodyComplete: bodyCompleteCandidate && true,
+                    totalLineCount: footerTotal ?? (bodyCompleteCandidate ? CountContentLines(cacheBody) : null));
+            }
+            else
+            {
+                // For windowed reads starting at 1: complete only when no footer and body not
+                // observation-capped relative to the request. Completeness for cache uses footer + start.
+                cached = _fileCache.SetIfRicher(
+                    conversationId,
+                    path,
+                    cacheBody,
+                    bodyComplete: bodyCompleteCandidate,
+                    totalLineCount: footerTotal ?? (bodyCompleteCandidate ? CountContentLines(cacheBody) : null));
+            }
+
+            var sliceEnd = requestedEnd ?? int.MaxValue;
             if (!ToolIrFileBodyCache.TrySliceLines(
                     cached,
-                    start,
-                    end,
-                    _options.MaxRangeLines,
+                    requestedStart,
+                    sliceEnd,
+                    lineCap,
                     out text,
                     out truncated))
             {
-                // Cache richer but still short of this range — surface the native window as-is.
-                text = CapWindowLines(extracted.Body, _options.MaxRangeLines, out truncated);
+                text = CapWindowLines(extracted.Body, lineCap, out truncated);
+                returnedStart = requestedStart;
+                returnedEnd = string.IsNullOrEmpty(text)
+                    ? requestedStart - 1
+                    : requestedStart + CountContentLines(text) - 1;
             }
+            else
+            {
+                returnedStart = requestedStart;
+                returnedEnd = string.IsNullOrEmpty(text)
+                    ? requestedStart - 1
+                    : requestedStart + CountContentLines(text) - 1;
+            }
+
+            observationCapHit = truncated;
+            if (isUnwindowedFirstRead && text.Length > _options.FirstReadMaxChars)
+            {
+                text = Truncate(text, _options.FirstReadMaxChars, out _);
+                truncated = true;
+                observationCapHit = true;
+                returnedEnd = requestedStart + CountContentLines(text) - (string.IsNullOrEmpty(text) ? 0 : 1);
+                if (!string.IsNullOrEmpty(text))
+                {
+                    returnedEnd = requestedStart + CountContentLines(text) - 1;
+                }
+            }
+        }
+
+        // body_complete is read off the entry SetIfRicher returned (may be a pre-existing richer entry).
+        var bodyComplete = cached?.BodyComplete ?? false;
+        var totalLineCount = cached?.TotalLineCount
+                             ?? footerTotal
+                             ?? (bodyComplete ? ToolIrFileBodyCache.ContentLineCount(cached!) : null);
+        if (cached is null)
+        {
+            totalLineCount = footerTotal;
+        }
+
+        var requestFullyCovered = requestedEnd is null
+            ? bodyComplete && !observationCapHit
+            : returnedStart <= requestedStart &&
+              returnedEnd >= requestedEnd.Value &&
+              bodyComplete;
+        // When EndLine is set, "complete" means returned span covers the request AND body is complete.
+        // When EndLine is null (unwindowed), complete means body complete and observation not truncated.
+        var complete = requestedEnd is null
+            ? bodyComplete && !observationCapHit
+            : returnedStart <= requestedStart &&
+              returnedEnd >= requestedEnd.Value &&
+              bodyComplete;
+
+        int? nextStartLine = complete || returnedEnd < requestedStart
+            ? null
+            : returnedEnd + 1;
+        if (!complete && returnedEnd >= requestedStart)
+        {
+            nextStartLine = returnedEnd + 1;
+        }
+        else if (complete)
+        {
+            nextStartLine = null;
         }
 
         var hash = cached?.ContentHash
@@ -113,9 +253,17 @@ public class ToolIrResultDistiller
         {
             type = "file_range",
             path = pathOut,
-            start_line = start,
-            end_line = Math.Min(end, start + _options.MaxRangeLines - 1),
-            truncated,
+            requested_start_line = requestedStart,
+            requested_end_line = requestedEnd,
+            returned_start_line = returnedStart,
+            returned_end_line = Math.Max(returnedStart - 1, returnedEnd),
+            start_line = returnedStart,
+            end_line = Math.Max(returnedStart - 1, returnedEnd),
+            body_complete = bodyComplete,
+            complete,
+            total_line_count = totalLineCount,
+            next_start_line = nextStartLine,
+            truncated = observationCapHit,
             content_hash = hash,
             content = text
         });
@@ -124,17 +272,34 @@ public class ToolIrResultDistiller
     private string DistillFileManifest(Guid conversationId, ToolIrCallMapping mapping, string nativeContent)
     {
         var path = mapping.Path ?? "unknown";
-        var extracted = ExtractFileBody(nativeContent);
+        var extracted = ExtractFileBody(conversationId, mapping.ClientToolName, nativeContent);
+        var (bodyWithoutFooter, strippedFooterTotal) = StripReadPaginationFooterWithTotal(extracted.Body);
+        var footerTotal = strippedFooterTotal ?? extracted.FooterTotalLineCount;
+        extracted = extracted with { Body = bodyWithoutFooter };
         var absoluteStart = extracted.FirstLineNumber ?? 1;
         if (absoluteStart > 1)
         {
             // Manifest needs a full-ish body; refuse to cache/poison from a windowed read.
-            var ephemeral = ToolIrFileBodyCache.BuildEntry(path, extracted.Body);
-            return BuildManifestFromCache(ephemeral);
+            var ephemeral = ToolIrFileBodyCache.BuildEntry(path, extracted.Body, bodyComplete: false, totalLineCount: footerTotal);
+            return BuildManifestFromCache(
+                ephemeral,
+                _options.MaxManifestImports,
+                _options.MaxManifestSymbols,
+                _options.MaxManifestImportChars);
         }
 
-        var cached = _fileCache.SetIfRicher(conversationId, path, extracted.Body);
-        return BuildManifestFromCache(cached);
+        var bodyComplete = footerTotal is null;
+        var cached = _fileCache.SetIfRicher(
+            conversationId,
+            path,
+            extracted.Body,
+            bodyComplete,
+            totalLineCount: footerTotal ?? (bodyComplete ? CountContentLines(extracted.Body) : null));
+        return BuildManifestFromCache(
+            cached,
+            _options.MaxManifestImports,
+            _options.MaxManifestSymbols,
+            _options.MaxManifestImportChars);
     }
 
     private static string CapWindowLines(string body, int maxLines, out bool truncated)
@@ -146,7 +311,6 @@ public class ToolIrResultDistiller
         }
 
         var lines = body.Replace("\r\n", "\n", StringComparison.Ordinal).Split('\n');
-        // Preserve trailing empty from final newline as Split does.
         var contentCount = body.EndsWith('\n') ? lines.Length - 1 : lines.Length;
         if (contentCount <= maxLines)
         {
@@ -157,19 +321,29 @@ public class ToolIrResultDistiller
         return string.Join('\n', lines.Take(maxLines));
     }
 
-    public static string BuildManifestFromCache(ToolIrCachedFileBody cached)
+    public static string BuildManifestFromCache(ToolIrCachedFileBody cached) =>
+        BuildManifestFromCache(cached, maxImports: 20, maxSymbols: 30, maxImportChars: 160);
+
+    public static string BuildManifestFromCache(
+        ToolIrCachedFileBody cached,
+        int maxImports,
+        int maxSymbols,
+        int maxImportChars)
     {
         var language = GuessLanguage(cached.Path);
-        var imports = ExtractImportHints(cached.Body, max: 20);
-        var symbols = ExtractSymbolHints(cached.Body, max: 30);
+        var imports = ExtractImportHints(cached.Body, maxImports, maxImportChars, out var importsTruncated);
+        var symbols = ExtractSymbolHints(cached.Body, maxSymbols, out var symbolsTruncated);
         return JsonSerializer.Serialize(new
         {
             type = "file_manifest",
             path = cached.Path,
             language,
-            line_count = cached.LineStartOffsets.Count,
+            line_count = ToolIrFileBodyCache.ContentLineCount(cached),
             size_bytes = Encoding.UTF8.GetByteCount(cached.Body),
             content_hash = cached.ContentHash,
+            body_complete = cached.BodyComplete,
+            imports_truncated = importsTruncated,
+            symbols_truncated = symbolsTruncated,
             imports,
             symbols
         });
@@ -177,40 +351,150 @@ public class ToolIrResultDistiller
 
     private string DistillFileSearch(ToolIrCallMapping mapping, string nativeContent)
     {
-        var result = ExtractSearchMatches(nativeContent, _options.MaxSearchMatches);
+        var result = ExtractSearchMatches(
+            nativeContent,
+            _options.MaxSearchMatches,
+            _options.MaxSearchPreviewChars,
+            _options.SearchSentinelMaxChars);
         return JsonSerializer.Serialize(new
         {
             type = "file_search",
             query = TryReadArg(mapping.IrArgumentsJson, "query"),
             path = mapping.Path,
-            truncated = result.Truncated,
+            truncated = result.MatchesTruncated || result.PreviewTruncated,
+            matches_truncated = result.MatchesTruncated,
+            preview_truncated = result.PreviewTruncated,
             match_count = result.Matches.Count,
             total_match_count = result.TotalCount,
+            status = result.Status,
+            parse_mode = result.ParseMode,
+            notice = result.Notice,
             matches = result.Matches
         });
     }
 
     private string DistillDirList(ToolIrCallMapping mapping, string nativeContent)
     {
-        var entries = ExtractDirEntries(nativeContent, _options.MaxDirListEntries, out var truncated);
+        var entries = ExtractDirEntries(
+            nativeContent,
+            _options.MaxDirListEntries,
+            out var truncated,
+            out var totalEntryCount);
         return JsonSerializer.Serialize(new
         {
             type = "dir_list",
             path = mapping.Path,
             truncated,
             entry_count = entries.Count,
+            total_entry_count = totalEntryCount,
             entries
         });
     }
 
-    private static ExtractedFileBody ExtractFileBody(string nativeContent)
+    public ExtractedFileBody ExtractFileBody(
+        Guid conversationId,
+        string? clientToolName,
+        string nativeContent)
     {
         if (string.IsNullOrEmpty(nativeContent))
         {
-            return new ExtractedFileBody(string.Empty, null, false);
+            return new ExtractedFileBody(string.Empty, null, false, null);
         }
 
         nativeContent = UnwrapJsonEncodedText(nativeContent);
+
+        if (string.IsNullOrWhiteSpace(clientToolName))
+        {
+            return ExtractFileBodyHeuristic(nativeContent);
+        }
+
+        var (descriptor, confidence) = ToolIrResultShapeProbe.Classify(nativeContent);
+
+        if (confidence == ToolIrShapeConfidence.Unambiguous)
+        {
+            var heuristic = ExtractFileBodyHeuristic(nativeContent);
+            _shapeStore.RecordProbe(conversationId, clientToolName, descriptor);
+            if (_shapeStore.ShouldSample(conversationId, clientToolName))
+            {
+                var features = ToolIrShapeSanitizer.Build(
+                    nativeContent,
+                    confidence,
+                    heuristic,
+                    _options.ResultShape.MaxSampleLines);
+                if (features is not null)
+                {
+                    var outcome = _shapeStore.RecordSample(conversationId, clientToolName, features);
+                    if (outcome.ShouldEnqueue)
+                    {
+                        _shapeLearnQueue.TryEnqueue(new ToolIrShapeLearnJob(
+                            conversationId,
+                            clientToolName,
+                            GuessVirtualToolForClient(clientToolName),
+                            outcome.Snapshot));
+                    }
+                }
+            }
+
+            return heuristic;
+        }
+
+        // Ambiguous: consult store; use attested descriptor when present.
+        if (_shapeStore.TryGet(conversationId, clientToolName, out var stored) && stored is not null)
+        {
+            if (ToolIrResultShape.TryExtractBody(nativeContent, stored, out var body, out var firstLine))
+            {
+                var fromShape = StripReadLinePrefixes(body);
+                if (firstLine is not null)
+                {
+                    fromShape = fromShape with { FirstLineNumber = firstLine };
+                }
+
+                RecordAmbiguousSample(conversationId, clientToolName, nativeContent);
+                return fromShape;
+            }
+
+            _shapeStore.Demote(conversationId, clientToolName, "attestation_failed");
+        }
+
+        var fallback = ExtractFileBodyHeuristic(nativeContent);
+        RecordAmbiguousSample(conversationId, clientToolName, nativeContent);
+        return fallback;
+    }
+
+    private void RecordAmbiguousSample(Guid conversationId, string clientToolName, string nativeContent)
+    {
+        if (!_shapeStore.ShouldSample(conversationId, clientToolName))
+        {
+            return;
+        }
+
+        var features = ToolIrShapeSanitizer.Build(
+            nativeContent,
+            ToolIrShapeConfidence.Ambiguous,
+            heuristicBody: null,
+            _options.ResultShape.MaxSampleLines);
+        if (features is null)
+        {
+            return;
+        }
+
+        var outcome = _shapeStore.RecordSample(conversationId, clientToolName, features);
+        if (outcome.ShouldEnqueue)
+        {
+            _shapeLearnQueue.TryEnqueue(new ToolIrShapeLearnJob(
+                conversationId,
+                clientToolName,
+                GuessVirtualToolForClient(clientToolName),
+                outcome.Snapshot));
+        }
+    }
+
+    private static string GuessVirtualToolForClient(string clientToolName) =>
+        // Job metadata only; learner does not branch on this.
+        clientToolName;
+
+    private static ExtractedFileBody ExtractFileBodyHeuristic(string nativeContent)
+    {
         var trimmed = nativeContent.TrimStart();
         if (trimmed.StartsWith('{') || trimmed.StartsWith('['))
         {
@@ -285,9 +569,10 @@ public class ToolIrResultDistiller
     }
 
     /// <summary>
-    /// Cursor / Kilo Read tools wrap bodies as <c>&lt;path&gt;…&lt;/path&gt;&lt;content&gt;…&lt;/content&gt;</c>.
+    /// Envelope-gated unwrap: only when prelude/trailer are allowlisted wrappers and the close tag
+    /// is the last <c>&lt;/content&gt;</c>. Gate fail → treat as raw file text.
     /// </summary>
-    internal static bool TryExtractTaggedContent(string nativeContent, out string content)
+    public static bool TryExtractTaggedContent(string nativeContent, out string content)
     {
         content = string.Empty;
         const string open = "<content>";
@@ -298,22 +583,102 @@ public class ToolIrResultDistiller
             return false;
         }
 
-        start += open.Length;
-        var end = nativeContent.IndexOf(close, start, StringComparison.OrdinalIgnoreCase);
-        if (end < 0)
+        if (!IsAllowlistedEnvelopeSide(nativeContent.AsSpan(0, start)))
         {
             return false;
         }
 
-        content = nativeContent[start..end];
+        var contentStart = start + open.Length;
+        var end = nativeContent.LastIndexOf(close, StringComparison.OrdinalIgnoreCase);
+        if (end < contentStart)
+        {
+            return false;
+        }
+
+        var afterClose = end + close.Length;
+        if (afterClose < nativeContent.Length &&
+            !IsAllowlistedEnvelopeSide(nativeContent.AsSpan(afterClose)))
+        {
+            return false;
+        }
+
+        content = nativeContent[contentStart..end];
         if (content.StartsWith('\n'))
         {
             content = content[1..];
         }
 
-        if (content.EndsWith('\n') && content.Length > 0)
+        return true;
+    }
+
+    /// <summary>
+    /// True when <paramref name="side"/> is only whitespace and/or complete top-level elements from
+    /// the envelope allowlist (<c>path</c>, <c>type</c>, <c>notice</c>, <c>file</c>, <c>error</c>,
+    /// <c>warning</c>, <c>lines</c>, <c>truncated</c>).
+    /// </summary>
+    internal static bool IsAllowlistedEnvelopeSide(ReadOnlySpan<char> side)
+    {
+        var i = 0;
+        while (i < side.Length)
         {
-            // Keep trailing newline semantics from the file when present before </content>.
+            while (i < side.Length && char.IsWhiteSpace(side[i]))
+            {
+                i++;
+            }
+
+            if (i >= side.Length)
+            {
+                return true;
+            }
+
+            if (side[i] != '<')
+            {
+                return false;
+            }
+
+            i++;
+            if (i < side.Length && side[i] == '/')
+            {
+                return false;
+            }
+
+            var nameStart = i;
+            while (i < side.Length && (char.IsLetterOrDigit(side[i]) || side[i] is '_' or '-'))
+            {
+                i++;
+            }
+
+            if (i == nameStart)
+            {
+                return false;
+            }
+
+            var tagName = side[nameStart..i].ToString();
+            if (!EnvelopeAllowlistTags.Contains(tagName))
+            {
+                return false;
+            }
+
+            while (i < side.Length && side[i] != '>')
+            {
+                i++;
+            }
+
+            if (i >= side.Length)
+            {
+                return false;
+            }
+
+            i++; // past '>'
+            var closeOpen = "</" + tagName + ">";
+            var remaining = side[i..];
+            var closeIdx = remaining.ToString().IndexOf(closeOpen, StringComparison.OrdinalIgnoreCase);
+            if (closeIdx < 0)
+            {
+                return false;
+            }
+
+            i += closeIdx + closeOpen.Length;
         }
 
         return true;
@@ -327,7 +692,7 @@ public class ToolIrResultDistiller
     {
         if (string.IsNullOrEmpty(body))
         {
-            return new ExtractedFileBody(string.Empty, null, false);
+            return new ExtractedFileBody(string.Empty, null, false, null);
         }
 
         var normalized = body.Replace("\r\n", "\n", StringComparison.Ordinal);
@@ -354,13 +719,12 @@ public class ToolIrResultDistiller
         var nonEmpty = lines.Count(static l => l.Length > 0);
         if (nonEmpty == 0 || prefixed * 2 < nonEmpty)
         {
-            return new ExtractedFileBody(StripReadPaginationFooter(normalized), null, false);
+            var (plainBody, plainTotal) = StripReadPaginationFooterWithTotal(normalized);
+            return new ExtractedFileBody(plainBody, null, false, plainTotal);
         }
 
-        return new ExtractedFileBody(
-            StripReadPaginationFooter(string.Join('\n', stripped)),
-            firstLineNumber,
-            true);
+        var (prefixedBody, footerTotal) = StripReadPaginationFooterWithTotal(string.Join('\n', stripped));
+        return new ExtractedFileBody(prefixedBody, firstLineNumber, true, footerTotal);
     }
 
     /// <summary>
@@ -368,11 +732,14 @@ public class ToolIrResultDistiller
     /// <c>(Showing lines 1-80 of 267. Use offset=81 to continue.)</c>
     /// so they are not cached as file body lines.
     /// </summary>
-    internal static string StripReadPaginationFooter(string body)
+    internal static string StripReadPaginationFooter(string body) =>
+        StripReadPaginationFooterWithTotal(body).Body;
+
+    internal static (string Body, int? TotalLineCount) StripReadPaginationFooterWithTotal(string body)
     {
         if (string.IsNullOrEmpty(body))
         {
-            return body;
+            return (body, null);
         }
 
         var normalized = body.Replace("\r\n", "\n", StringComparison.Ordinal);
@@ -385,13 +752,20 @@ public class ToolIrResultDistiller
 
         if (end == 0)
         {
-            return normalized;
+            return (normalized, null);
         }
 
         var last = lines[end - 1].Trim();
         if (!IsReadPaginationFooter(last))
         {
-            return normalized;
+            return (normalized, null);
+        }
+
+        int? total = null;
+        var match = FooterTotalRegex.Match(last);
+        if (match.Success && int.TryParse(match.Groups[1].Value, out var parsed) && parsed > 0)
+        {
+            total = parsed;
         }
 
         end--;
@@ -400,7 +774,8 @@ public class ToolIrResultDistiller
             end--;
         }
 
-        return end == 0 ? string.Empty : string.Join('\n', lines.Take(end));
+        var stripped = end == 0 ? string.Empty : string.Join('\n', lines.Take(end));
+        return (stripped, total);
     }
 
     private static bool IsReadPaginationFooter(string line) =>
@@ -450,17 +825,32 @@ public class ToolIrResultDistiller
         return false;
     }
 
-    internal readonly record struct ExtractedFileBody(string Body, int? FirstLineNumber, bool HadLinePrefixes);
+    public readonly record struct ExtractedFileBody(
+        string Body,
+        int? FirstLineNumber,
+        bool HadLinePrefixes,
+        int? FooterTotalLineCount = null);
 
-    private readonly record struct SearchMatchResult(List<object> Matches, int TotalCount, bool Truncated);
+    private readonly record struct SearchMatchResult(
+        List<object> Matches,
+        int TotalCount,
+        bool MatchesTruncated,
+        bool PreviewTruncated,
+        string? Status,
+        string? ParseMode,
+        string? Notice);
 
-    private static SearchMatchResult ExtractSearchMatches(string nativeContent, int max)
+    private static SearchMatchResult ExtractSearchMatches(
+        string nativeContent,
+        int max,
+        int maxPreviewChars,
+        int sentinelMaxChars)
     {
         nativeContent = UnwrapJsonEncodedText(nativeContent);
         var matches = new List<object>();
         var total = 0;
-        var capDropped = false;
-        var previewCut = false;
+        var matchesTruncated = false;
+        var previewTruncated = false;
         try
         {
             using var document = JsonDocument.Parse(nativeContent);
@@ -471,15 +861,15 @@ public class ToolIrResultDistiller
                     total++;
                     if (matches.Count >= max)
                     {
-                        capDropped = true;
+                        matchesTruncated = true;
                         continue;
                     }
 
                     var preview = Truncate(
                         TryGetString(element, "preview", "content", "text", "snippet") ?? element.GetRawText(),
-                        200,
+                        maxPreviewChars,
                         out var cut);
-                    previewCut |= cut;
+                    previewTruncated |= cut;
                     matches.Add(new
                     {
                         path = TryGetString(element, "path", "file", "filename") ?? string.Empty,
@@ -488,7 +878,14 @@ public class ToolIrResultDistiller
                     });
                 }
 
-                return new SearchMatchResult(matches, total, capDropped || previewCut);
+                return new SearchMatchResult(
+                    matches,
+                    total,
+                    matchesTruncated,
+                    previewTruncated,
+                    Status: null,
+                    ParseMode: "json",
+                    Notice: null);
             }
         }
         catch (JsonException)
@@ -497,6 +894,8 @@ public class ToolIrResultDistiller
         }
 
         var normalized = nativeContent.Replace("\r\n", "\n", StringComparison.Ordinal);
+        var pathLineCount = 0;
+        var nonEmptyLines = new List<string>();
         foreach (var rawLine in normalized.Split('\n'))
         {
             if (string.IsNullOrWhiteSpace(rawLine))
@@ -504,28 +903,89 @@ public class ToolIrResultDistiller
                 continue;
             }
 
+            nonEmptyLines.Add(rawLine.TrimEnd());
+            if (TryParsePathLinePrefix(rawLine.TrimEnd(), out _, out _, out _))
+            {
+                pathLineCount++;
+            }
+        }
+
+        // Sentinel honesty: no path:line: parse and short / sentinel-shaped first line.
+        if (pathLineCount == 0 && nonEmptyLines.Count > 0)
+        {
+            var first = nonEmptyLines[0].Trim();
+            var isShort = normalized.Length < sentinelMaxChars;
+            var status = TryClassifySearchSentinel(first);
+            if (status is not null && (isShort || status is not null))
+            {
+                // Locked rule: if no path:line: AND (payload shorter than cap OR first line is sentinel)
+                if (isShort || status is not null)
+                {
+                    var notice = Truncate(first, sentinelMaxChars);
+                    return new SearchMatchResult(
+                        [],
+                        TotalCount: 0,
+                        MatchesTruncated: false,
+                        PreviewTruncated: false,
+                        Status: status,
+                        ParseMode: "sentinel",
+                        Notice: notice);
+                }
+            }
+        }
+
+        foreach (var line in nonEmptyLines)
+        {
             total++;
             if (matches.Count >= max)
             {
-                capDropped = true;
+                matchesTruncated = true;
                 continue;
             }
 
-            var line = rawLine.TrimEnd();
             if (TryParsePathLinePrefix(line, out var path, out var lineNumber, out var text))
             {
-                var preview = Truncate(text, 200, out var cut);
-                previewCut |= cut;
+                var preview = Truncate(text, maxPreviewChars, out var cut);
+                previewTruncated |= cut;
                 matches.Add(new { path, line = lineNumber, preview });
                 continue;
             }
 
-            var fallbackPreview = Truncate(line, 200, out var fallbackCut);
-            previewCut |= fallbackCut;
+            var fallbackPreview = Truncate(line, maxPreviewChars, out var fallbackCut);
+            previewTruncated |= fallbackCut;
             matches.Add(new { path = "", line = 0, preview = fallbackPreview });
         }
 
-        return new SearchMatchResult(matches, total, capDropped || previewCut);
+        var parseMode = pathLineCount > 0 ? "path_line" : "unstructured";
+        return new SearchMatchResult(
+            matches,
+            total,
+            matchesTruncated,
+            previewTruncated,
+            Status: null,
+            ParseMode: parseMode,
+            Notice: null);
+    }
+
+    private static string? TryClassifySearchSentinel(string firstLineTrimmed)
+    {
+        foreach (var token in SearchNoMatchSentinels)
+        {
+            if (firstLineTrimmed.StartsWith(token, StringComparison.OrdinalIgnoreCase))
+            {
+                return "no_matches";
+            }
+        }
+
+        foreach (var token in SearchErrorSentinels)
+        {
+            if (firstLineTrimmed.StartsWith(token, StringComparison.OrdinalIgnoreCase))
+            {
+                return "error";
+            }
+        }
+
+        return null;
     }
 
     /// <summary>
@@ -585,10 +1045,15 @@ public class ToolIrResultDistiller
         return false;
     }
 
-    private static List<object> ExtractDirEntries(string nativeContent, int max, out bool truncated)
+    private static List<object> ExtractDirEntries(
+        string nativeContent,
+        int max,
+        out bool truncated,
+        out int totalEntryCount)
     {
         nativeContent = UnwrapJsonEncodedText(nativeContent);
         truncated = false;
+        totalEntryCount = 0;
         var entries = new List<object>();
         try
         {
@@ -615,10 +1080,11 @@ public class ToolIrResultDistiller
             {
                 foreach (var element in array.EnumerateArray())
                 {
+                    totalEntryCount++;
                     if (entries.Count >= max)
                     {
                         truncated = true;
-                        break;
+                        continue;
                     }
 
                     if (element.ValueKind == JsonValueKind.String)
@@ -644,14 +1110,15 @@ public class ToolIrResultDistiller
 
         foreach (var line in nativeContent.Split('\n'))
         {
+            if (string.IsNullOrWhiteSpace(line))
+            {
+                continue;
+            }
+
+            totalEntryCount++;
             if (entries.Count >= max)
             {
                 truncated = true;
-                break;
-            }
-
-            if (string.IsNullOrWhiteSpace(line))
-            {
                 continue;
             }
 
@@ -687,9 +1154,15 @@ public class ToolIrResultDistiller
         return false;
     }
 
-    private static List<string> ExtractImportHints(string body, int max)
+    private static List<string> ExtractImportHints(
+        string body,
+        int max,
+        int maxChars,
+        out bool truncated)
     {
+        truncated = false;
         var hints = new List<string>();
+        var seen = 0;
         foreach (var line in body.Split('\n'))
         {
             var trimmed = line.Trim();
@@ -698,33 +1171,51 @@ public class ToolIrResultDistiller
                 trimmed.StartsWith("from ", StringComparison.Ordinal) ||
                 trimmed.StartsWith("#include ", StringComparison.Ordinal))
             {
-                hints.Add(Truncate(trimmed, 160));
+                seen++;
                 if (hints.Count >= max)
                 {
-                    break;
+                    truncated = true;
+                    continue;
                 }
+
+                hints.Add(Truncate(trimmed, maxChars));
             }
+        }
+
+        if (seen > max)
+        {
+            truncated = true;
         }
 
         return hints;
     }
 
-    private static List<object> ExtractSymbolHints(string body, int max)
+    private static List<object> ExtractSymbolHints(string body, int max, out bool truncated)
     {
+        truncated = false;
         var symbols = new List<object>();
         var lineNumber = 0;
+        var seen = 0;
         foreach (var line in body.Split('\n'))
         {
             lineNumber++;
             var trimmed = line.TrimStart();
             if (LooksLikeSymbol(trimmed, out var name, out var kind))
             {
-                symbols.Add(new { name, kind, line = lineNumber });
+                seen++;
                 if (symbols.Count >= max)
                 {
-                    break;
+                    truncated = true;
+                    continue;
                 }
+
+                symbols.Add(new { name, kind, line = lineNumber });
             }
+        }
+
+        if (seen > max)
+        {
+            truncated = true;
         }
 
         return symbols;
@@ -816,6 +1307,26 @@ public class ToolIrResultDistiller
             ".yml" or ".yaml" => "yaml",
             _ => string.IsNullOrEmpty(ext) ? "unknown" : ext.TrimStart('.')
         };
+    }
+
+    private static int CountContentLines(string body)
+    {
+        if (string.IsNullOrEmpty(body))
+        {
+            return 0;
+        }
+
+        var normalized = body.Replace("\r\n", "\n", StringComparison.Ordinal);
+        var count = 1;
+        for (var i = 0; i < normalized.Length; i++)
+        {
+            if (normalized[i] == '\n')
+            {
+                count++;
+            }
+        }
+
+        return normalized[^1] == '\n' ? count - 1 : count;
     }
 
     private static string? TryReadArg(string argumentsJson, string name)

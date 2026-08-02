@@ -378,11 +378,18 @@ public class ProxyChatCompletionService
                 newlyPersisted.Add(PersistMessage(conversation.Id, nextSequence++, message, now));
             }
 
-            // Inbound distill commit: persist rewritten tool observations before isolated dual-id Complete
-            // (docs/ARCHITECTURE.md § Persistence — Unit of Work ownership).
-            if (inboundRewrite.CompletedClientCallIds.Count > 0)
+            // Inbound distill commit: persist rewritten tool observations (and staged result_shapes)
+            // before isolated dual-id Complete (docs/ARCHITECTURE.md § Persistence — Unit of Work ownership).
+            if (inboundRewrite.CompletedClientCallIds.Count > 0 ||
+                inboundRewrite.StagedShapeClientToolNames.Count > 0)
             {
                 await _unitOfWork.SaveChangesAsync(cancellationToken);
+                if (inboundRewrite.StagedShapeClientToolNames.Count > 0)
+                {
+                    _toolSchemaOrchestrator.ConfirmShapeMirrorPersisted(
+                        conversation.Id,
+                        inboundRewrite.StagedShapeClientToolNames);
+                }
             }
 
             foreach (var clientCallId in inboundRewrite.CompletedClientCallIds)
@@ -1361,11 +1368,14 @@ public class ProxyChatCompletionService
                     sequence++,
                     turn.AssistantMessage,
                     _clock.UtcNow);
-                PersistMessage(
-                    prepared.Conversation.Id,
-                    sequence++,
-                    turn.ToolMessage,
-                    _clock.UtcNow);
+                foreach (var toolMessage in turn.ToolMessages)
+                {
+                    PersistMessage(
+                        prepared.Conversation.Id,
+                        sequence++,
+                        toolMessage,
+                        _clock.UtcNow);
+                }
             }
         }
 

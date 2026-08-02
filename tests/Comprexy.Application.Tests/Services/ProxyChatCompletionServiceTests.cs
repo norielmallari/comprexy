@@ -86,6 +86,10 @@ public class ProxyChatCompletionServiceTests
             .ReturnsAsync((Guid id, CancellationToken _) =>
                 _toolCatalogs.TryGetValue(id, out var catalog) ? catalog : null);
         _toolCatalogRepository
+            .Setup(r => r.GetTrackedByConversationIdAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((Guid id, CancellationToken _) =>
+                _toolCatalogs.TryGetValue(id, out var catalog) ? catalog : null);
+        _toolCatalogRepository
             .Setup(r => r.Add(It.IsAny<ConversationToolCatalog>()))
             .Callback<ConversationToolCatalog>(c => _toolCatalogs[c.ConversationId] = c);
         _toolDefinitionRepository
@@ -148,12 +152,13 @@ public class ProxyChatCompletionServiceTests
                     metricsRecorder ?? Mock.Of<IConversationMetricsRecorder>(m => m.IsEnabled == false),
                     NullLogger<ToolIrSchemaMapper>.Instance),
                 new ToolIrPlanner(toolSchemaOptions, fileCache),
-                new ToolIrResultDistiller(toolSchemaOptions, fileCache),
+                ToolIrTestFactory.CreateDistiller(toolSchemaOptions, fileCache),
                 callIdMapService,
                 _toolCatalogRepository.Object,
                 _toolDefinitionRepository.Object,
                 _chatCompletionClient.Object,
                 _clock.Object,
+                ToolIrTestFactory.CreateShapeStore(_toolSchemaOptions),
                 NullLogger<ToolSchemaOrchestrator>.Instance),
             metricsRecorder ?? Mock.Of<IConversationMetricsRecorder>(m => m.IsEnabled == false),
             _unitOfWork.Object,

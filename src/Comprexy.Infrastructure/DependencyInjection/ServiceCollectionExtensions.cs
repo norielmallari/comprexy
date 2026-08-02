@@ -52,11 +52,14 @@ public static class ServiceCollectionExtensions
         var longestTimeoutSeconds = Math.Max(
             providerOptions.TimeoutSeconds,
             compressionOptions.TimeoutSeconds ?? providerOptions.TimeoutSeconds);
-        services.AddHttpClient<IChatCompletionClient, OpenAiCompatibleChatCompletionClient>(client =>
+        services.AddHttpClient<OpenAiCompatibleChatCompletionClient>(client =>
         {
             // HttpClient timeout must exceed per-request CTS timeouts for chat and compression.
             client.Timeout = TimeSpan.FromSeconds(Math.Max(longestTimeoutSeconds, 120) + 30);
         });
+        services.AddTransient<IChatCompletionClient>(sp => new UpstreamActivityTrackingChatCompletionClient(
+            sp.GetRequiredService<OpenAiCompatibleChatCompletionClient>(),
+            sp.GetRequiredService<IUpstreamActivityGate>()));
         services.AddHttpClient<IUpstreamPassthroughProxy, UpstreamPassthroughProxy>(client =>
         {
             client.Timeout = TimeSpan.FromSeconds(Math.Max(longestTimeoutSeconds, 120) + 30);

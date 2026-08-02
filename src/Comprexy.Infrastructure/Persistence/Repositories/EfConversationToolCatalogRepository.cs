@@ -22,5 +22,21 @@ public class EfConversationToolCatalogRepository(ComprexyDbContext dbContext) : 
             .FirstOrDefaultAsync(c => c.ConversationId == conversationId, cancellationToken);
     }
 
+    /// <inheritdoc />
+    public async Task<ConversationToolCatalog?> GetTrackedByConversationIdAsync(
+        Guid conversationId,
+        CancellationToken cancellationToken)
+    {
+        var tracked = dbContext.ConversationToolCatalogs.Local
+            .FirstOrDefault(c => c.ConversationId == conversationId);
+        if (tracked is not null)
+        {
+            return tracked;
+        }
+
+        return await dbContext.ConversationToolCatalogs
+            .FirstOrDefaultAsync(c => c.ConversationId == conversationId, cancellationToken);
+    }
+
     public void Add(ConversationToolCatalog catalog) => dbContext.ConversationToolCatalogs.Add(catalog);
 }

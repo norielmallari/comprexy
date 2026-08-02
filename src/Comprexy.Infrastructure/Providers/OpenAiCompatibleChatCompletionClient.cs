@@ -254,7 +254,7 @@ public class OpenAiCompatibleChatCompletionClient : IChatCompletionClient
     private static TraceLabelSet GetTraceLabels(UpstreamRequestPurpose purpose) =>
         purpose switch
         {
-            UpstreamRequestPurpose.Compression => new TraceLabelSet(
+            UpstreamRequestPurpose.Compression or UpstreamRequestPurpose.ShapeLearner => new TraceLabelSet(
                 PayloadTraceLabels.CompressionModelInput,
                 PayloadTraceLabels.CompressionModelOutput,
                 PayloadTraceLabels.CompressionModelOutputReassembled),
@@ -331,7 +331,8 @@ public class OpenAiCompatibleChatCompletionClient : IChatCompletionClient
             root["model"] = endpoint.Model;
         }
 
-        if (request.Purpose == UpstreamRequestPurpose.Compression && effectiveRequest is null)
+        if (request.Purpose is UpstreamRequestPurpose.Compression or UpstreamRequestPurpose.ShapeLearner &&
+            effectiveRequest is null)
         {
             // Bare compression calls (e.g. ToolSchema mapper) get explicit thinking kwargs.
             // Inline wrap-up reuses the live client body with tools already stripped in

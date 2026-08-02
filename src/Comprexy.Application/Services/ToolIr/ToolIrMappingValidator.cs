@@ -137,6 +137,9 @@ public static class ToolIrMappingValidator
             return new Analysis(null, documentErrors, bindingIssues);
         }
 
+        // Malformed result_shapes entries are dropped; they never reject the map.
+        document.ResultShapes = SanitizeResultShapes(document.ResultShapes);
+
         if (string.IsNullOrWhiteSpace(document.SchemaHash))
         {
             documentErrors.Add("schema_hash is required.");
@@ -509,6 +512,89 @@ public static class ToolIrMappingValidator
     public static ToolIrClientCapability? FindCapability(ToolIrMappingDocument document, string clientTool) =>
         document.ClientCapabilities.FirstOrDefault(c =>
             string.Equals(c.ClientTool, clientTool, StringComparison.Ordinal));
+
+    /// <summary>
+    /// Lenient read of <c>result_shapes</c> alone from raw MappingJson. Never throws; drops malformed entries.
+    /// Used on the failed-validation same-hash remap carry-forward path.
+    /// </summary>
+    public static Dictionary<string, ToolIrResultShape>? TryReadResultShapes(string mappingJson)
+    {
+        if (string.IsNullOrWhiteSpace(mappingJson))
+        {
+            return null;
+        }
+
+        try
+        {
+            using var document = JsonDocument.Parse(mappingJson);
+            if (document.RootElement.ValueKind != JsonValueKind.Object ||
+                !document.RootElement.TryGetProperty("result_shapes", out var shapes) ||
+                shapes.ValueKind != JsonValueKind.Object)
+            {
+                return null;
+            }
+
+            var result = new Dictionary<string, ToolIrResultShape>(StringComparer.Ordinal);
+            foreach (var property in shapes.EnumerateObject())
+            {
+                try
+                {
+                    var shape = JsonSerializer.Deserialize<ToolIrResultShape>(property.Value.GetRawText(), JsonOptions);
+                    if (shape is not null && IsWellFormedShape(shape))
+                    {
+                        result[property.Name] = shape;
+                    }
+                }
+                catch (JsonException)
+                {
+                    // drop
+                }
+            }
+
+            return result.Count == 0 ? null : result;
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+    }
+
+    private static Dictionary<string, ToolIrResultShape>? SanitizeResultShapes(
+        Dictionary<string, ToolIrResultShape>? shapes)
+    {
+        if (shapes is null || shapes.Count == 0)
+        {
+            return null;
+        }
+
+        var cleaned = new Dictionary<string, ToolIrResultShape>(StringComparer.Ordinal);
+        foreach (var (key, shape) in shapes)
+        {
+            if (string.IsNullOrWhiteSpace(key) || !IsWellFormedShape(shape))
+            {
+                continue;
+            }
+
+            cleaned[key] = shape;
+        }
+
+        return cleaned.Count == 0 ? null : cleaned;
+    }
+
+    private static bool IsWellFormedShape(ToolIrResultShape shape)
+    {
+        if (!Enum.IsDefined(shape.Envelope) || !Enum.IsDefined(shape.LinePrefix) || !Enum.IsDefined(shape.Source))
+        {
+            return false;
+        }
+
+        if (shape.Envelope == ToolIrEnvelopeKind.JsonField)
+        {
+            return shape.JsonField is not null && Enum.IsDefined(shape.JsonField.Value);
+        }
+
+        return true;
+    }
 
     private static string Truncate(string value, int maxChars) =>
         value.Length <= maxChars ? value : value[..maxChars] + "…";
