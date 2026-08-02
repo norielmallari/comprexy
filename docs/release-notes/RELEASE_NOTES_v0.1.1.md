@@ -1,8 +1,8 @@
 # Comprexy OSS v0.1.1
 
-First post-preview release of the Comprexy OSS proof of concept. Builds on `v0.1.0-preview` with Virtual Tools, a split data/control plane, token metrics, and operator telemetry.
+First post-preview release of the Comprexy OSS open core. Builds on `v0.1.0-preview` with Virtual Tools, a split data/control plane, token metrics, and operator telemetry.
 
-This repository remains an MIT-licensed proof of concept and is not under active feature development. Further product work continues separately as Comprexy.
+This repository is the Apache 2.0–licensed open core of Comprexy OSS. Further product work may also continue separately as Comprexy.
 
 ## Highlights
 

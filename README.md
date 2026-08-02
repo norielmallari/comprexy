@@ -1,29 +1,33 @@
 # Comprexy OSS
 
-OpenAI-compatible context observability and compression proxy for long-running agentic workflows.
+Apache-2.0 OpenAI-compatible **Comprehension Proxy** for context management, token observability, and reproducible agent benchmarks across local and frontier workflows.
 
-**Comprexy OSS** sits between your client (Cursor, CLI agents, custom apps) and any OpenAI-compatible upstream. It persists completed turns, rebuilds a bounded upstream prompt from versioned **working memory** plus still-unfolded messages, and folds older context via **Inline** wrap-up when soft budget pressure applies — without summarizing on every reply.
+**Comprexy OSS** sits between your client (Cursor, CLI agents, custom apps) and any OpenAI-compatible upstream — local or frontier. It makes long sessions workable in three complementary ways:
+
+- **Observable tokens** — conversation- and turn-level metrics (control-api, optional dashboard, telemetry MCP) so you can see what would have been sent, what was sent, and how compression behaved
+- **Measurable quality** — a [benchmark harness](#benchmark-harness) and published [dogfood evidence](#dogfood-validation) for comparing compression setups on real coding workloads
+- **Evidence for local ↔ frontier decisions** — the same signals support choosing when a local model is enough and when to move a workflow to a frontier endpoint (Comprexy does not auto-route)
+
+Mechanically, it persists completed turns, rebuilds a bounded upstream prompt from versioned **working memory** plus still-unfolded messages, and folds older context via **Inline** wrap-up when soft budget pressure applies — without summarizing on every reply.
 
 Under **Virtual Tools** (default), Comprexy OSS also owns the **model-facing tool catalog**: large IDE schemas (file read, shell, and similar) are replaced with compact `comprexy_*` IR tools, remapped to native client calls, and distilled on the way back — so tool definitions and results stop dominating the prompt. Optional `ExcludeFromModelTools` hides selected client tools from the model entirely.
 
-Soft budget pressure triggers a blocking Inline follow-up wrap-up on eligible turns (closed stored tool chain + cooldown). Local-first by default: point `Provider` at Ollama, LM Studio, vLLM, or a cloud OpenAI-compatible endpoint.
+Soft budget pressure triggers a blocking Inline follow-up wrap-up on eligible turns (closed stored tool chain + cooldown). Point `Provider` at Ollama, LM Studio, vLLM, or a cloud OpenAI-compatible endpoint.
 
-[Project direction](#project-direction) · [Quick start](#quick-start) · [Why Comprexy OSS?](#why-comprexy-oss) · [Design principles](#design-principles) · [What Comprexy OSS is not](#what-comprexy-oss-is-not) · [Source of truth](#source-of-truth) · [Agentic workflow](#agentic-workflow) · [MCP setup](#mcp-setup) · [Features](#features) · [How it works](#how-it-works) · [Virtual Tools](#virtual-tools) · [Configuration](#configuration) · [Limitations](#limitations) · [Architecture](#architecture) · [Contributing](#contributing)
+[Project direction](#project-direction) · [Quick start](#quick-start) · [Why Comprexy OSS?](#why-comprexy-oss) · [Design principles](#design-principles) · [What Comprexy OSS is not](#what-comprexy-oss-is-not) · [Source of truth](#source-of-truth) · [Agentic workflow](#agentic-workflow) · [MCP setup](#mcp-setup) · [Features](#features) · [How it works](#how-it-works) · [Virtual Tools](#virtual-tools) · [Configuration](#configuration) · [Limitations](#limitations) · [Benchmark harness](#benchmark-harness) · [Architecture](#architecture) · [Contributing](#contributing)
 
 ![.NET](https://img.shields.io/badge/.NET-10-512BD4?logo=dotnet&logoColor=white)
 ![Platform](https://img.shields.io/badge/platform-cross--platform-informational)
-![License](https://img.shields.io/badge/license-MIT-green)
-![Status](https://img.shields.io/badge/status-proof%20of%20concept-orange)
+![License](https://img.shields.io/badge/license-Apache%202.0-blue)
+![Status](https://img.shields.io/badge/status-open%20core-informational)
 
 ## Project direction
 
-This repository is a **MIT-licensed proof of concept**. It is **not under active feature development**.
+This repository is the **Apache 2.0–licensed open core** of Comprexy OSS. Feature work, bug fixes, documentation, and compatibility improvements are welcome here under the [Apache License 2.0](LICENSE).
 
-Further product work continues as **Comprexy**, separate from this repository. Bug fixes, documentation updates, and compatibility fixes may still land here. New features will not.
+Further product work may also continue as **Comprexy**, separate from this repository. The Comprexy name and branding for separate or commercial products remain subject to the [Trademark](#trademark) terms below.
 
-You are free to use, fork, and modify this code under the [MIT License](LICENSE). The Comprexy name and branding for separate or commercial products remain subject to the [Trademark & Copyright](#trademark--copyright) terms below.
-
-> Comprexy OSS proves the capability. Comprexy is the product.
+> Comprexy OSS is the open core. Comprexy is the product.
 
 ## Quick start
 
@@ -107,9 +111,9 @@ On the normal path, when `Provider:Model` is set Comprexy OSS replaces `model` w
 
 ## Why Comprexy OSS?
 
-Comprexy OSS was built from a real local LLM limitation: long-running planning workflows in Cursor became impractical as context accumulated. History, tool output, and corrections pile up until each turn is noisy, expensive, or past the model’s useful window. On local runtimes, once the prompt crosses a size threshold, tokens-per-second often drops sharply — prefill gets heavier, streaming feels sticky, and the developer loop slows down even when the model could still answer. Restarting and re-explaining kills flow; summarizing on every turn adds latency; blind truncation drops decisions you still need.
+Long-running agentic workflows — on local runtimes or frontier APIs — accumulate history, tool output, and corrections until each turn is noisy, expensive, or past the model’s useful window. On local runtimes, once the prompt crosses a size threshold, tokens-per-second often drops sharply. On frontier endpoints, the same growth drives cost and latency. Restarting and re-explaining kills flow; summarizing on every turn adds latency; blind truncation drops decisions you still need.
 
-Comprexy OSS keeps the **sent** context manageable — stable information in versioned working memory, older context folded on soft budget pressure — so the model does not need the full accumulated history every turn. Coding agents also ship large `tools[]` catalogs (a single Shell definition can be thousands of tokens); Virtual Tools shrinks what the model sees without changing what the IDE executes. Smaller upstream prompts do not guarantee faster inference, but they help keep long sessions in a size range where local tok/s stays usable. The goal of this proof of concept is simple: make long-running local LLM workflows practical.
+Comprexy OSS keeps the **sent** context manageable — stable information in versioned working memory, older context folded on soft budget pressure — so the model does not need the full accumulated history every turn. Coding agents also ship large `tools[]` catalogs (a single Shell definition can be thousands of tokens); Virtual Tools shrinks what the model sees without changing what the IDE executes. Token metrics and the [benchmark harness](#benchmark-harness) make those trade-offs inspectable, so you can compare setups and decide when a local model is enough versus when a frontier endpoint is warranted. Smaller upstream prompts do not guarantee faster inference or lower bills, but they help keep long sessions in a workable size band on either class of upstream.
 
 ### Dogfood validation
 
@@ -133,9 +137,12 @@ Approach:
 
 | Goal | Approach |
 | --- | --- |
-| Stay in flow | Answer first; fold via Inline wrap-up on eligible soft-pressure turns so prompts stay smaller and local sessions stay responsive longer |
+| Stay in flow | Answer first; fold via Inline wrap-up on eligible soft-pressure turns so prompts stay smaller and sessions stay responsive longer |
 | Preserve what matters | Persist completed turns; use versioned working memory for the active prompt, not blind truncation |
 | Keep tool catalogs usable | Virtual Tools replace heavy file/shell schemas with short IR tools; optional `ExcludeFromModelTools` drops IDE UX tools the model should not see |
+| Make tokens observable | Conversation- and turn-level metrics via control-api (dashboard / MCP); see [Token and cost intelligence](#token-and-cost-intelligence) |
+| Measure quality | Reproducible [benchmark harness](#benchmark-harness) and published dogfood evidence — directional, not universal leaderboards |
+| Support local ↔ frontier choices | Same OpenAI-compatible path and evidence surfaces for local or cloud upstreams; operators decide escalation — Comprexy does not auto-route |
 | Stay compatible | OpenAI-compatible `/v1` base URL: chat completions are compressed; other `/v1/*` routes proxy upstream |
 | Stay focused | Context compression and tool-surface management for chat completions — not a multi-provider gateway or agent framework |
 
@@ -147,12 +154,11 @@ If you need routing, spend tracking, or broad agent wrappers, tools like LiteLLM
 - Persist the durable transcript; treat working memory as a derived, versioned prompt aid.
 - Rebuild outgoing context from stored turns — do not forward an unmanaged client history as the model transcript.
 - When Virtual Tools is on, own the model-facing tool contract: compact IR outbound, native remap to the client, distilled IR observations in the stored transcript.
-- Prefer inspectable, deterministic behavior over opaque truncation.
-- Stay local-first and OpenAI-compatible; stay narrow (context compression and tool-surface management, not a gateway or agent framework).
+- Prefer inspectable, deterministic behavior over opaque truncation — tokens, benches, and evidence before guesswork.
+- Stay OpenAI-compatible for local and frontier upstreams; stay narrow (context compression and tool-surface management, not a gateway or agent framework).
 
 ## What Comprexy OSS is not
 
-- Not under active feature development — see [Project direction](#project-direction).
 - Not a model or LLM runtime — it proxies to your configured upstream.
 - Not a multi-provider gateway, router, or billing layer.
 - Not a vector database or retrieval framework.
@@ -168,7 +174,7 @@ Soft pressure above `SoftLimitTokens` triggers a blocking Inline wrap-up on elig
 
 ## Agentic workflow
 
-This proof of concept was developed with a Cursor subagent pipeline (plan → adversarial plan review → track-specific implement → unit test → adversarial review; UI adds mocked Playwright authorship then simulate), coordinated by orchestrators and handed off through files under `.cursor/agent-state/`. Every approved plan declares `track: backend | ui | mixed`. The same local-LLM setup that struggles past ~64k prompt tokens stays usable because Comprexy OSS bounds what the model actually sees.
+This repository was developed with a Cursor subagent pipeline (plan → adversarial plan review → track-specific implement → unit test → adversarial review; UI adds mocked Playwright authorship then simulate), coordinated by orchestrators and handed off through files under `.cursor/agent-state/`. Every approved plan declares `track: backend | ui | mixed`. The same upstream that struggles past ~64k prompt tokens — local or frontier — stays usable longer because Comprexy OSS bounds what the model actually sees.
 
 That loop produced the top 3 dogfood evidences ([`docs/evidence/5ca87ca.md`](docs/evidence/5ca87ca.md), [`docs/evidence/721ea29.md`](docs/evidence/721ea29.md), [`docs/evidence/d2e0faa.md`](docs/evidence/d2e0faa.md)). Agents, gates, and handoff rules: [`.cursor/README.md`](.cursor/README.md).
 
@@ -349,17 +355,21 @@ Much of this repository was produced with AI coding assistants under human direc
 
 ## Contributing
 
-Bug fixes, documentation, and compatibility improvements are welcome case-by-case. **New feature work is out of scope** for this repository (see [Project direction](#project-direction)). See [`CONTRIBUTING.md`](CONTRIBUTING.md) for build, test, database, and migration notes.
+Features, bug fixes, documentation, and compatibility improvements are welcome under the [Apache License 2.0](LICENSE) (see [Project direction](#project-direction)). Product branding remains subject to [Trademark](#trademark). See [`CONTRIBUTING.md`](CONTRIBUTING.md) for build, test, database, and migration notes.
 
 ## License
 
-[MIT](LICENSE)
+[Apache License 2.0](LICENSE). See also [`NOTICE`](NOTICE).
 
-## Trademark & Copyright
+## Copyright
 
-Comprexy™ is a trademark claimed by Noriel Mallari. © 2026 Noriel Mallari.
+Copyright 2026 Noriel Mallari. See [`NOTICE`](NOTICE).
 
-The MIT License applies strictly to the software source code in this repository (Comprexy OSS). It does not grant permission to use the Comprexy name, logo, or branding to identify, market, or promote any separate, modified, or derivative product.
+## Trademark
+
+Comprexy™ is a trademark claimed by Noriel Mallari.
+
+The Apache License 2.0 applies to the software source code in this repository (Comprexy OSS). It does not grant permission to use the Comprexy name, logo, or branding to identify, market, or promote any separate, modified, or derivative product (see also Apache License §6).
 
 Forks and derivatives should use a distinct name unless written permission is granted.
 

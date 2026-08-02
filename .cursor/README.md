@@ -1,8 +1,8 @@
 # Agentic workflow
 
-Cursor subagents used to plan and ship Comprexy changes on a **local LLM**, with Comprexy itself compressing the long agent loops so prompts stay in a workable size band.
+Cursor subagents used to plan and ship Comprexy changes against a **local or frontier** OpenAI-compatible upstream, with Comprexy itself compressing the long agent loops so prompts stay in a workable size band.
 
-This is dogfooding: the same compression proxy that the product provides is what makes these multi-agent runs practical when the upstream model slows past ~64k prompt tokens.
+This is dogfooding: the same Comprehension Proxy that the product provides is what makes these multi-agent runs practical when the upstream model slows or grows costly past ~64k prompt tokens.
 
 ## Why file-backed agents
 

@@ -2,7 +2,7 @@
 
 Thanks for contributing.
 
-This repository is a MIT-licensed proof of concept and is **not under active feature development**. Bug fixes, documentation, and compatibility improvements are welcome case-by-case. **New feature pull requests are out of scope.** Further product work continues as Comprexy (separate from this tree). See the README [Project direction](README.md#project-direction) section.
+This repository is the **Apache 2.0–licensed open core** of Comprexy OSS. Features, bug fixes, documentation, and compatibility improvements are welcome. Further product work may also continue as Comprexy (separate from this tree); branding remains subject to the README [Trademark](README.md#trademark) terms. See [Project direction](README.md#project-direction). Contributions are accepted under the same [Apache License 2.0](LICENSE) (see Apache License §5).
 
 ## Prerequisites
 
