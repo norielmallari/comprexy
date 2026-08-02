@@ -142,6 +142,7 @@ public sealed class BenchRunOrchestrator : IBenchRunOrchestrator
     public async Task<bool> CancelAsync(string runId, CancellationToken cancellationToken)
     {
         CancellationTokenSource? cts;
+        Task? runTask;
         lock (_gate)
         {
             if (_activeRunId != runId || _runCts is null)
@@ -150,16 +151,15 @@ public sealed class BenchRunOrchestrator : IBenchRunOrchestrator
             }
 
             cts = _runCts;
+            runTask = _runTask;
         }
 
         await cts.CancelAsync();
-        var statusPath = Path.Combine(_runsRoot, runId, "status.json");
-        var status = await BenchArtifactStore.ReadStatusAsync(statusPath, cancellationToken)
-            ?? new BenchStatusDocument { RunId = runId };
-        status.Phase = BenchOuterPhases.Cancelled;
-        status.LastError = "Cancelled by operator.";
-        await BenchArtifactStore.WriteStatusAsync(statusPath, status, cancellationToken);
-        await UpsertIndexAsync(runId, BenchOuterPhases.Cancelled, [], null, cancellationToken);
+        if (runTask is not null)
+        {
+            await runTask.WaitAsync(cancellationToken);
+        }
+
         return true;
     }
 

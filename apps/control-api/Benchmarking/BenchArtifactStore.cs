@@ -108,8 +108,25 @@ public static class BenchArtifactStore
     private static async Task WriteAtomicAsync<T>(string path, T value, CancellationToken cancellationToken)
     {
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-        var temp = path + ".tmp";
-        await File.WriteAllTextAsync(temp, JsonSerializer.Serialize(value, JsonOptions), cancellationToken);
-        File.Move(temp, path, overwrite: true);
+        var temp = $"{path}.{Guid.NewGuid():N}.tmp";
+        try
+        {
+            await File.WriteAllTextAsync(temp, JsonSerializer.Serialize(value, JsonOptions), cancellationToken);
+            File.Move(temp, path, overwrite: true);
+        }
+        finally
+        {
+            if (File.Exists(temp))
+            {
+                try
+                {
+                    File.Delete(temp);
+                }
+                catch (IOException)
+                {
+                    // Best-effort cleanup when another writer won the race to Move.
+                }
+            }
+        }
     }
 }

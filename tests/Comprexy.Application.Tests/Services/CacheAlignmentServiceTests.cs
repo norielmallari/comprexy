@@ -285,4 +285,39 @@ public class CacheAlignmentServiceTests
         Assert.Null(service.GetSnapshot(conversationId));
         Assert.Empty(service.MaterializeLive(conversationId, new Dictionary<Guid, ConversationMessage>()));
     }
+
+    [Fact]
+    public void MaterializeLive_WithPendingRuleMessages_SplicesAfterBaseSystemWithoutMutatingPrefix()
+    {
+        var service = CreateService();
+        var conversationId = Guid.NewGuid();
+        var now = DateTimeOffset.UtcNow;
+        var msgA = ConversationMessage.Create(conversationId, 0, MessageRole.User, "a", 1, now);
+        var msgB = ConversationMessage.Create(conversationId, 1, MessageRole.User, "b", 1, now);
+        var prefix = new List<ChatMessage>
+        {
+            new(MessageRole.System, "base"),
+            new(MessageRole.System, "wm"),
+            new(MessageRole.User, "a")
+        };
+        Assert.True(service.TryStorePrefix(conversationId, prefix, [msgA.Id], 1, 0, null));
+        service.ReplaceSuffix(conversationId, [msgB.Id]);
+        var before = service.GetSnapshot(conversationId)!;
+        var pending = new List<ChatMessage>
+        {
+            new(MessageRole.System, "[Rule: scoped.md] scoped body")
+        };
+
+        var projected = service.MaterializeLive(
+            conversationId,
+            new Dictionary<Guid, ConversationMessage> { [msgA.Id] = msgA, [msgB.Id] = msgB },
+            pendingRuleMessages: pending);
+
+        Assert.Equal("base", projected[0].Content);
+        Assert.Contains("scoped body", projected[1].Content);
+        Assert.Equal("wm", projected[2].Content);
+        Assert.Equal("b", projected[^1].Content);
+        var after = service.GetSnapshot(conversationId)!;
+        Assert.True(CacheAlignmentService.ArePrefixEqual(before.Prefix, after.Prefix));
+    }
 }

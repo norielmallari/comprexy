@@ -82,21 +82,12 @@ public sealed class BenchmarkOrchestrationTests
     var body = await start.Content.ReadFromJsonAsync<BenchmarkStartRunResponse>();
     Assert.NotNull(body);
     await factory.ProcessRunner.RunStarted.WaitAsync(TimeSpan.FromSeconds(5));
+    await WaitUntilActiveRunAsync(factory, body.RunId, TimeSpan.FromSeconds(5));
     Assert.True(File.Exists(factory.LockPath));
 
-    HttpResponseMessage cancelResponse = null!;
-    for (var attempt = 0; attempt < 10; attempt++)
-    {
-      cancelResponse = await client.PostAsync(
-        $"/v1/comprexy/benchmarks/runs/{body.RunId}/cancel",
-        content: null);
-      if (cancelResponse.StatusCode == HttpStatusCode.NoContent)
-      {
-        break;
-      }
-
-      await Task.Delay(50);
-    }
+    var cancelResponse = await client.PostAsync(
+      $"/v1/comprexy/benchmarks/runs/{body.RunId}/cancel",
+      content: null);
 
     Assert.Equal(HttpStatusCode.NoContent, cancelResponse.StatusCode);
 
@@ -447,6 +438,27 @@ public sealed class BenchmarkOrchestrationTests
     await File.WriteAllTextAsync(
       Path.Combine(runDirectory, "presentation.json"),
       JsonSerializer.Serialize(presentation, ArtifactJsonOptions));
+  }
+
+  private static async Task WaitUntilActiveRunAsync(
+    BenchmarkOrchestrationFactory factory,
+    string runId,
+    TimeSpan timeout)
+  {
+    var deadline = DateTimeOffset.UtcNow + timeout;
+    while (DateTimeOffset.UtcNow < deadline)
+    {
+      using var scope = factory.Services.CreateScope();
+      var orchestrator = scope.ServiceProvider.GetRequiredService<IBenchRunOrchestrator>();
+      if (orchestrator.ActiveRunId == runId)
+      {
+        return;
+      }
+
+      await Task.Delay(25);
+    }
+
+    throw new TimeoutException($"Run {runId} was not active within {timeout}.");
   }
 
   private static async Task<BenchmarkRunSummaryDto> WaitForTerminalPhaseAsync(

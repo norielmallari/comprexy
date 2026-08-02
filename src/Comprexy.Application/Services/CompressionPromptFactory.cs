@@ -1,5 +1,6 @@
 using Comprexy.Application.Configuration;
 using Comprexy.Application.Models;
+using Comprexy.Application.Services.Rules;
 using Comprexy.Domain.Enums;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Options;
@@ -44,9 +45,15 @@ public class CompressionPromptFactory
     /// Non-persisted virtual user wrap-up for eligible soft-pressure turns.
     /// Asks the live model to return only working memory (includes shared WM template).
     /// </summary>
-    public ChatMessage BuildInlineWrapUpUserMessage()
+    public ChatMessage BuildInlineWrapUpUserMessage(RulesSnapshot? rulesSnapshot = null)
     {
         var content = ComposeWithTemplate(_inlineInstruction);
+        if (rulesSnapshot is { AllRules.Count: > 0 })
+        {
+            content += "\n\nAuthoritative consolidated rules for this fold:\n"
+                + rulesSnapshot.FormatForWorkingMemory();
+        }
+
         return new ChatMessage(MessageRole.User, content);
     }
 

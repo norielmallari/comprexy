@@ -23,9 +23,15 @@ public class ContextBuilder
         string? systemPrompt,
         WorkingMemory? workingMemory,
         IReadOnlyList<ConversationMessage> recentRawMessages,
-        ChatMessage currentUserMessage)
+        ChatMessage currentUserMessage,
+        IReadOnlyList<ChatMessage>? pendingRuleMessages = null)
     {
         var messages = BuildLivePrefix(systemPrompt, workingMemory, recentRawMessages).ToList();
+
+        if (pendingRuleMessages is { Count: > 0 } && messages.Count > 0)
+        {
+            messages.InsertRange(1, pendingRuleMessages);
+        }
 
         // Avoid duplicating the tip when it was already persisted (client replayed it).
         if (messages.Count > 0 && AreSameMessage(messages[^1], currentUserMessage))

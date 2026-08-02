@@ -11,7 +11,10 @@ public class Conversation : EntityBase
     /// <summary>Stable identity for this conversation (client header value or content fingerprint).</summary>
     public string ConversationKey { get; private set; } = string.Empty;
 
-    /// <summary>The system prompt captured on the first turn, reused on the outgoing context build.</summary>
+    /// <summary>
+    /// Base system prompt (persona / env / non-rule preamble). Rule bodies are stripped at detect time
+    /// and injected ephemerally on the live prepare path; this column stores BaseSystem only.
+    /// </summary>
     public string? SystemPrompt { get; private set; }
 
     /// <summary>
@@ -51,6 +54,26 @@ public class Conversation : EntityBase
         {
             SystemPrompt = systemPrompt;
         }
+    }
+
+    /// <summary>
+    /// Sets BaseSystem on first capture or when ordinal-different from stored. Returns whether the
+    /// column changed.
+    /// </summary>
+    public bool SetBaseSystem(string? baseSystem)
+    {
+        if (string.IsNullOrWhiteSpace(baseSystem))
+        {
+            return false;
+        }
+
+        if (SystemPrompt is not null && string.Equals(SystemPrompt, baseSystem, StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        SystemPrompt = baseSystem;
+        return true;
     }
 
     public void AdvanceSyncedMessageCount(int newlyPersistedCount, DateTimeOffset now)

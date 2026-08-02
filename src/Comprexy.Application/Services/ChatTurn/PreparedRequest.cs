@@ -1,7 +1,7 @@
 using System.Diagnostics;
 using Comprexy.Application.Models;
 using Comprexy.Domain.Entities;
-using Comprexy.Domain.Enums;
+using Comprexy.Application.Services.Rules;
 
 namespace Comprexy.Application.Services.ChatTurn;
 
@@ -45,4 +45,5 @@ public sealed record PreparedRequest(
     TurnMetricsPrepareData? MetricsPrepare = null,
     bool InlineFollowUpEligible = false,
     bool InlineOpenStoreEmergency = false,
-    int PreFollowUpEstimatedTokens = 0);
+    int PreFollowUpEstimatedTokens = 0,
+    RulesSnapshot? RulesSnapshot = null);

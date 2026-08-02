@@ -5,6 +5,7 @@ using Comprexy.Application.Models;
 using Comprexy.Application.Services;
 using Comprexy.Application.Services.CacheAlignment;
 using Comprexy.Application.Services.ChatTurn;
+using Comprexy.Application.Services.Rules;
 using Comprexy.Application.Services.ToolIr;
 using Comprexy.Domain.Entities;
 using Comprexy.Domain.Enums;
@@ -61,12 +62,15 @@ public class ProxyChatCompletionServiceTests
         ...
         """);
 
+    private static readonly string WrapUpTipContent =
+        PromptFactory.BuildInlineWrapUpUserMessage(rulesSnapshot: null).Content;
+
     private static string ValidWorkingMemory => "# Working Memory\n## Current Goal\nInline summary";
 
     private static bool IsWrapUpRequest(UpstreamRequest request) =>
         request.Messages.Count > 0
         && request.Messages[^1].Role == MessageRole.User
-        && request.Messages[^1].Content == PromptFactory.BuildInlineWrapUpUserMessage().Content;
+        && request.Messages[^1].Content == WrapUpTipContent;
 
     private readonly Dictionary<Guid, ConversationToolCatalog> _toolCatalogs = new();
 
@@ -126,6 +130,10 @@ public class ProxyChatCompletionServiceTests
             ?? new CacheAlignmentService(Options.Create(_cacheAlignmentOptions));
 
         var contextBuilder = new ContextBuilder();
+        var systemRulesDetector = new SystemRulesDetector();
+        var transcriptRulesDetector = new TranscriptRulesDetector();
+        var rulesConsolidator = new RulesConsolidator(NullLogger<RulesConsolidator>.Instance);
+        var rulesInjector = new RulesInjector();
         var metrics = metricsRecorder ?? Mock.Of<IConversationMetricsRecorder>(m => m.IsEnabled == false);
         var toolSchemaOrchestrator = new ToolSchemaOrchestrator(
             toolSchemaOptions,
@@ -192,6 +200,10 @@ public class ProxyChatCompletionServiceTests
             historySynchronizer,
             contextMaterializer,
             messageHelper,
+            systemRulesDetector,
+            transcriptRulesDetector,
+            rulesConsolidator,
+            rulesInjector,
             endpointResolver,
             metrics,
             _clock.Object,
@@ -229,7 +241,7 @@ public class ProxyChatCompletionServiceTests
         _tokenEstimator.Setup(t => t.CountTokens(It.Is<IEnumerable<ChatMessage>>(messages =>
                 messages.Count() == 1 &&
                 messages.First().Role == MessageRole.User &&
-                messages.First().Content == PromptFactory.BuildInlineWrapUpUserMessage().Content)))
+                messages.First().Content == WrapUpTipContent)))
             .Returns(tokens);
     }
 
@@ -404,7 +416,7 @@ public class ProxyChatCompletionServiceTests
         Assert.DoesNotContain(
             captured[0].Messages,
             m => m.Role == MessageRole.User &&
-                 m.Content == PromptFactory.BuildInlineWrapUpUserMessage().Content);
+                 m.Content == WrapUpTipContent);
         Assert.DoesNotContain(
             captured[0].Messages,
             m => m.Content != null && m.Content.Contains("Comprexy Inline", StringComparison.Ordinal));
@@ -1732,7 +1744,7 @@ public class ProxyChatCompletionServiceTests
         Assert.Equal(UpstreamRequestPurpose.Chat, captured[0].Request.Purpose);
         Assert.DoesNotContain(
             captured[0].Request.Messages,
-            m => m.Content == PromptFactory.BuildInlineWrapUpUserMessage().Content);
+            m => m.Content == WrapUpTipContent);
         Assert.True(IsWrapUpRequest(captured[1].Request));
         Assert.False(captured[1].Request.Stream);
         Assert.Equal(UpstreamRequestPurpose.Compression, captured[1].Request.Purpose);
@@ -1751,7 +1763,7 @@ public class ProxyChatCompletionServiceTests
         Assert.NotNull(captured[1].Request.Messages[^2].RawWireMessage);
         Assert.True(
             captured[1].Request.Messages[^2].RawWireMessage!.Value.TryGetProperty("reasoning_content", out _));
-        Assert.Equal(PromptFactory.BuildInlineWrapUpUserMessage().Content, captured[1].Request.Messages[^1].Content);
+        Assert.Equal(WrapUpTipContent, captured[1].Request.Messages[^1].Content);
         Assert.Contains("# Working Memory", captured[1].Request.Messages[^1].Content);
         // Stop-turn wrap shape: visible assistant then tip.
         Assert.Equal("Visible answer", captured[1].Request.Messages[^2].Content);
@@ -1771,7 +1783,7 @@ public class ProxyChatCompletionServiceTests
         Assert.Equal("Visible answer", assistantEntity.Content);
         Assert.DoesNotContain(
             addedMessages,
-            m => m.Content == PromptFactory.BuildInlineWrapUpUserMessage().Content);
+            m => m.Content == WrapUpTipContent);
         Assert.DoesNotContain(addedMessages, m => m.Content == ValidWorkingMemory);
         Assert.True(stored[0].IsFolded);
         Assert.Equal(2, stored[0].FoldedIntoWorkingMemoryVersion);
@@ -2085,7 +2097,7 @@ public class ProxyChatCompletionServiceTests
         Assert.Equal(2, captured.Count);
         Assert.True(IsWrapUpRequest(captured[1]));
         AssertWrapUpMessagesHaveNoOpenToolCalls(captured[1].Messages);
-        Assert.Equal(PromptFactory.BuildInlineWrapUpUserMessage().Content, captured[1].Messages[^1].Content);
+        Assert.Equal(WrapUpTipContent, captured[1].Messages[^1].Content);
         // Live still carries the open tip; emergency wrap rebuilds a closed-world corpus without it.
         Assert.Contains(captured[0].Messages, m => MessageHasToolCallId(m, "call_open"));
         Assert.DoesNotContain(captured[1].Messages, m => MessageHasToolCallId(m, "call_open"));
@@ -2561,7 +2573,7 @@ public class ProxyChatCompletionServiceTests
         Assert.True(captured[1].OriginalClientRequest!.Value.TryGetProperty("tools", out _));
         Assert.Equal("none", captured[1].OriginalClientRequest!.Value.GetProperty("tool_choice").GetString());
         Assert.Equal(captured[0].Messages.Count + 1, captured[1].Messages.Count);
-        Assert.Equal(PromptFactory.BuildInlineWrapUpUserMessage().Content, captured[1].Messages[^1].Content);
+        Assert.Equal(WrapUpTipContent, captured[1].Messages[^1].Content);
         var penultimate = captured[1].Messages[^2];
         Assert.False(
             penultimate.Role == MessageRole.Assistant
@@ -3029,7 +3041,7 @@ public class ProxyChatCompletionServiceTests
         Assert.NotNull(mainRequest);
         Assert.NotNull(wrapRequest);
         Assert.Equal(mainRequest!.Messages.Count + 1, wrapRequest!.Messages.Count);
-        Assert.Equal(PromptFactory.BuildInlineWrapUpUserMessage().Content, wrapRequest.Messages[^1].Content);
+        Assert.Equal(WrapUpTipContent, wrapRequest.Messages[^1].Content);
         var penultimate = wrapRequest.Messages[^2];
         Assert.False(
             penultimate.Role == MessageRole.Assistant
@@ -3944,8 +3956,9 @@ public class ProxyChatCompletionServiceTests
         spy.Setup(s => s.MaterializeLive(
                 It.IsAny<Guid>(),
                 It.IsAny<IReadOnlyDictionary<Guid, ConversationMessage>>(),
-                It.IsAny<Func<IReadOnlyList<ConversationMessage>, IReadOnlyList<ConversationMessage>>?>()))
-            .Returns((Guid _, IReadOnlyDictionary<Guid, ConversationMessage> _, Func<IReadOnlyList<ConversationMessage>, IReadOnlyList<ConversationMessage>>? _) =>
+                It.IsAny<Func<IReadOnlyList<ConversationMessage>, IReadOnlyList<ConversationMessage>>?>(),
+                It.IsAny<IReadOnlyList<ChatMessage>?>()))
+            .Returns((Guid _, IReadOnlyDictionary<Guid, ConversationMessage> _, Func<IReadOnlyList<ConversationMessage>, IReadOnlyList<ConversationMessage>>? _, IReadOnlyList<ChatMessage>? _) =>
                 new List<ChatMessage>
                 {
                     new(MessageRole.System, "You are helpful."),
@@ -3975,7 +3988,8 @@ public class ProxyChatCompletionServiceTests
         spy.Verify(s => s.MaterializeLive(
             It.IsAny<Guid>(),
             It.IsAny<IReadOnlyDictionary<Guid, ConversationMessage>>(),
-            null), Times.Once);
+            null,
+            It.IsAny<IReadOnlyList<ChatMessage>?>()), Times.Once);
     }
 
     [Fact]
@@ -3996,7 +4010,8 @@ public class ProxyChatCompletionServiceTests
         spy.Setup(s => s.MaterializeLive(
                 It.IsAny<Guid>(),
                 It.IsAny<IReadOnlyDictionary<Guid, ConversationMessage>>(),
-                It.IsAny<Func<IReadOnlyList<ConversationMessage>, IReadOnlyList<ConversationMessage>>?>()))
+                It.IsAny<Func<IReadOnlyList<ConversationMessage>, IReadOnlyList<ConversationMessage>>?>(),
+                It.IsAny<IReadOnlyList<ChatMessage>?>()))
             .Returns(new List<ChatMessage>
             {
                 new(MessageRole.System, "You are helpful."),
@@ -4165,7 +4180,8 @@ public class ProxyChatCompletionServiceTests
         spy.Verify(s => s.MaterializeLive(
             It.IsAny<Guid>(),
             It.IsAny<IReadOnlyDictionary<Guid, ConversationMessage>>(),
-            It.IsAny<Func<IReadOnlyList<ConversationMessage>, IReadOnlyList<ConversationMessage>>?>()), Times.Never);
+            It.IsAny<Func<IReadOnlyList<ConversationMessage>, IReadOnlyList<ConversationMessage>>?>(),
+            It.IsAny<IReadOnlyList<ChatMessage>?>()), Times.Never);
         spy.Verify(s => s.TryStorePrefix(
             It.IsAny<Guid>(),
             It.IsAny<IReadOnlyList<ChatMessage>>(),
@@ -4252,7 +4268,8 @@ public class ProxyChatCompletionServiceTests
         spy.Verify(s => s.MaterializeLive(
             It.IsAny<Guid>(),
             It.IsAny<IReadOnlyDictionary<Guid, ConversationMessage>>(),
-            It.IsAny<Func<IReadOnlyList<ConversationMessage>, IReadOnlyList<ConversationMessage>>?>()), Times.Never);
+            It.IsAny<Func<IReadOnlyList<ConversationMessage>, IReadOnlyList<ConversationMessage>>?>(),
+            It.IsAny<IReadOnlyList<ChatMessage>?>()), Times.Never);
         spy.Verify(s => s.TryStorePrefix(
             It.IsAny<Guid>(),
             It.IsAny<IReadOnlyList<ChatMessage>>(),
@@ -4260,6 +4277,77 @@ public class ProxyChatCompletionServiceTests
             It.IsAny<int>(),
             It.IsAny<int>(),
             It.IsAny<string?>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task HandleAsync_Turn2ScopedRule_InjectsSyntheticSystemMessageWithoutPersisting()
+    {
+        _cacheAlignmentOptions = new CacheAlignmentOptions { Enabled = false };
+        _estimatedTokensToReturn = 10;
+        var now = DateTimeOffset.UtcNow;
+        var conversation = Conversation.Create("rules-turn-2", now);
+        conversation.SetBaseSystem("Base persona only.");
+        conversation.SetSyncedMessageCount(3, now);
+
+        var stored = new List<ConversationMessage>
+        {
+            ConversationMessage.Create(conversation.Id, 0, MessageRole.User, "first question", 1, now),
+            ConversationMessage.Create(conversation.Id, 1, MessageRole.Assistant, "first answer", 1, now)
+        };
+
+        UpstreamRequest? secondForwarded = null;
+        List<ConversationMessage>? persistedOnSecond = null;
+
+        _conversationRepository
+            .Setup(r => r.FindByKeyAsync("rules-turn-2", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(conversation);
+        _messageRepository
+            .Setup(r => r.GetByConversationIdAsync(conversation.Id, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(() => stored);
+        _messageRepository
+            .Setup(r => r.Add(It.IsAny<ConversationMessage>()))
+            .Callback<ConversationMessage>(m =>
+            {
+                stored.Add(m);
+                persistedOnSecond ??= new List<ConversationMessage>();
+                persistedOnSecond.Add(m);
+            });
+        _workingMemoryRepository
+            .Setup(r => r.GetLatestAsync(conversation.Id, It.IsAny<CancellationToken>()))
+            .ReturnsAsync((WorkingMemory?)null);
+        _chatCompletionClient
+            .Setup(c => c.CompleteAsync(It.IsAny<ProviderEndpoint>(), It.IsAny<UpstreamRequest>(), It.IsAny<CancellationToken>()))
+            .Callback<ProviderEndpoint, UpstreamRequest, CancellationToken>((_, request, _) => secondForwarded = request)
+            .ReturnsAsync(new UpstreamChatResult("ack", "stop", 10, 2));
+
+        var secondRequest = new IncomingChatRequest(
+            [
+                new ChatMessage(MessageRole.System, """
+                    Base persona only.
+
+                    glob pattern(s) for applicable files: **/*.ts
+                    --- rule: /workspace/repo/.cursor/rules/scoped.mdc ---
+                    Scoped rule for turn two.
+                    """),
+                new ChatMessage(MessageRole.User, "first question"),
+                new ChatMessage(MessageRole.Assistant, "first answer"),
+                new ChatMessage(MessageRole.User, "second question")
+            ],
+            "rules-turn-2",
+            false,
+            JsonDocument.Parse("""{"model":"client-model","messages":[]}""").RootElement,
+            new ChatCompletionCallOptions());
+
+        var service = CreateService();
+        await service.HandleAsync(secondRequest, CancellationToken.None);
+
+        Assert.NotNull(secondForwarded);
+        Assert.Equal("Base persona only.", secondForwarded!.Messages[0].Content);
+        Assert.Contains(secondForwarded.Messages, m =>
+            m.Role == MessageRole.System && m.Content.Contains("Scoped rule for turn two.", StringComparison.Ordinal));
+        Assert.DoesNotContain(
+            persistedOnSecond ?? [],
+            m => m.Role == MessageRole.System && m.Content.Contains("Scoped rule", StringComparison.Ordinal));
     }
 
     private static string CreateContentSseChunk(string content) =>

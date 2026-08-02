@@ -4,6 +4,7 @@ using Comprexy.Application.Models;
 using Comprexy.Application.Services.CacheAlignment;
 using Comprexy.Domain.Entities;
 using Comprexy.Domain.Enums;
+using Comprexy.Application.Services.Rules;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 
@@ -161,7 +162,7 @@ public sealed class InlineWrapUpRunner
         UpstreamChatResult wrapResult;
         try
         {
-            var wrapUpUser = _compressionPromptFactory.BuildInlineWrapUpUserMessage();
+            var wrapUpUser = _compressionPromptFactory.BuildInlineWrapUpUserMessage(prepared.RulesSnapshot);
             IReadOnlyList<ChatMessage> wrapMessages;
             if (_cacheAlignmentOptions.Enabled && _cacheAlignment.GetSnapshot(prepared.Conversation.Id) is not null)
             {
@@ -323,6 +324,10 @@ public sealed class InlineWrapUpRunner
                 rejectionReason);
             return;
         }
+
+        acceptedWorkingMemory = WorkingMemoryRulesSection.ReplaceRulesSection(
+            acceptedWorkingMemory,
+            prepared.RulesSnapshot?.FormatForWorkingMemory() ?? WorkingMemoryRulesSection.FormatSection([]));
 
         if (foldSet.Count == 0)
         {

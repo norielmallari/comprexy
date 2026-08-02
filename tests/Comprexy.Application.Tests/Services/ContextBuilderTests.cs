@@ -132,4 +132,28 @@ public class ContextBuilderTests
         Assert.Equal(MessageRole.System, result[1].Role);
         Assert.Equal(MessageRole.User, result[2].Role);
     }
+
+    [Fact]
+    public void Build_WithPendingRuleMessages_InsertsAfterBaseSystem()
+    {
+        var workingMemory = WorkingMemory.Create(
+            Guid.NewGuid(),
+            1,
+            "# Working Memory\n## Current Goal\nShip",
+            10,
+            DateTimeOffset.UtcNow);
+        var pending = new List<ChatMessage>
+        {
+            new(MessageRole.System, "[Rule: scoped.md] scoped rule body")
+        };
+        var currentMessage = new ChatMessage(MessageRole.User, "continue");
+
+        var result = _builder.Build("Base system.", workingMemory, [], currentMessage, pending);
+
+        Assert.Equal(4, result.Count);
+        Assert.Equal("Base system.", result[0].Content);
+        Assert.Contains("scoped rule body", result[1].Content);
+        Assert.Equal(MessageRole.System, result[2].Role);
+        Assert.Contains("compressed historical context", result[2].Content);
+    }
 }

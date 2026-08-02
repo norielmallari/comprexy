@@ -4,6 +4,7 @@ using Comprexy.Application.Configuration;
 using Comprexy.Application.Mapping;
 using Comprexy.Application.Models;
 using Comprexy.Application.Services.CacheAlignment;
+using Comprexy.Application.Services.Rules;
 using Comprexy.Application.Tracing;
 using Comprexy.Domain.Entities;
 using Comprexy.Domain.Enums;
@@ -27,6 +28,10 @@ public sealed class ChatTurnPreparer
     private readonly ClientHistorySynchronizer _historySynchronizer;
     private readonly OutgoingContextMaterializer _contextMaterializer;
     private readonly ChatTurnMessageHelper _messageHelper;
+    private readonly ISystemRulesDetector _systemRulesDetector;
+    private readonly ITranscriptRulesDetector _transcriptRulesDetector;
+    private readonly IRulesConsolidator _rulesConsolidator;
+    private readonly IRulesInjector _rulesInjector;
     private readonly ProviderEndpointResolver _endpointResolver;
     private readonly IConversationMetricsRecorder _metricsRecorder;
     private readonly IClock _clock;
@@ -51,6 +56,10 @@ public sealed class ChatTurnPreparer
         ClientHistorySynchronizer historySynchronizer,
         OutgoingContextMaterializer contextMaterializer,
         ChatTurnMessageHelper messageHelper,
+        ISystemRulesDetector systemRulesDetector,
+        ITranscriptRulesDetector transcriptRulesDetector,
+        IRulesConsolidator rulesConsolidator,
+        IRulesInjector rulesInjector,
         ProviderEndpointResolver endpointResolver,
         IConversationMetricsRecorder metricsRecorder,
         IClock clock,
@@ -74,6 +83,10 @@ public sealed class ChatTurnPreparer
         _historySynchronizer = historySynchronizer;
         _contextMaterializer = contextMaterializer;
         _messageHelper = messageHelper;
+        _systemRulesDetector = systemRulesDetector;
+        _transcriptRulesDetector = transcriptRulesDetector;
+        _rulesConsolidator = rulesConsolidator;
+        _rulesInjector = rulesInjector;
         _endpointResolver = endpointResolver;
         _metricsRecorder = metricsRecorder;
         _clock = clock;
@@ -134,9 +147,32 @@ public sealed class ChatTurnPreparer
         var newClientMessages = request.Messages.Skip(conversation.SyncedMessageCount).ToList();
         var systemMessage = newClientMessages.FirstOrDefault(m => m.Role == MessageRole.System)
             ?? request.Messages.FirstOrDefault(m => m.Role == MessageRole.System);
-        conversation.CaptureSystemPromptIfAbsent(systemMessage?.Content);
-
         var nonSystemNewMessages = newClientMessages.Where(m => m.Role != MessageRole.System).ToList();
+
+        IReadOnlyList<RuleBlock> systemRules = Array.Empty<RuleBlock>();
+        IReadOnlyList<RuleBlock> transcriptRules = Array.Empty<RuleBlock>();
+        if (!_proxyOptions.PassThrough)
+        {
+            var systemDetection = _systemRulesDetector.Detect(systemMessage?.Content);
+            var hadBaseSystem = conversation.SystemPrompt is not null;
+            if (conversation.SetBaseSystem(systemDetection.BaseSystem))
+            {
+                if (_cacheAlignmentOptions.Enabled)
+                {
+                    _cacheAlignment.Invalidate(conversation.Id);
+                }
+
+                if (hadBaseSystem)
+                {
+                    _logger.LogWarning(
+                        "BaseSystem refreshed for conversation {ConversationId}; invalidating Cache Alignment Prefix.",
+                        conversation.Id);
+                }
+            }
+
+            systemRules = systemDetection.Rules;
+            transcriptRules = _transcriptRulesDetector.Detect(nonSystemNewMessages);
+        }
 
         var nextSequence = storedMessages.Count == 0
             ? 0
@@ -312,6 +348,15 @@ public sealed class ChatTurnPreparer
             metricsPrepare = metricsPrepare with { WorkingMemoryVersionUsed = workingMemory?.Version };
         }
 
+        var rulesSnapshot = _rulesConsolidator.Consolidate(
+            conversation.SystemPrompt ?? string.Empty,
+            systemRules,
+            transcriptRules,
+            workingMemory);
+        var pendingRuleMessages = _rulesInjector.BuildPendingMessages(
+            rulesSnapshot,
+            workingMemory is not null);
+
         // Always rebuild from stored (IR-side) messages. WM is optional — pre-first-compression
         // is the same path with workingMemory == null (never forward client wire history).
         // Folding happens only inside Inline wrap-up on complete.
@@ -336,7 +381,8 @@ public sealed class ChatTurnPreparer
                 recentRaw,
                 currentUserMessage,
                 currentMessageEntity,
-                allMessages);
+                allMessages,
+                pendingRuleMessages);
         }
         else
         {
@@ -344,7 +390,8 @@ public sealed class ChatTurnPreparer
                 conversation.SystemPrompt,
                 workingMemory,
                 recentRaw,
-                currentUserMessage);
+                currentUserMessage,
+                pendingRuleMessages);
         }
 
         outgoing = _contextMaterializer.EnsureOutgoingEndsAtTip(
@@ -392,7 +439,8 @@ public sealed class ChatTurnPreparer
             flushChatUnitAsync,
             cancellationToken,
             toolSchema,
-            metricsPrepare);
+            metricsPrepare,
+            rulesSnapshot);
     }
 
     private async Task<ToolSchemaPrepareResult?> TryPrepareToolSchemaAsync(
@@ -478,7 +526,8 @@ public sealed class ChatTurnPreparer
         Func<CancellationToken, Task> flushChatUnitAsync,
         CancellationToken cancellationToken,
         ToolSchemaPrepareResult? precomputedToolSchema = null,
-        TurnMetricsPrepareData? metricsPrepare = null)
+        TurnMetricsPrepareData? metricsPrepare = null,
+        RulesSnapshot? rulesSnapshot = null)
     {
         var toolSchema = precomputedToolSchema
             ?? await TryPrepareToolSchemaAsync(
@@ -580,7 +629,8 @@ public sealed class ChatTurnPreparer
             metricsPrepare,
             inlineFollowUpEligible,
             inlineOpenStoreEmergency,
-            preFollowUpEstimatedTokens);
+            preFollowUpEstimatedTokens,
+            rulesSnapshot);
     }
 
     private async Task<bool> IsInlineCooldownClearAsync(

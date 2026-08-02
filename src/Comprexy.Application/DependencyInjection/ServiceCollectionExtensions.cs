@@ -3,6 +3,7 @@ using Comprexy.Application.Configuration;
 using Comprexy.Application.Services;
 using Comprexy.Application.Services.CacheAlignment;
 using Comprexy.Application.Services.ChatTurn;
+using Comprexy.Application.Services.Rules;
 using Comprexy.Application.Services.ToolIr;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -78,6 +79,10 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<ICacheAlignmentService, CacheAlignmentService>();
         services.AddSingleton<ContextBudgetEvaluator>();
         services.AddSingleton<ContextBuilder>();
+        services.AddSingleton<ISystemRulesDetector, SystemRulesDetector>();
+        services.AddSingleton<ITranscriptRulesDetector, TranscriptRulesDetector>();
+        services.AddSingleton<IRulesConsolidator, RulesConsolidator>();
+        services.AddSingleton<IRulesInjector, RulesInjector>();
         services.AddSingleton<RecentContextSelector>();
         services.AddSingleton<CompressionPromptFactory>();
         services.AddSingleton<ToolCatalogParser>();

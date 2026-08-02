@@ -110,7 +110,8 @@ public sealed class CacheAlignmentService : ICacheAlignmentService
     public IReadOnlyList<ChatMessage> MaterializeLive(
         Guid conversationId,
         IReadOnlyDictionary<Guid, ConversationMessage> messagesById,
-        Func<IReadOnlyList<ConversationMessage>, IReadOnlyList<ConversationMessage>>? ephemeralOmit = null)
+        Func<IReadOnlyList<ConversationMessage>, IReadOnlyList<ConversationMessage>>? ephemeralOmit = null,
+        IReadOnlyList<ChatMessage>? pendingRuleMessages = null)
     {
         if (!_entries.TryGetValue(conversationId, out var entry))
         {
@@ -124,7 +125,7 @@ public sealed class CacheAlignmentService : ICacheAlignmentService
 
         if (ephemeralOmit is null)
         {
-            return ConcatPrefixAndSuffix(prefix, suffixIds, messagesById);
+            return ConcatPrefixAndSuffix(prefix, suffixIds, messagesById, pendingRuleMessages);
         }
 
         var rawCorpus = new List<ConversationMessage>(prefixIds.Count + suffixIds.Count);
@@ -153,7 +154,7 @@ public sealed class CacheAlignmentService : ICacheAlignmentService
                 preserved.Add(ConversationMessageMapper.ToChatMessage(message));
             }
 
-            return preserved;
+            return InsertPendingAfterBaseSystem(preserved, pendingRuleMessages);
         }
 
         // Rebuild: system/WM heads + filtered raw (projection only; store untouched).
@@ -165,7 +166,7 @@ public sealed class CacheAlignmentService : ICacheAlignmentService
             result.Add(ConversationMessageMapper.ToChatMessage(message));
         }
 
-        return result;
+        return InsertPendingAfterBaseSystem(result, pendingRuleMessages);
     }
 
     public CacheAlignmentWrapUpProjection ProjectWrapUp(
@@ -370,13 +371,56 @@ public sealed class CacheAlignmentService : ICacheAlignmentService
     private static List<ChatMessage> ConcatPrefixAndSuffix(
         IReadOnlyList<ChatMessage> prefix,
         IReadOnlyList<Guid> suffixIds,
-        IReadOnlyDictionary<Guid, ConversationMessage> messagesById)
+        IReadOnlyDictionary<Guid, ConversationMessage> messagesById,
+        IReadOnlyList<ChatMessage>? pendingRuleMessages = null)
     {
         var result = new List<ChatMessage>(prefix.Count + suffixIds.Count);
-        result.AddRange(prefix);
+        if (prefix.Count > 0)
+        {
+            result.Add(prefix[0]);
+            if (pendingRuleMessages is { Count: > 0 })
+            {
+                result.AddRange(pendingRuleMessages);
+            }
+
+            if (prefix.Count > 1)
+            {
+                result.AddRange(prefix.Skip(1));
+            }
+        }
+        else if (pendingRuleMessages is { Count: > 0 })
+        {
+            result.AddRange(pendingRuleMessages);
+        }
+
         foreach (var message in ResolveSuffix(suffixIds, messagesById).OrderBy(m => m.Sequence))
         {
             result.Add(ConversationMessageMapper.ToChatMessage(message));
+        }
+
+        return result;
+    }
+
+    private static List<ChatMessage> InsertPendingAfterBaseSystem(
+        IReadOnlyList<ChatMessage> messages,
+        IReadOnlyList<ChatMessage>? pendingRuleMessages)
+    {
+        if (pendingRuleMessages is not { Count: > 0 })
+        {
+            return messages as List<ChatMessage> ?? messages.ToList();
+        }
+
+        if (messages.Count == 0)
+        {
+            return pendingRuleMessages.ToList();
+        }
+
+        var result = new List<ChatMessage>(messages.Count + pendingRuleMessages.Count);
+        result.Add(messages[0]);
+        result.AddRange(pendingRuleMessages);
+        if (messages.Count > 1)
+        {
+            result.AddRange(messages.Skip(1));
         }
 
         return result;

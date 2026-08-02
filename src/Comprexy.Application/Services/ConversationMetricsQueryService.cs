@@ -68,8 +68,8 @@ public sealed class ConversationMetricsQueryService : IConversationMetricsQueryS
             conversationId,
             cancellationToken);
 
-        // The first-turn system prompt is reused for every rebuild, so this is one estimate per
-        // conversation rather than a per-turn residual.
+        // Conversation.SystemPrompt stores BaseSystem (rules stripped). Injected rule overlay tokens
+        // on the live prepare path are not persisted and land in the history/tools residual below.
         var systemPromptTokens = _tokenEstimator.CountTokens(
             string.IsNullOrWhiteSpace(conversation?.SystemPrompt)
                 ? ContextBuilder.DefaultSystemPrompt

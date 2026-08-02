@@ -87,12 +87,14 @@ public interface ICacheAlignmentService
 
     /// <summary>
     /// Prefix ⊕ resolved Suffix as ChatMessages. Optional ephemeral omit runs on a ConversationMessage
-    /// corpus copy and must not mutate stored Prefix/Suffix.
+    /// corpus copy and must not mutate stored Prefix/Suffix. Optional pending rule messages splice
+    /// after Prefix[0] (BaseSystem) and are never stored in Prefix bytes.
     /// </summary>
     IReadOnlyList<ChatMessage> MaterializeLive(
         Guid conversationId,
         IReadOnlyDictionary<Guid, ConversationMessage> messagesById,
-        Func<IReadOnlyList<ConversationMessage>, IReadOnlyList<ConversationMessage>>? ephemeralOmit = null);
+        Func<IReadOnlyList<ConversationMessage>, IReadOnlyList<ConversationMessage>>? ephemeralOmit = null,
+        IReadOnlyList<ChatMessage>? pendingRuleMessages = null);
 
     CacheAlignmentWrapUpProjection ProjectWrapUp(
         Guid conversationId,

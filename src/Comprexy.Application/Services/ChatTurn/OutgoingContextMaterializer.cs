@@ -37,7 +37,8 @@ public sealed class OutgoingContextMaterializer
         List<ConversationMessage> recentRaw,
         ChatMessage currentUserMessage,
         ConversationMessage currentMessageEntity,
-        IReadOnlyList<ConversationMessage> allMessages)
+        IReadOnlyList<ConversationMessage> allMessages,
+        IReadOnlyList<ChatMessage>? pendingRuleMessages = null)
     {
         var messagesById = allMessages.ToDictionary(m => m.Id);
         var snapshot = _cacheAlignment.GetSnapshot(conversation.Id);
@@ -74,7 +75,8 @@ public sealed class OutgoingContextMaterializer
                     conversation.SystemPrompt,
                     workingMemory,
                     frontierSource,
-                    currentUserMessage);
+                    currentUserMessage,
+                    pendingRuleMessages);
             }
 
             var prefix = _contextBuilder.BuildLivePrefix(
@@ -101,7 +103,8 @@ public sealed class OutgoingContextMaterializer
                     conversation.SystemPrompt,
                     workingMemory,
                     frontierSource,
-                    currentUserMessage);
+                    currentUserMessage,
+                    pendingRuleMessages);
             }
 
             var suffixIds = excluded
@@ -147,7 +150,7 @@ public sealed class OutgoingContextMaterializer
 
         // No materialize-time omit: Prefix ⊕ Suffix goes out verbatim so the tip is always present
         // and frozen Prefix bytes are never rewritten mid-conversation.
-        return _cacheAlignment.MaterializeLive(conversation.Id, messagesById);
+        return _cacheAlignment.MaterializeLive(conversation.Id, messagesById, pendingRuleMessages: pendingRuleMessages);
     }
 
     /// <summary>
