@@ -7,6 +7,7 @@
 import { useEffect, useState } from 'react';
 
 import { Button } from '@/components/ui/button';
+import { Badge } from '@/components/ui/badge';
 import {
   getRunPresentation,
   getRunStatusLabel,
@@ -135,6 +136,19 @@ export function StartBenchmarkPanel({
   };
 
   const isRunning = runStatus ? isActiveRunPhase(runStatus.phase) : false;
+  const selectedScenarioDetails = (scenarios ?? []).filter((scenario) =>
+    selectedScenarios.includes(scenario.name),
+  );
+  const smokeOnlySelection =
+    selectedScenarioDetails.length > 0 &&
+    selectedScenarioDetails.every((scenario) => scenario.isSmoke);
+  const conversationTimeoutSeconds = smokeOnlySelection
+    ? BENCHMARK_TIMEOUT_DEFAULTS.smokeConversationTimeoutSeconds
+    : BENCHMARK_TIMEOUT_DEFAULTS.conversationTimeoutSeconds;
+  const conversationTimeoutLabel =
+    conversationTimeoutSeconds >= 3600
+      ? `${Math.round(conversationTimeoutSeconds / 3600)} hr`
+      : `${Math.round(conversationTimeoutSeconds / 60)} min`;
   const canStart =
     acknowledged &&
     selectedScenarios.length > 0 &&
@@ -158,21 +172,30 @@ export function StartBenchmarkPanel({
         {scenariosLoading ? (
           <p className="text-sm text-slate-500">Loading scenarios…</p>
         ) : (
-          <div className="mt-2 max-h-40 space-y-1 overflow-y-auto">
+          <div className="mt-2 max-h-40 space-y-2 overflow-y-auto">
             {(scenarios ?? []).map((scenario) => (
               <label
                 key={scenario.name}
-                className="flex cursor-pointer items-center gap-2 text-sm"
+                className="flex cursor-pointer gap-2 text-sm"
               >
                 <input
                   type="checkbox"
+                  className="mt-0.5"
                   checked={selectedScenarios.includes(scenario.name)}
                   onChange={() => toggleScenario(scenario.name)}
                   disabled={isRunning}
                 />
-                <span>
-                  {scenario.name}{' '}
-                  <span className="text-slate-500">({scenario.promptCount} prompts)</span>
+                <span className="min-w-0">
+                  <span className="flex flex-wrap items-center gap-2">
+                    <span>{scenario.name}</span>
+                    {scenario.isSmoke && <Badge variant="info">Smoke</Badge>}
+                    <span className="text-slate-500">({scenario.promptCount} prompts)</span>
+                  </span>
+                  {scenario.description && (
+                    <span className="mt-0.5 block text-xs text-slate-500">
+                      {scenario.description}
+                    </span>
+                  )}
                 </span>
               </label>
             ))}
@@ -188,9 +211,15 @@ export function StartBenchmarkPanel({
         <p className="mt-1 text-xs text-slate-500">
           Server defaults (not configurable from dashboard): per-completion{' '}
           {BENCHMARK_TIMEOUT_DEFAULTS.completionTimeoutSeconds}s, per-conversation{' '}
-          {BENCHMARK_TIMEOUT_DEFAULTS.conversationTimeoutSeconds}s (
-          {Math.round(BENCHMARK_TIMEOUT_DEFAULTS.conversationTimeoutSeconds / 3600)} hr). Set via{' '}
+          {conversationTimeoutSeconds}s
+          {smokeOnlySelection ? ' (smoke run)' : ''} ({conversationTimeoutLabel}). Set via{' '}
           <code className="text-xs">BenchOrchestration</code> in control-api appsettings.
+          {smokeOnlySelection && (
+            <>
+              {' '}
+              Smoke runs also disable baseline survival early-stop.
+            </>
+          )}
         </p>
       </div>
 

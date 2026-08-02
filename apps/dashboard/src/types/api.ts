@@ -171,6 +171,8 @@ export interface BenchmarkComparisonPresentationResponse {
 export interface BenchmarkScenarioDto {
   name: string;
   promptCount: number;
+  description?: string | null;
+  isSmoke?: boolean;
 }
 
 export interface BenchmarkStartRunRequest {

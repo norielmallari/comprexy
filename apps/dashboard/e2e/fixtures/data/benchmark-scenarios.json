@@ -6,5 +6,11 @@
   {
     "name": "fixture-scenario-b",
     "promptCount": 3
+  },
+  {
+    "name": "smoke-large-blob",
+    "promptCount": 10,
+    "description": "Prompts built at load from the 10 largest repo files matching extensions/excludes (see largestFiles).",
+    "isSmoke": true
   }
 ]

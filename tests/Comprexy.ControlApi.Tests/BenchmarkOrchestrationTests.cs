@@ -305,6 +305,60 @@ public sealed class BenchmarkOrchestrationTests
     Assert.Equal(-20, body.Totals.Overhead.Delta);
   }
 
+  [Fact]
+  public async Task StartSmokeRun_PassesSmokeHarnessFlags()
+  {
+    await using var factory = new BenchmarkOrchestrationFactory();
+    using var client = factory.CreateClient();
+    factory.ProcessRunner.BlockRun = false;
+    factory.ProcessRunner.Configure(runExitCode: 0, reportExitCode: 0);
+
+    var start = await client.PostAsJsonAsync(
+      "/v1/comprexy/benchmarks/runs",
+      new BenchmarkStartRunRequest { Conversations = ["smoke-large-blob"] });
+    var body = await start.Content.ReadFromJsonAsync<BenchmarkStartRunResponse>();
+    Assert.NotNull(body);
+
+    await WaitForTerminalPhaseAsync(client, body.RunId, TimeSpan.FromSeconds(10));
+
+    Assert.NotNull(factory.ProcessRunner.LastRunArguments);
+    Assert.Contains("--conversation-timeout", factory.ProcessRunner.LastRunArguments);
+    var timeoutIndex = factory.ProcessRunner.LastRunArguments
+        .Select((argument, index) => (argument, index))
+        .First(pair => pair.argument == "--conversation-timeout")
+        .index;
+    Assert.Equal("1200", factory.ProcessRunner.LastRunArguments[timeoutIndex + 1]);
+    Assert.Contains("--continue-past-baseline-failure", factory.ProcessRunner.LastRunArguments);
+  }
+
+  [Fact]
+  public async Task ListScenarios_IncludesSmokeLargeBlobWithPromptCount()
+  {
+    await using var factory = new BenchmarkOrchestrationFactory();
+    using var client = factory.CreateClient();
+    var conversationsDir = Path.Combine(factory.BenchRoot, "tests", "Comprexy.Bench.Conversations");
+    Directory.CreateDirectory(conversationsDir);
+    await File.WriteAllTextAsync(
+      Path.Combine(conversationsDir, "smoke-large-blob.json"),
+      """
+      {
+        "provenance": "fixture smoke script",
+        "largestFiles": { "count": 10 },
+        "promptTemplate": "fixture {{relativePath}}"
+      }
+      """);
+
+    var response = await client.GetAsync("/v1/comprexy/benchmarks/scenarios");
+    response.EnsureSuccessStatusCode();
+    var scenarios = await response.Content.ReadFromJsonAsync<List<BenchmarkScenarioDto>>();
+    Assert.NotNull(scenarios);
+
+    var smoke = Assert.Single(scenarios, scenario => scenario.Name == "smoke-large-blob");
+    Assert.Equal(10, smoke.PromptCount);
+    Assert.True(smoke.IsSmoke);
+    Assert.Equal("fixture smoke script", smoke.Description);
+  }
+
   private static async Task<BenchmarkRunSummaryDto> WaitForTerminalRunAsync(
     IBenchRunOrchestrator orchestrator,
     string runId,
@@ -508,6 +562,7 @@ public sealed class BenchmarkOrchestrationTests
           ["BenchOrchestration:RunsRootRelative"] = "reports/bench",
           ["BenchOrchestration:Enabled"] = "true",
           ["BenchOrchestration:AllowSpawn"] = "true",
+          ["BenchOrchestration:SmokeConversationTimeoutSeconds"] = "1200",
           ["Auth:RequiredApiKey"] = string.Empty
         });
       });
@@ -551,6 +606,8 @@ public sealed class BenchmarkOrchestrationTests
 
     public CancellationToken? LastCancellationToken { get; private set; }
 
+    public IReadOnlyList<string>? LastRunArguments { get; private set; }
+
     public Task RunStarted => _runStarted.Task;
 
     public void Configure(int runExitCode = 0, int reportExitCode = 0)
@@ -580,6 +637,7 @@ public sealed class BenchmarkOrchestrationTests
       }
 
       RunCallCount++;
+      LastRunArguments = arguments.ToList();
       _runStarted.TrySetResult();
       if (BlockRun)
       {

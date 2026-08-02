@@ -157,9 +157,37 @@ describe('StartBenchmarkPanel', () => {
     const timeouts = screen.getByTestId('benchmark-timeout-defaults');
     expect(timeouts).toHaveTextContent('300s');
     expect(timeouts).toHaveTextContent('7200s');
+    expect(timeouts).toHaveTextContent('2 hr');
     expect(timeouts).toHaveTextContent('Server defaults');
     expect(screen.queryByRole('spinbutton')).not.toBeInTheDocument();
     expect(screen.queryByRole('textbox')).not.toBeInTheDocument();
+  });
+
+  it('shows smoke timeout defaults when only smoke scenarios are selected', () => {
+    mockUseBenchmarkScenarios.mockReturnValue({
+      data: [
+        { name: 'fixture-scenario-a', promptCount: 5 },
+        {
+          name: 'smoke-large-blob',
+          promptCount: 10,
+          description: 'fixture smoke description',
+          isSmoke: true,
+        },
+      ],
+      isLoading: false,
+    } as unknown as ReturnType<typeof useBenchmarkScenarios>);
+
+    render(<StartBenchmarkPanel {...defaultProps} />);
+
+    fireEvent.click(screen.getByLabelText(/smoke-large-blob/));
+
+    const timeouts = screen.getByTestId('benchmark-timeout-defaults');
+    expect(timeouts).toHaveTextContent('1200s');
+    expect(timeouts).toHaveTextContent('20 min');
+    expect(timeouts).toHaveTextContent('smoke run');
+    expect(timeouts).toHaveTextContent('baseline survival early-stop');
+    expect(screen.getByText('Smoke')).toBeInTheDocument();
+    expect(screen.getByText('fixture smoke description')).toBeInTheDocument();
   });
 
   it('calls onAutoFillIds when run reaches completed terminal phase', async () => {

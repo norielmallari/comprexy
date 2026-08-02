@@ -14,6 +14,7 @@ export const LOCAL_COST_DISCLAIMER =
 export const BENCHMARK_TIMEOUT_DEFAULTS = {
   completionTimeoutSeconds: 300,
   conversationTimeoutSeconds: 7200,
+  smokeConversationTimeoutSeconds: 1200,
 } as const;
 
 export const DEFAULT_COST_RATES: BenchmarkCostRates = {

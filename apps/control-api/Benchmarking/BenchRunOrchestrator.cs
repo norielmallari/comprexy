@@ -425,6 +425,10 @@ public sealed class BenchRunOrchestrator : IBenchRunOrchestrator
         bool exactRunId = false)
     {
         var projectPath = Path.Combine(_repoRoot, _options.HarnessProjectPath);
+        var conversationTimeoutSeconds = BenchmarkScenarioParser.IsSmokeOnlyRun(conversations)
+            ? _options.SmokeConversationTimeoutSeconds
+            : _options.ConversationTimeoutSeconds;
+
         var args = new List<string>
         {
             "run",
@@ -445,8 +449,13 @@ public sealed class BenchRunOrchestrator : IBenchRunOrchestrator
             "--completion-timeout",
             _options.CompletionTimeoutSeconds.ToString(System.Globalization.CultureInfo.InvariantCulture),
             "--conversation-timeout",
-            _options.ConversationTimeoutSeconds.ToString(System.Globalization.CultureInfo.InvariantCulture)
+            conversationTimeoutSeconds.ToString(System.Globalization.CultureInfo.InvariantCulture)
         };
+
+        if (BenchmarkScenarioParser.IsSmokeOnlyRun(conversations))
+        {
+            args.Add("--continue-past-baseline-failure");
+        }
 
         if (exactRunId)
         {

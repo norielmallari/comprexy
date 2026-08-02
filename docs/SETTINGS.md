@@ -221,6 +221,7 @@ Operator control-api only. Spawns `tests/Comprexy.Bench` for dashboard-started r
 | `ControlApiPort` | `18130` | Bench control-api port for spawned harness. |
 | `CompletionTimeoutSeconds` | `300` | Per-completion timeout forwarded to harness. |
 | `ConversationTimeoutSeconds` | `7200` | Per-conversation wall-clock cap forwarded to harness. |
+| `SmokeConversationTimeoutSeconds` | `1200` | Per-conversation cap when a dashboard run selects only `smoke-*` scenarios; also passes `--continue-past-baseline-failure`. |
 | `RepoRoot` | (auto) | Optional repo root override when content-root walk fails. |
 
 Concurrent CLI and dashboard writers under `reports/bench/` are unsupported in v1.

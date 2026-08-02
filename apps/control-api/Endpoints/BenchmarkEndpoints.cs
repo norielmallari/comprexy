@@ -39,12 +39,7 @@ public static class BenchmarkEndpoints
 
         var scenarios = Directory.EnumerateFiles(conversationsDir, "*.json")
             .OrderBy(Path.GetFileName, StringComparer.Ordinal)
-            .Select(path =>
-            {
-                var name = Path.GetFileNameWithoutExtension(path);
-                var promptCount = CountPrompts(path);
-                return new BenchmarkScenarioDto { Name = name, PromptCount = promptCount };
-            })
+            .Select(BenchmarkScenarioParser.Parse)
             .ToList();
 
         return TypedResults.Ok(scenarios);
@@ -156,18 +151,6 @@ public static class BenchmarkEndpoints
     {
         var response = await presentation.BuildComparisonAsync(request, cancellationToken);
         return response is null ? TypedResults.NotFound() : TypedResults.Ok(response);
-    }
-
-    private static int CountPrompts(string path)
-    {
-        using var document = System.Text.Json.JsonDocument.Parse(File.ReadAllText(path));
-        return document.RootElement.ValueKind switch
-        {
-            System.Text.Json.JsonValueKind.Array => document.RootElement.GetArrayLength(),
-            System.Text.Json.JsonValueKind.Object when document.RootElement.TryGetProperty("prompts", out var prompts)
-                && prompts.ValueKind == System.Text.Json.JsonValueKind.Array => prompts.GetArrayLength(),
-            _ => 0
-        };
     }
 
     private static string ResolveRepoRoot(BenchOrchestrationOptions options)

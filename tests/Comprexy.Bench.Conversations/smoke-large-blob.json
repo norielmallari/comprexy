@@ -1,0 +1,21 @@
+{
+  "provenance": "Prompts built at load from the 10 largest repo files matching extensions/excludes (see largestFiles).",
+  "systemPrompt": "You are running a smoke benchmark with large inlined repository files. Each user message inlines one file. Do not call Read, Glob, Grep, or shell tools to fetch that material — answer only from what is inlined in the user message. Keep each reply to one short sentence.",
+  "largestFiles": {
+    "count": 10,
+    "excludeDirectoryNames": [
+      ".git",
+      ".next",
+      ".cursor",
+      "bin",
+      "data",
+      "fixtures",
+      "node_modules",
+      "obj",
+      "reports"
+    ],
+    "extensions": [".cs", ".md", ".ts", ".tsx"],
+    "excludeFileNames": ["package-lock.json"]
+  },
+  "promptTemplate": "The following repository file is inlined for this smoke turn. Do not use tools to fetch it.\n\n--- BEGIN {{relativePath}} ---\n{{contents}}\n--- END {{relativePath}} ---\n\nIn one short sentence: what is this file's primary responsibility?"
+}

@@ -52,6 +52,10 @@ public sealed class BenchmarkScenarioDto
     public required string Name { get; init; }
 
     public required int PromptCount { get; init; }
+
+    public string? Description { get; init; }
+
+    public bool IsSmoke { get; init; }
 }
 
 public sealed class BenchmarkStartRunRequest
