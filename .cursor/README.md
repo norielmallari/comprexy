@@ -66,18 +66,18 @@ Agent prompts live under [`.cursor/agents/`](agents/).
 | --- | --- |
 | [`plan-orchestrator`](agents/plan-orchestrator.md) | Coordinates plan approval; routes by `track`; does not author plan body or product code |
 | [`planner`](agents/planner.md) | Turns a requirement into an implementable plan (must set `track`) |
-| [`plan-reviewer`](agents/plan-reviewer.md) | Adversarial plan gate — rejects incomplete plans / missing track |
+| [`plan-reviewer`](agents/plan-reviewer.md) | Adversarial plan gate — rejects incomplete plans / missing track; quote-verified evidence (E1–E7) |
 | [`backend-implementation-orchestrator`](agents/backend-implementation-orchestrator.md) | Backend implement → test → review until approval or HITL |
 | [`backend-implementer`](agents/backend-implementer.md) | Backend production code; `dotnet build` must pass; no unit tests |
 | [`backend-unit-tester`](agents/backend-unit-tester.md) | Backend xUnit from handoff; UI track redirects to `ui-unit-tester` |
-| [`backend-code-reviewer`](agents/backend-code-reviewer.md) | Adversarial backend review (DI/lease); read-only |
+| [`backend-code-reviewer`](agents/backend-code-reviewer.md) | Adversarial backend review (DI/lease); quote-verified, plan-aware severity (E1–E7); read-only |
 | [`ui-implementation-orchestrator`](agents/ui-implementation-orchestrator.md) | UI implement → unit+e2e author → ui-review → ui-sim until approval or HITL |
 | [`ui-implementer`](agents/ui-implementer.md) | UI production code; `npx tsc --noEmit` clean + build; handoff for Vitest + Playwright smokes |
 | [`ui-unit-tester`](agents/ui-unit-tester.md) | Vitest/RTL **and** mocked Playwright fixtures/smokes from handoff; keeps `npx tsc --noEmit` clean |
-| [`ui-reviewer`](agents/ui-reviewer.md) | Adversarial UI review (typecheck, a11y, locators, test authorship); read-only |
+| [`ui-reviewer`](agents/ui-reviewer.md) | Adversarial UI review (typecheck, a11y, locators, test authorship); quote-verified evidence (E1–E7); read-only |
 | [`ui-simulator`](agents/ui-simulator.md) | Runs committed Playwright under existing mocks; no new fixture invention |
 
-Each canonical agent file is the source of truth for gates, chat brevity, and artifact paths.
+Each canonical agent file is the source of truth for gates, chat brevity, and artifact paths. Reviewers (`plan-reviewer`, `backend-code-reviewer`, `ui-reviewer`) share evidence gates **E1–E7**: quote-before-severity, plan/requirement-aware severity, call-graph-correct remediations, diff inventory honesty, severity caps, retracted-appendix discipline, and blast-radius on Critical/High.
 
 On the UI track, every stage that touches TypeScript must run `npx tsc --noEmit` from the app package root with zero errors. `ui-reviewer` verifies it independently instead of trusting the handoff, and no stage may clear it with `any` or `@ts-ignore` suppressions.
 

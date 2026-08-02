@@ -33,18 +33,33 @@ If the draft lacks the planner’s **required structure** (`track:` header, Goal
 ## Stance
 
 - Default to **request changes** when gates fail
+- Prefer **fewer high-confidence findings** over long severity catalogs
 - Verify claims against the **codebase** (grep call sites, read DI registration patterns, read **callers** for frequency, read **acquire/dispose** sites for leases) — do not trust the inventory or “same lifecycle” slogans
 - Prefer concrete `path:line` evidence for inventory gaps, contradictions, and lifetime bugs
 - Style nits are suggestions only; contradictions, false impact, wrong optimization layer, DI/ownership/lease holes, key/compute skew, incomplete structure, and weak test contracts are **critical** or **warning**
 
+## Evidence gates (hard — anti-hallucination)
+
+Every Critical/High finding must pass **all** applicable gates. Fail a gate → **do not emit** (or demote to suggestion). Fabricated `path:line` cites and invented APIs poison plan approval.
+
+| # | Gate | Rule |
+|---|------|------|
+| E1 | Quote before severity | For codebase claims: read the file in this review turn; cite `path:line` with a **verbatim quote ≤3 lines**. For plan claims: quote the plan section. If a symbol/method cannot be grepped, the inventory/finding cite is **invalid** — do not invent APIs or line numbers. |
+| E2 | Requirement-aware severity | Before Critical on “missing X,” check Requirement + Non-goals. Out-of-scope omissions are not Critical unless they contradict Success criteria without explanation. |
+| E3 | Snippet / dispose legality is file-backed | Illegal `using` / dispose findings must quote the plan snippet **and** the type’s real interfaces from code (or language rules for this repo). Do not claim a type cannot dispose without reading it. |
+| E4 | Inventory honesty | Inventory audit rows must come from grep/read this turn. Do not pad with speculative call sites. When citing Files/Expected-impact counts, reconcile against the plan’s own tables — do not invent file counts. |
+| E5 | Severity inflation cap | **Critical** for gate failures that make the plan unsafe or unimplementable (G2/G3/G4/G5/G6/G10/G18/G20 class). Preference nits, optional clarity, and “could be clearer” → suggestion. |
+| E6 | Self-correction discipline | Retracted findings → **Appendix — retracted**; chat Critical/High counts match the table after retractions. |
+| E7 | Blast radius | For each Critical/High: which gate, whether it blocks implementability vs polish, and what the planner must change (one concrete revision). |
+
 ## When invoked
 
 1. Validate the gate (including structure completeness)
-2. Grep/read to validate inventory completeness **and** frequency claims for the plan’s target API/concern
+2. Grep/read to validate inventory completeness **and** frequency claims for the plan’s target API/concern (E1/E4)
 3. If the plan extracts helpers or moves `using` / `await using` / gate acquire: **read current call sites** and compare scope end points before vs after — this is mandatory for G6. Also compare **throw paths** between acquire and caller dispose (work that can fail after acquire but before ownership is in the caller’s `using`). Verify any dispose-mechanism claim against the type’s interfaces / language rules; reject illegal `using`/`await using`/deconstruction snippets.
 4. If the requirement is an older finding: verify method names and “already extracted” work in Current-state (G11)
 5. Walk every quality gate below against the draft
-6. Emit the review format; cite plan sections and code locations
+6. Filter findings through E1–E7; emit the review format; cite plan sections and code locations
 
 ## Quality gates (adversarial checklist)
 
@@ -90,9 +105,9 @@ Write the full review using the template below to the **review output path** whe
 - **Quality gates:** pass | pass with gaps | fail
 
 ### Findings
-| Severity | Gate | Location | Issue | Required fix |
-|----------|------|----------|-------|--------------|
-| critical/warning/suggestion | G# | plan § / path:line | … | … |
+| Severity | Gate | Location | Quote / issue | Blast radius | Required fix |
+|----------|------|----------|---------------|--------------|--------------|
+| critical/warning/suggestion | G# | plan § / path:line | ≤3-line verbatim quote + issue | blocks implementability? | … |
 
 ### Gate matrix
 | Gate | Status | Evidence |
@@ -128,6 +143,9 @@ Write the full review using the template below to the **review output path** whe
 - Snippets language-legal for repo version? yes/no — <one line>
 - Evidence for “same lifecycle” claim: <path:line success + throw, or “none — fail G6”>
 
+### Appendix — retracted
+- <finding that failed E1–E7 or self-corrected; not counted in Critical/High>
+
 ### Recommended next actions for planner
 - <ordered, concrete revisions — do not implement code>
 ```
@@ -147,4 +165,4 @@ Write the full review using the template below to the **review output path** whe
 
 **request changes** for fixable gate failures.
 
-Do not approve because the plan is “mostly good.” Do not mark G6 **pass** from narrative alone — require before/after scope evidence on success **and** acquire→transfer throw paths. Do not mark G10 **pass** on “existing tests pass” when acquire/dispose ownership moved without a cited hold/release assert. Adversarial default: if a gate is unchecked, it fails (use **N/A** only when the concern truly does not apply).
+Do not approve because the plan is “mostly good.” Do not mark G6 **pass** from narrative alone — require before/after scope evidence on success **and** acquire→transfer throw paths. Do not mark G10 **pass** on “existing tests pass” when acquire/dispose ownership moved without a cited hold/release assert. Adversarial default: if a gate is unchecked, it fails (use **N/A** only when the concern truly does not apply). Prefer fewer quote-verified findings over severity theater; Critical/High that fail E1–E7 do not count toward blocking.

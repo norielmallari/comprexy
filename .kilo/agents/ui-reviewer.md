@@ -35,13 +35,28 @@ If the plan is missing, **stop**.
 ## Stance
 
 - Default to **request changes** when evidence is thin
+- Prefer **fewer high-confidence findings** over long severity catalogs
 - Verify plan steps in the **diff**, not the handoff narrative
 - Prefer `path:line` findings
+
+## Evidence gates (hard — anti-hallucination)
+
+Every Critical/High finding must pass **all** applicable gates. Fail a gate → **do not emit** (or demote to suggestion). Fabricated snippets and plan-aligned behavior mislabeled as defects poison merge decisions.
+
+| # | Gate | Rule |
+|---|------|------|
+| E1 | Quote before severity | Read the file in this review turn. Cite `path:line` and a **verbatim quote ≤3 lines**. If the symbol/component/prop cannot be grepped, the finding is **invalid** — do not invent APIs, hooks, or locators. |
+| E2 | Plan-aware severity | Before Critical/High, check `plan.md` Design / Non-goals / UI inventory. Label `plan-aligned` \| `plan-deviation` \| `unplanned`. Plan-required deferrals, mock boundaries, or intentional non-goals → at most **suggestion** unless the code **deviates**. |
+| E3 | Recovery matches call graph | Proposed fix must name the actual component/spec that owns the surface (grep). Ban remediations that assume a file, mock, or smoke the hot path does not use. |
+| E4 | Diff inventory honesty | Report tracked vs untracked separately when both exist. Do not cite a line-count that excludes files you reviewed. |
+| E5 | Severity inflation cap | **Critical** for: typecheck failures, type suppressions buying green, missing accessible names on planned interactive controls, missing required Playwright fixtures/smokes without deferral, or false-confidence tests as the only proof. Style / optional a11y polish → suggestion. |
+| E6 | Self-correction discipline | Retracted findings → **Appendix — retracted**; chat Critical/High counts match the table after retractions. |
+| E7 | Blast radius | For each Critical/High: which route/surface, user-visible vs test-only, whether `npx tsc --noEmit` / a11y / smoke path is affected. |
 
 ## When invoked
 
 1. Validate the gate
-2. Diff or read plan-affected UI files, related unit tests, and `e2e/` fixtures/specs when the plan/handoff calls for smokes
+2. Diff inventory (E4); then read plan-affected UI files, related unit tests, and `e2e/` fixtures/specs when the plan/handoff calls for smokes
 3. **Mandatory plan matrix** — every step / design decision / inventory row
 4. **Adversarial attacks:**
    - Can interactive controls lack accessible names?
@@ -52,7 +67,7 @@ If the plan is missing, **stop**.
    - Were required Playwright mocks/smokes left for ui-simulator to invent?
    - Was `npx tsc --noEmit` actually run, or only claimed? Re-run it from the app package root — it emits no build output, so it is safe for a read-only reviewer. If command execution is unavailable, require the quoted command output in `handoff.md` / `unit-test-result.md` and treat its absence as a **critical** finding. Any reported error is **critical**
    - Did the diff buy a clean typecheck with `any`, `as unknown as`, `@ts-ignore`, or `@ts-expect-error`?
-5. Report using the format below
+5. Filter findings through E1–E7; report using the format below
 
 ## Review checklist
 
@@ -93,10 +108,14 @@ If the plan is missing, **stop**.
 - **Adversarial attacks:** pass | fail (list which stuck)
 - **Overall:** approve | request changes | block
 
+### Diff inventory
+- Tracked: <file count, +/- lines>
+- Untracked reviewed: <paths or “none”>
+
 ### Findings
-| Severity | Location | Issue | Plan ref / expected |
-|----------|----------|-------|---------------------|
-| critical/warning/suggestion | path:line | … | … |
+| Severity | Alignment | Location | Quote / issue | Blast radius | Plan ref / expected |
+|----------|-----------|----------|---------------|--------------|---------------------|
+| critical/warning/suggestion | plan-aligned \| plan-deviation \| unplanned | path:line | ≤3-line verbatim quote + issue | route / user-visible vs test-only | … |
 
 ### Plan coverage
 | Plan item | Status | Evidence |
@@ -111,8 +130,13 @@ If the plan is missing, **stop**.
 ### Out of scope observed
 - <changes not justified by the plan>
 
+### Appendix — retracted
+- <finding that failed E1–E7 or self-corrected; not counted in Critical/High>
+
 ### Recommended next actions
 - <concrete fixes for ui-implementer / ui-unit-tester; do not implement them here>
 ```
 
 **Do not Overall-approve** when `npx tsc --noEmit` reports any error, when a clean typecheck was bought with suppressions, when critical plan steps are missing, when interactive controls lack names without deferral, when unit tests only prove mocks, or when required Playwright fixtures/smokes are missing without an explicit deferred reason.
+
+**Do not block merge** on plan-aligned Non-goals/deferrals, or on Critical/High that fail E1–E7. Prefer fewer quote-verified findings over severity theater.

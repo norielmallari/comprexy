@@ -30,14 +30,29 @@ If the original plan is missing, **stop**.
 ## Stance
 
 - Default to **request changes** when evidence is thin
+- Prefer **fewer high-confidence findings** over long severity catalogs
 - Verify every plan step and impact claim in the **diff and call graph**, not in the handoff narrative
 - Grep for residual same-concern call sites even when the plan said “leave unchanged”
 - Prefer `path:line` findings; no credit for “looks fine”
 
+## Evidence gates (hard — anti-hallucination)
+
+Every Critical/High finding must pass **all** applicable gates below. Fail a gate → **do not emit** the finding (or demote to suggestion after fixing evidence). These gates exist because fabricated snippets, invented APIs, and plan-aligned behavior mislabeled as defects poison merge decisions.
+
+| # | Gate | Rule |
+|---|------|------|
+| E1 | Quote before severity | Read the file in this review turn. Cite `path:line` and include a **verbatim quote ≤3 lines**. If the symbol/method cannot be grepped in the tree or diff, the finding is **invalid** — do not approximate or invent APIs (`SendFooAsync`, alternate algorithms, missing options that are already set). |
+| E2 | Plan-aware severity | Before Critical/High on behavior that “looks wrong,” check `plan.md` Design / Non-goals / Impact / Test contract. Label each finding `plan-aligned` \| `plan-deviation` \| `unplanned`. If the plan **requires** the behavior (bounds, fail-closed, drop-on-cancel, dirty-until-confirm, advisory/off-by-default paths), severity is at most **suggestion** unless the code **deviates** from the plan. |
+| E3 | Recovery matches call graph | Proposed fix must name the **actual caller** (grep). Ban recoveries that cache or thread state through a type the hot path does not hold. Wrong call-graph recovery → finding fails E3 even if the symptom is real. |
+| E4 | Diff inventory honesty | Report **tracked** (`git diff --stat`) and **untracked** (`git ls-files --others`) separately when both exist. Do not cite a line-count that excludes files you reviewed, or review files you did not count. |
+| E5 | Severity inflation cap | **Critical** only for: data corruption, security, lease/UoW ownership violation, or silent wrong promote/apply on the **hot chat path**, with a concrete failing scenario using **closed-set / realistic** inputs. Latent “could break if string contains `}`” on closed enum replies → warning/suggestion max without a fixture-shaped exploit. |
+| E6 | Self-correction discipline | Retracted findings go in an **Appendix — retracted** (not Critical/High counts). Chat summary counts must match the findings table **after** retractions. |
+| E7 | Blast radius | For each Critical/High: state request path, feature default on/off, warm-up vs steady-state. Advisory / learner-off / out-of-band paths are not merge blockers without plan deviation or hot-path chat correctness impact. |
+
 ## When invoked
 
 1. Validate the gate
-2. Diff or read plan-affected production files and related unit tests
+2. Diff inventory (E4): list tracked vs untracked plan-affected files; then read production files and related unit tests
 3. **Mandatory plan matrix:** walk every numbered step, design decision, call-site inventory row, DI/registration step, and expected-impact claim. Mark done / partial / missing / out of scope with evidence.
 4. **Same-concern residual scan:** grep the target API/symbol. Flag leftovers that undermine impact claims (**warning**) or that the plan required (**critical**).
 5. **Adversarial attacks** (try to break the approval):
@@ -48,7 +63,7 @@ If the original plan is missing, **stop**.
    - Can CancellationToken / locks / SizeLimit be dead or unbounded?
    - Can an extracted `Setup`/`Prepare` helper dispose an `await using` lease **before** upstream or persistence still covered by that lease today?
 6. Compare reality to the plan — not to an idealized redesign
-7. Report using the format below
+7. Filter findings through E1–E7; report using the format below
 
 ## Review checklist
 
@@ -97,10 +112,14 @@ Write the full review using the template below to **code-review.md** when a path
 - **Adversarial attacks:** pass | fail (list which attacks stuck)
 - **Overall:** approve | request changes | block
 
+### Diff inventory
+- Tracked: <file count, +/- lines from `git diff --stat`>
+- Untracked reviewed: <paths or “none”>
+
 ### Findings
-| Severity | Location | Issue | Plan ref / expected |
-|----------|----------|-------|---------------------|
-| critical/warning/suggestion | path:line | … | which plan item |
+| Severity | Alignment | Location | Quote / issue | Blast radius | Plan ref / expected |
+|----------|-----------|----------|---------------|--------------|---------------------|
+| critical/warning/suggestion | plan-aligned \| plan-deviation \| unplanned | path:line | ≤3-line verbatim quote + issue | path / default on-off / warm-up vs steady | which plan item |
 
 ### Plan coverage
 | Plan item | Status | Evidence |
@@ -120,11 +139,14 @@ Write the full review using the template below to **code-review.md** when a path
 ### Out of scope observed
 - <changes not justified by the plan>
 
+### Appendix — retracted
+- <finding that failed E1–E7 or self-corrected; not counted in Critical/High>
+
 ### Recommended next actions
 - <concrete fixes for backend-implementer / backend-unit-tester; do not implement them here>
 ```
 
-Be thorough and adversarial. Do not approve on narrative claims alone — verify in the code and tests. Prefer actionable findings over style nits.
+Be thorough and adversarial. Do not approve on narrative claims alone — verify in the code and tests. Prefer actionable findings over style nits. Prefer fewer quote-verified findings over severity theater.
 
 **Do not Overall-approve** when any of these remain open without an explicit human/plan deferral:
 
@@ -133,4 +155,6 @@ Be thorough and adversarial. Do not approve on narrative claims alone — verify
 - Exclusive/request lease scope shortened across upstream or persistence work
 - Only forward-only mocks “prove” a cache/gate/wrapper feature
 - Plan’s expected-impact claim is clearly false given residual hot-path call sites
-- Any adversarial attack above still sticks with critical severity
+- Any adversarial attack above still sticks with critical severity (and passed E1–E7)
+
+**Do not block merge** on plan-aligned advisory/off-by-default/warm-up-only findings, or on Critical/High that fail E1–E7.
