@@ -125,7 +125,11 @@ Top 3 evidences — end-to-end Cursor workflows on a local LLM (Qwen-35B behind 
 
 3. **Planning (29 turns)** — produced the [Comprexy Metrics Dashboard implementation plan](docs/plans/comprexy-dashboard-implementation-plan.md). About 2.00M baseline tokens across the run → ~1.08M sent-equivalent (~800k saved). Final turn ~94k → ~37k estimated tokens (77 raw → 31 sent); effective prompts stayed roughly 21–58k. Evidence: [`docs/evidence/d2e0faa.md`](docs/evidence/d2e0faa.md).
 
-These are dogfood workflows, not universal benchmarks — and they do not claim measured tok/s gains. Agent pipeline used for this work: [Agentic workflow](#agentic-workflow).
+### Benchmark comparison
+
+A structured two-arm benchmark compared MAF client-side compaction (`ToolSchema:Off`, 256k context window) against Comprexy Virtual Tools (`ToolSchema:Virtual`, 64k soft limit) on the same six prompt lists (123 total prompts) using Qwen-35B. Across three fully completed conversations, Comprexy saved 4,421,674 tokens (30.8%) versus the baseline — 37.4% on heavy-tool-usage, 26.5% on mixed-workload, 28.9% on smoke-large-blob. The remaining three conversations were killed by the baseline's 256k context limit (HTTP 502); Comprexy survived past the kill zone in all three. Evidence: [`docs/evidence/65f1b1b.md`](docs/evidence/65f1b1b.md).
+
+These are dogfood workflows and a single local benchmark, not universal benchmarks — and they do not claim measured tok/s gains.
 
 ### Token and cost intelligence
 
@@ -301,7 +305,7 @@ Client tools[] → catalog hash + mapper → model IR tools
 | Meta | `comprexy_get_current_conversation_id` runs proxy-locally |
 | Failure | Mapper exhaustion drops only the bindings that failed validation and keeps the rest; if nothing usable survives, `ToolIrDisabled` is set for that catalog hash and client tools are forwarded unchanged. Compression/budgets stay on either way |
 
-Runtime detail: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md#tool-schema-virtual-tools). Options: [`docs/SETTINGS.md`](docs/SETTINGS.md#toolschema).
+Runtime detail: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md#tool-schema-(virtual-tools)). Options: [`docs/SETTINGS.md`](docs/SETTINGS.md#toolschema).
 
 ## Configuration
 
