@@ -27,7 +27,7 @@ describe('MetricCard', () => {
     const { container } = render(
       <MetricCard title="Default" value="100" unit="tokens" variant="default" />,
     );
-    const valueSpan = container.querySelector('span.text-4xl');
+    const valueSpan = container.querySelector('span.text-3xl');
     expect(valueSpan).toBeInTheDocument();
   });
 
@@ -43,7 +43,7 @@ describe('MetricCard', () => {
     const { container } = render(
       <MetricCard title="Default" value="100" unit="tokens" />,
     );
-    const valueSpan = container.querySelector('span.text-4xl');
+    const valueSpan = container.querySelector('span.text-3xl');
     expect(valueSpan).toBeInTheDocument();
   });
 

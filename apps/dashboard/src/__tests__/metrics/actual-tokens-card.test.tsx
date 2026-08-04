@@ -19,12 +19,13 @@ describe('ActualTokensCard', () => {
     expect(screen.getByText('—')).toBeInTheDocument();
   });
 
-  it('exposes a named Actual Tokens region', () => {
+  it('exposes a named Actual (combined) region', () => {
     render(<ActualTokensCard totalActualTokensEstimated={1000} />);
     expect(
-      screen.getByRole('region', { name: 'Actual Tokens' }),
+      screen.getByRole('region', { name: 'Actual (combined)' }),
     ).toBeInTheDocument();
   });
+
 
   it('formats zero actual tokens', () => {
     render(<ActualTokensCard totalActualTokensEstimated={0} />);

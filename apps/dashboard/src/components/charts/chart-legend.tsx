@@ -17,7 +17,7 @@ export function ChartLegend({ items }: ChartLegendProps) {
   return (
     <div
       data-testid="chart-legend"
-      className="flex flex-wrap items-center justify-center gap-4 py-4"
+      className="flex flex-wrap items-center justify-center gap-3 py-2"
     >
       {items.map((item) => (
         <div key={item.label} className="flex items-center gap-2">

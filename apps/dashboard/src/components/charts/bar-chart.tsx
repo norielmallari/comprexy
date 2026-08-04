@@ -46,6 +46,11 @@ export interface BarChartProps {
   sharedMaxY?: number;
   title?: string;
   compact?: boolean;
+  /**
+   * Stretch the plot into the parent’s remaining height. Parent must be a sized
+   * flex child (`flex-1 min-h-0`). Falls back to {@link CHART_HEIGHT} when false.
+   */
+  fill?: boolean;
   /** Root test hook; defaults to telemetry single-chart id. */
   testId?: string;
 }
@@ -100,6 +105,7 @@ export function BarChart({
   sharedMaxY,
   title = 'Token Counts by Turn',
   compact = false,
+  fill = false,
   testId = 'token-counts-by-turn-chart',
 }: BarChartProps) {
   const [isDark] = useState(() => {
@@ -124,12 +130,23 @@ export function BarChart({
   }, [data, sharedMaxY]);
 
   const legendItems = useMemo(() => getLegendItems(isDark), [isDark]);
+  const shellClass = fill
+    ? 'flex h-full min-h-0 flex-col gap-2'
+    : 'flex flex-col gap-2';
+  const plotHeight = fill ? '100%' : CHART_HEIGHT;
+  const fallbackBoxStyle = fill
+    ? undefined
+    : { width: CHART_WIDTH, height: CHART_HEIGHT };
 
   if (data.length === 0 && !isLoading) {
     return (
       <div
-        className="flex h-96 items-center justify-center"
-        style={{ width: CHART_WIDTH, height: CHART_HEIGHT }}
+        className={
+          fill
+            ? 'flex h-full min-h-[220px] items-center justify-center'
+            : 'flex h-96 items-center justify-center'
+        }
+        style={fallbackBoxStyle}
       >
         <p className="text-gray-500 dark:text-gray-400">
           No data to display. Select a conversation to view metrics.
@@ -141,8 +158,12 @@ export function BarChart({
   if (isLoading) {
     return (
       <div
-        className="flex h-96 items-center justify-center"
-        style={{ width: CHART_WIDTH, height: CHART_HEIGHT }}
+        className={
+          fill
+            ? 'flex h-full min-h-[220px] items-center justify-center'
+            : 'flex h-96 items-center justify-center'
+        }
+        style={fallbackBoxStyle}
       >
         <p className="text-gray-500 dark:text-gray-400">Loading chart data...</p>
       </div>
@@ -150,22 +171,25 @@ export function BarChart({
   }
 
   return (
-    <div className="space-y-4">
-      <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100">
+    <div className={shellClass}>
+      <h3 className="shrink-0 text-sm font-semibold text-gray-900 dark:text-gray-100">
         {title}
       </h3>
 
-      <ChartLegend items={legendItems} />
+      <div className="shrink-0">
+        <ChartLegend items={legendItems} />
+      </div>
 
       <div
         role="img"
         aria-label={`Prepared prompt tokens per turn across ${data.length} turns, with an uncompressed baseline reference behind each bar`}
         data-testid={testId}
+        className={fill ? 'min-h-0 flex-1' : undefined}
       >
-        <ResponsiveContainer width="100%" height={CHART_HEIGHT}>
+        <ResponsiveContainer width="100%" height={plotHeight}>
           <RechartsBarChart
             data={chartData}
-            margin={{ top: 10, right: 30, left: 20, bottom: 20 }}
+            margin={{ top: 8, right: 20, left: 12, bottom: 12 }}
           >
             <CartesianGrid strokeDasharray="3 3" stroke={isDark ? '#374151' : '#e5e7eb'} />
 
@@ -236,7 +260,7 @@ export function BarChart({
       </div>
 
       {!compact && (
-        <p className="text-xs text-gray-500 dark:text-gray-400">
+        <p className="shrink-0 text-xs text-gray-500 dark:text-gray-400">
           Bars show the prompt Comprexy actually prepared for each turn. The dashed ghost behind each
           bar is the uncompressed prompt estimate for the same turn. Compressed WM stays empty until
           the first working memory version exists.

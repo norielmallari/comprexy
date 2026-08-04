@@ -226,10 +226,10 @@ describe('Dashboard page metric composition', () => {
       screen.getByRole('region', { name: 'Average Compression' }),
     );
     expect(bottomLeft).toContainElement(
-      screen.getByRole('region', { name: 'Baseline Tokens' }),
+      screen.getByRole('region', { name: 'Baseline (combined)' }),
     );
     expect(bottomLeft).toContainElement(
-      screen.getByRole('region', { name: 'Actual Tokens' }),
+      screen.getByRole('region', { name: 'Actual (combined)' }),
     );
     expect(bottomRight).toContainElement(
       screen.getByRole('region', { name: 'Best Compression' }),
@@ -242,6 +242,19 @@ describe('Dashboard page metric composition', () => {
     );
   });
 
+  it('places the I/O strip as a sibling after the metrics grid', () => {
+    render(<Home />);
+
+    const grid = screen.getByTestId('metrics-grid');
+    const ioStrip = screen.getByTestId('conversation-io-cards');
+    const bottomLeft = screen.getByTestId('metrics-bottom-left');
+
+    expect(ioStrip).toBeInTheDocument();
+    expect(bottomLeft).not.toContainElement(ioStrip);
+    expect(grid).not.toContainElement(ioStrip);
+    expect(grid.nextElementSibling).toBe(ioStrip);
+  });
+
   it('renders exactly one region for each honest metric', () => {
     render(<Home />);
 
@@ -249,16 +262,26 @@ describe('Dashboard page metric composition', () => {
       'Tokens Saved',
       'Weighted Compression',
       'Average Compression',
-      'Baseline Tokens',
-      'Actual Tokens',
+      'Baseline (combined)',
+      'Actual (combined)',
       'Best Compression',
       'Overhead',
       'Working Memory',
+      'Raw input tokens',
+      'Input tokens',
+      'Output tokens',
     ];
 
     for (const name of expectedRegions) {
       expect(screen.getAllByRole('region', { name })).toHaveLength(1);
     }
+
+    expect(
+      screen.queryByRole('region', { name: 'Baseline Tokens' }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole('region', { name: 'Actual Tokens' }),
+    ).not.toBeInTheDocument();
   });
 
   it('uses the Best Compression value size for every non-hero metric', () => {
@@ -267,15 +290,18 @@ describe('Dashboard page metric composition', () => {
     const standardMetrics = [
       'Weighted Compression',
       'Average Compression',
-      'Baseline Tokens',
-      'Actual Tokens',
+      'Baseline (combined)',
+      'Actual (combined)',
       'Best Compression',
       'Overhead',
+      'Raw input tokens',
+      'Input tokens',
+      'Output tokens',
     ];
 
     for (const name of standardMetrics) {
       expect(
-        screen.getByRole('region', { name }).querySelector('.text-4xl'),
+        screen.getByRole('region', { name }).querySelector('.text-3xl'),
       ).toBeInTheDocument();
     }
 
@@ -315,10 +341,10 @@ describe('Dashboard page metric composition', () => {
       screen.getByRole('region', { name: 'Average Compression' }),
     ).toHaveTextContent('39.7');
     expect(
-      screen.getByRole('region', { name: 'Baseline Tokens' }),
+      screen.getByRole('region', { name: 'Baseline (combined)' }),
     ).toHaveTextContent('12,600');
     expect(
-      screen.getByRole('region', { name: 'Actual Tokens' }),
+      screen.getByRole('region', { name: 'Actual (combined)' }),
     ).toHaveTextContent('8,600');
     expect(
       screen.getByRole('region', { name: 'Best Compression' }),
@@ -329,5 +355,14 @@ describe('Dashboard page metric composition', () => {
     expect(
       screen.getByRole('region', { name: 'Working Memory' }),
     ).toHaveTextContent('v1');
+    expect(
+      screen.getByRole('region', { name: 'Raw input tokens' }),
+    ).toHaveTextContent('12,000');
+    expect(
+      screen.getByRole('region', { name: 'Input tokens' }),
+    ).toHaveTextContent('8,000');
+    expect(
+      screen.getByRole('region', { name: 'Output tokens' }),
+    ).toHaveTextContent('600');
   });
 });

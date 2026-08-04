@@ -19,12 +19,13 @@ describe('BaselineTokensCard', () => {
     expect(screen.getByText('—')).toBeInTheDocument();
   });
 
-  it('exposes a named Baseline Tokens region', () => {
+  it('exposes a named Baseline (combined) region', () => {
     render(<BaselineTokensCard totalBaselineTokensEstimated={1000} />);
     expect(
-      screen.getByRole('region', { name: 'Baseline Tokens' }),
+      screen.getByRole('region', { name: 'Baseline (combined)' }),
     ).toBeInTheDocument();
   });
+
 
   it('formats zero baseline tokens', () => {
     render(<BaselineTokensCard totalBaselineTokensEstimated={0} />);

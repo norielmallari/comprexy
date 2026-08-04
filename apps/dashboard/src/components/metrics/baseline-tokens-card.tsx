@@ -1,5 +1,5 @@
 /**
- * Baseline Tokens card — estimated tokens without compression.
+ * Baseline (combined) card — estimated uncompressed input + output (not input-only).
  */
 
 import { formatNumber } from "@/lib/utils";
@@ -15,7 +15,7 @@ export function BaselineTokensCard({
 }: BaselineTokensCardProps) {
   return (
     <MetricCard
-      title="Baseline Tokens"
+      title="Baseline (combined)"
       value={
         totalBaselineTokensEstimated !== null
           ? formatNumber(totalBaselineTokensEstimated)

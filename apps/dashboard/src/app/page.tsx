@@ -12,6 +12,7 @@ import {
   AverageCompressionCard,
   BaselineTokensCard,
   BestCompressionCard,
+  ConversationIoCards,
   HeroCard,
   OverheadCard,
   WeightedCompressionCard,
@@ -41,7 +42,7 @@ function DashboardContent() {
     <DashboardShell>
       {!conversationId && !isRestoringConversation ? (
         <div
-          className="flex min-h-[240px] flex-col items-center justify-center rounded-lg border border-dashed border-border bg-card/50 px-6 py-12 text-center"
+          className="flex min-h-[240px] flex-1 flex-col items-center justify-center rounded-lg border border-dashed border-border bg-card/50 px-6 py-12 text-center"
           data-testid="metrics-empty-state"
         >
           <p className="text-lg font-medium text-foreground">No conversation selected</p>
@@ -53,60 +54,68 @@ function DashboardContent() {
       ) : isRestoringConversation || isLoading ? (
         <DashboardSkeleton />
       ) : (
-        <div className="space-y-3">
-          {/* Hero + Metric Cards Grid */}
-          {metrics && (
-            <div
-              className="grid w-full grid-cols-1 gap-3 lg:grid-cols-2"
-              data-testid="metrics-grid"
-            >
-              <div data-testid="metrics-top-left">
-                <HeroCard tokensSaved={metrics.totalNetTokensSaved} />
-              </div>
+        <div className="flex min-h-0 flex-1 flex-col gap-2">
+          <div className="shrink-0 space-y-2">
+            {/* Hero + Metric Cards Grid */}
+            {metrics && (
               <div
-                className="grid grid-cols-1 gap-3 sm:grid-cols-2"
-                data-testid="metrics-top-right"
+                className="grid w-full grid-cols-1 gap-2 lg:grid-cols-2"
+                data-testid="metrics-grid"
               >
-                <WeightedCompressionCard
-                  weightedTokenSavingsRatio={metrics.averageTokenSavingsRatio}
-                />
-                <AverageCompressionCard
-                  averageTokenSavingsRatio={averageCompressionRatio}
-                />
+                <div data-testid="metrics-top-left">
+                  <HeroCard tokensSaved={metrics.totalNetTokensSaved} />
+                </div>
+                <div
+                  className="grid grid-cols-1 gap-2 sm:grid-cols-2"
+                  data-testid="metrics-top-right"
+                >
+                  <WeightedCompressionCard
+                    weightedTokenSavingsRatio={metrics.averageTokenSavingsRatio}
+                  />
+                  <AverageCompressionCard
+                    averageTokenSavingsRatio={averageCompressionRatio}
+                  />
+                </div>
+                <div
+                  className="grid grid-cols-1 gap-2 sm:grid-cols-2"
+                  data-testid="metrics-bottom-left"
+                >
+                  <BaselineTokensCard
+                    totalBaselineTokensEstimated={metrics.totalBaselineTokensEstimated}
+                  />
+                  <ActualTokensCard
+                    totalActualTokensEstimated={metrics.totalActualTokensEstimated}
+                  />
+                </div>
+                <div
+                  className="grid grid-cols-1 gap-2 sm:grid-cols-3"
+                  data-testid="metrics-bottom-right"
+                >
+                  <BestCompressionCard bestCompressionRatio={bestCompressionRatio} />
+                  <OverheadCard
+                    totalCompressionOverheadTokens={metrics.totalCompressionOverheadTokens}
+                    totalBaselineTokensEstimated={metrics.totalBaselineTokensEstimated}
+                  />
+                  <WorkingMemoryCard
+                    maxWorkingMemoryVersion={maxWorkingMemoryVersion}
+                  />
+                </div>
               </div>
-              <div
-                className="grid grid-cols-1 gap-3 sm:grid-cols-2"
-                data-testid="metrics-bottom-left"
-              >
-                <BaselineTokensCard
-                  totalBaselineTokensEstimated={metrics.totalBaselineTokensEstimated}
-                />
-                <ActualTokensCard
-                  totalActualTokensEstimated={metrics.totalActualTokensEstimated}
-                />
-              </div>
-              <div
-                className="grid grid-cols-1 gap-3 sm:grid-cols-3"
-                data-testid="metrics-bottom-right"
-              >
-                <BestCompressionCard bestCompressionRatio={bestCompressionRatio} />
-                <OverheadCard
-                  totalCompressionOverheadTokens={metrics.totalCompressionOverheadTokens}
-                  totalBaselineTokensEstimated={metrics.totalBaselineTokensEstimated}
-                />
-                <WorkingMemoryCard
-                  maxWorkingMemoryVersion={maxWorkingMemoryVersion}
-                />
-              </div>
-            </div>
-          )}
+            )}
 
-          {/* Chart Section */}
-          {turns && turns.length > 0 && (
-            <div className="space-y-3">
-              <BarChart
-                data={transformTurnsToChartData(turns)}
+            {metrics && (
+              <ConversationIoCards
+                totalCompressedPromptTokens={metrics.totalCompressedPromptTokens}
+                totalCompletionTokens={metrics.totalCompletionTokens}
+                totalRawInputTokensEstimated={metrics.totalRawInputTokensEstimated}
               />
+            )}
+          </div>
+
+          {/* Chart grows into leftover viewport height */}
+          {turns && turns.length > 0 && (
+            <div className="min-h-0 flex-1">
+              <BarChart fill data={transformTurnsToChartData(turns)} />
             </div>
           )}
         </div>

@@ -14,7 +14,7 @@ test.describe('dashboard metric cards', () => {
     await page.goto(`/?conv=${MOCK_CONVERSATION_ID}`);
   });
 
-  test('renders eight named metric regions with fixture values', async ({
+  test('renders eleven named metric regions with fixture values', async ({
     page,
   }) => {
     const bestRatio = Math.max(
@@ -64,17 +64,17 @@ test.describe('dashboard metric cards', () => {
     ).toContainText((averageRatio * 100).toFixed(1));
 
     await expect(
-      page.getByRole('region', { name: 'Baseline Tokens' }),
+      page.getByRole('region', { name: 'Baseline (combined)' }),
     ).toBeVisible();
     await expect(
-      page.getByRole('region', { name: 'Baseline Tokens' }),
+      page.getByRole('region', { name: 'Baseline (combined)' }),
     ).toContainText('12,600');
 
     await expect(
-      page.getByRole('region', { name: 'Actual Tokens' }),
+      page.getByRole('region', { name: 'Actual (combined)' }),
     ).toBeVisible();
     await expect(
-      page.getByRole('region', { name: 'Actual Tokens' }),
+      page.getByRole('region', { name: 'Actual (combined)' }),
     ).toContainText('8,600');
 
     await expect(
@@ -96,6 +96,34 @@ test.describe('dashboard metric cards', () => {
       page.getByRole('region', { name: 'Working Memory' }),
     ).toContainText(`v${maxWm}`);
 
+    await expect(
+      page.getByRole('region', { name: 'Raw input tokens', exact: true }),
+    ).toBeVisible();
+    await expect(
+      page.getByRole('region', { name: 'Raw input tokens', exact: true }),
+    ).toContainText('12,000');
+
+    // exact: true — "Input tokens" is a substring of "Raw input tokens"
+    await expect(
+      page.getByRole('region', { name: 'Input tokens', exact: true }),
+    ).toBeVisible();
+    await expect(
+      page.getByRole('region', { name: 'Input tokens', exact: true }),
+    ).toContainText('8,000');
+
+    await expect(
+      page.getByRole('region', { name: 'Output tokens', exact: true }),
+    ).toBeVisible();
+    await expect(
+      page.getByRole('region', { name: 'Output tokens', exact: true }),
+    ).toContainText('600');
+
+    await expect(
+      page.getByRole('region', { name: 'Baseline Tokens' }),
+    ).toHaveCount(0);
+    await expect(
+      page.getByRole('region', { name: 'Actual Tokens' }),
+    ).toHaveCount(0);
     await expect(
       page.getByRole('region', { name: 'Compression Ratios' }),
     ).toHaveCount(0);
@@ -135,5 +163,14 @@ test.describe('dashboard metric cards', () => {
     expect(bottomLeft!.x).toBeLessThan(bottomRight!.x);
     expect(bottomLeft!.y).toBeGreaterThan(topLeft!.y);
     expect(bottomRight!.y).toBeGreaterThan(topRight!.y);
+  });
+
+  test('places the I/O strip below the metrics grid', async ({ page }) => {
+    const grid = await page.getByTestId('metrics-grid').boundingBox();
+    const ioStrip = await page.getByTestId('conversation-io-cards').boundingBox();
+
+    expect(grid).not.toBeNull();
+    expect(ioStrip).not.toBeNull();
+    expect(ioStrip!.y).toBeGreaterThanOrEqual(grid!.y + grid!.height);
   });
 });

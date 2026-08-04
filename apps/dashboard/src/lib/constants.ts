@@ -95,8 +95,8 @@ export const CHART_Y_AXIS_MIN = 0;
 /** Maximum y-axis scale for the bar chart (auto-calculated, but capped here) */
 export const CHART_Y_AXIS_MAX_DEFAULT = 1000000;
 
-/** Chart height in pixels */
-export const CHART_HEIGHT = 300;
+/** Fallback chart height in pixels when BarChart is not in fill mode */
+export const CHART_HEIGHT = 220;
 
 /** Chart width (desktop) */
 export const CHART_WIDTH = 1200;

@@ -20,16 +20,16 @@ export function MetricCard({
 }: MetricCardProps) {
   return (
     <div
-      className="h-full rounded-lg border bg-white px-6 py-5 dark:border-slate-700 dark:bg-slate-800"
+      className="h-full rounded-lg border bg-white px-4 py-2.5 dark:border-slate-700 dark:bg-slate-800"
       role="region"
       aria-label={title}
     >
-      <p className="mb-1 text-sm font-medium text-slate-500 dark:text-slate-400">
+      <p className="mb-0.5 text-sm font-medium text-slate-500 dark:text-slate-400">
         {title}
       </p>
       {variant === "compact" ? (
-        <p className="flex items-baseline gap-2">
-          <span className="text-2xl font-semibold text-slate-900 dark:text-slate-100">
+        <p className="flex items-baseline gap-1.5">
+          <span className="text-2xl font-semibold leading-tight text-slate-900 dark:text-slate-100">
             {value}
           </span>
           <span className="text-sm text-slate-500 dark:text-slate-400">
@@ -37,8 +37,8 @@ export function MetricCard({
           </span>
         </p>
       ) : (
-        <p className="flex items-baseline gap-2">
-          <span className="text-4xl font-semibold text-slate-900 dark:text-slate-100">
+        <p className="flex items-baseline gap-1.5">
+          <span className="text-3xl font-semibold leading-tight text-slate-900 dark:text-slate-100">
             {value}
           </span>
           <span className="text-base text-slate-500 dark:text-slate-400">

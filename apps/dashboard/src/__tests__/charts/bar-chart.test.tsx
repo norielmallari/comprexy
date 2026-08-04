@@ -2,7 +2,7 @@ import { render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 
 import { BarChart } from '@/components/charts/bar-chart';
-import { CHART_Y_AXIS_MIN } from '@/lib/constants';
+import { CHART_HEIGHT, CHART_Y_AXIS_MIN } from '@/lib/constants';
 import type { ChartDataPoint } from '@/types/chart';
 
 const makePoint = (partial: Partial<ChartDataPoint> = {}): ChartDataPoint => ({
@@ -66,8 +66,10 @@ vi.mock('recharts', () => ({
     />
   ),
   CartesianGrid: () => <div data-testid="recharts-cartesian-grid" />,
-  ResponsiveContainer: ({ children }: any) => (
-    <div data-testid="responsive-container">{children}</div>
+  ResponsiveContainer: ({ children, height }: any) => (
+    <div data-testid="responsive-container" data-height={String(height)}>
+      {children}
+    </div>
   ),
   Tooltip: ({ content }: any) => (content ? <div data-testid="recharts-tooltip">{content}</div> : null),
 }));
@@ -208,6 +210,24 @@ describe('BarChart', () => {
     render(<BarChart data={mockData} />);
 
     expect(screen.getByTestId('responsive-container')).toBeInTheDocument();
+  });
+
+  it('uses fixed height by default', () => {
+    render(<BarChart data={mockData} />);
+
+    expect(screen.getByTestId('responsive-container')).toHaveAttribute(
+      'data-height',
+      String(CHART_HEIGHT),
+    );
+  });
+
+  it('fills parent height when fill is set', () => {
+    render(<BarChart fill data={mockData} />);
+
+    expect(screen.getByTestId('responsive-container')).toHaveAttribute(
+      'data-height',
+      '100%',
+    );
   });
 
   it('renders chart title as a heading', () => {

@@ -40,7 +40,7 @@ describe('DashboardShell', () => {
     const main = container.querySelector('main');
     expect(main).toBeInTheDocument();
     expect(main?.classList.contains('overflow-auto')).toBe(true);
-    expect(main?.classList.contains('p-4')).toBe(true);
+    expect(main?.classList.contains('p-3')).toBe(true);
   });
 
   it('wraps content in max-width container', () => {
@@ -81,37 +81,31 @@ describe('DashboardSkeleton', () => {
 
   it('renders hero skeleton', () => {
     const { container } = render(<DashboardSkeleton />);
-    const heroSkeleton = container.querySelector('.h-32.w-full');
+    const heroSkeleton = container.querySelector('.h-20.w-full');
     expect(heroSkeleton).toBeInTheDocument();
   });
 
   it('renders metric cards skeleton grid', () => {
     const { container } = render(<DashboardSkeleton />);
-    const grid = container.querySelector('.grid-cols-1.gap-4');
+    const grid = container.querySelector('.grid-cols-1.gap-2');
     expect(grid).toBeInTheDocument();
   });
 
   it('renders four metric card skeletons', () => {
     const { container } = render(<DashboardSkeleton />);
-    const metricCards = container.querySelectorAll('.h-24');
+    const metricCards = container.querySelectorAll('.h-16');
     expect(metricCards.length).toBe(4);
   });
 
-  it('renders charts skeleton grid', () => {
+  it('renders a fill chart skeleton', () => {
     const { container } = render(<DashboardSkeleton />);
-    const chartsGrid = container.querySelector('.lg\\:grid-cols-2');
-    expect(chartsGrid).toBeInTheDocument();
+    const chartSkeleton = container.querySelector('.flex-1');
+    expect(chartSkeleton).toBeInTheDocument();
   });
 
-  it('renders two chart skeletons', () => {
+  it('uses a flex column layout that can fill leftover height', () => {
     const { container } = render(<DashboardSkeleton />);
-    const chartSkeletons = container.querySelectorAll('.h-80');
-    expect(chartSkeletons.length).toBe(2);
-  });
-
-  it('has space-y-6 layout spacing', () => {
-    const { container } = render(<DashboardSkeleton />);
-    const root = container.querySelector('.space-y-6');
+    const root = container.querySelector('.flex.flex-1.flex-col');
     expect(root).toBeInTheDocument();
   });
 });

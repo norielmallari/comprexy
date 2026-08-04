@@ -17,13 +17,16 @@ interface DashboardShellProps {
  * Main dashboard layout shell.
  *
  * Provides the TopBar and a scrollable content area with consistent padding.
+ * The content wrapper is a flex column so pages can grow a chart into leftover height.
  */
 export function DashboardShell({ children }: DashboardShellProps) {
   return (
     <div className="flex h-screen w-full flex-col bg-background">
       <TopBar />
-      <main className="flex-1 overflow-auto p-4">
-        <div className="mx-auto max-w-[1920px]">{children}</div>
+      <main className="flex min-h-0 flex-1 flex-col overflow-auto p-3">
+        <div className="mx-auto flex min-h-0 w-full max-w-[1920px] flex-1 flex-col">
+          {children}
+        </div>
       </main>
     </div>
   );
@@ -34,23 +37,15 @@ export function DashboardShell({ children }: DashboardShellProps) {
  */
 export function DashboardSkeleton() {
   return (
-    <div className="space-y-6">
-      {/* Hero skeleton */}
-      <Skeleton variant="rectangular" className="h-32 w-full" />
-
-      {/* Metric cards skeleton */}
-      <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-4">
-        <Skeleton variant="rectangular" className="h-24" />
-        <Skeleton variant="rectangular" className="h-24" />
-        <Skeleton variant="rectangular" className="h-24" />
-        <Skeleton variant="rectangular" className="h-24" />
+    <div className="flex min-h-0 flex-1 flex-col gap-4">
+      <Skeleton variant="rectangular" className="h-20 w-full shrink-0" />
+      <div className="grid shrink-0 grid-cols-1 gap-2 md:grid-cols-2 lg:grid-cols-4">
+        <Skeleton variant="rectangular" className="h-16" />
+        <Skeleton variant="rectangular" className="h-16" />
+        <Skeleton variant="rectangular" className="h-16" />
+        <Skeleton variant="rectangular" className="h-16" />
       </div>
-
-      {/* Charts skeleton */}
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-        <Skeleton variant="rectangular" className="h-80" />
-        <Skeleton variant="rectangular" className="h-80" />
-      </div>
+      <Skeleton variant="rectangular" className="min-h-0 w-full flex-1" />
     </div>
   );
 }

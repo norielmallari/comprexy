@@ -1,5 +1,5 @@
 /**
- * Actual Tokens card — total tokens consumed after compression.
+ * Actual (combined) card — compressed input + output + overhead (absolute).
  */
 
 import { formatNumber } from "@/lib/utils";
@@ -15,7 +15,7 @@ export function ActualTokensCard({
 }: ActualTokensCardProps) {
   return (
     <MetricCard
-      title="Actual Tokens"
+      title="Actual (combined)"
       value={
         totalActualTokensEstimated !== null
           ? formatNumber(totalActualTokensEstimated)
