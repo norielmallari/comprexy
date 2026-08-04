@@ -14,8 +14,11 @@ Invoke one with the delegation tool your client exposes — `task` in Kilo Code,
 | An approved `plan.md` with `track: backend` | `backend-implementation-orchestrator` |
 | An approved `plan.md` with `track: ui` | `ui-implementation-orchestrator` |
 | An approved `plan.md` with `track: mixed` | backend orchestrator first, then the UI orchestrator |
+| Benchmark / harness run (one script at a time) | `bench-runner` |
 
 Orchestrators fan out to their own specialists (`planner`, `plan-reviewer`, `backend-implementer`, `backend-unit-tester`, `backend-code-reviewer`, `ui-implementer`, `ui-unit-tester`, `ui-reviewer`, `ui-simulator`). Do not drive those specialists yourself when an orchestrator owns the stage. Roster and pipeline detail: [`.cursor/README.md`](.cursor/README.md).
+
+`bench-runner` is ops-only (outside the product pipeline). It continues the script queue on per-script errors and does not auto-publish evidence.
 
 For read-only exploration, use the built-in `explore` agent. For open-ended research, use `generalPurpose` in Cursor or `general` in Kilo.
 

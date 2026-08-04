@@ -76,6 +76,9 @@ Agent prompts live under [`.cursor/agents/`](agents/).
 | [`ui-unit-tester`](agents/ui-unit-tester.md) | Vitest/RTL **and** mocked Playwright fixtures/smokes from handoff; keeps `npx tsc --noEmit` clean |
 | [`ui-reviewer`](agents/ui-reviewer.md) | Adversarial UI review (typecheck, a11y, locators, test authorship); quote-verified evidence (E1–E7); read-only |
 | [`ui-simulator`](agents/ui-simulator.md) | Runs committed Playwright under existing mocks; no new fixture invention |
+| [`bench-runner`](agents/bench-runner.md) | Ops: one-script-at-a-time `./comprexy.sh bench` queue; continues on error; no auto-publish |
+
+Ops specialist (not part of the plan → implement → review pipeline): **bench-runner**, with CLI reference in [`.cursor/skills/bench-harness/`](skills/bench-harness/SKILL.md).
 
 Each canonical agent file is the source of truth for gates, chat brevity, and artifact paths. Reviewers (`plan-reviewer`, `backend-code-reviewer`, `ui-reviewer`) share evidence gates **E1–E7**: quote-before-severity, plan/requirement-aware severity, call-graph-correct remediations, diff inventory honesty, severity caps, retracted-appendix discipline, and blast-radius on Critical/High.
 
@@ -95,6 +98,7 @@ Runtime artifacts live under `.cursor/agent-state/<run-folder>/` (gitignored exc
 | `unit-test-result.md` | backend-unit-tester / ui-unit-tester |
 | `code-review.md` | backend-code-reviewer or ui-reviewer |
 | `ui-sim-result.md` | ui-simulator (UI track; run-only) |
+| `bench-queue.md` / `bench-run-*.md` / `bench-ledger.md` | bench-runner (ops; not a product track) |
 
 Specialists write the full artifact to disk and keep chat short (paths + summary). Orchestrators and the next specialist **read the files**.
 
@@ -129,5 +133,6 @@ These runs kept actual prompt tokens under the ~64k local comfort ceiling after 
 3. For a new requirement: invoke **plan-orchestrator** (or ask the parent agent to).
 4. After plan approval: invoke **backend-implementation-orchestrator** (`track: backend`) or **ui-implementation-orchestrator** (`track: ui`) with the same `.cursor/agent-state/<run-folder>/`. For `mixed`, finish backend then start the UI orchestrator.
 5. On third-try failure at either gate: stop for human review — do not invent a fourth automatic loop.
+6. To run the compression benchmark harness one script at a time: invoke **bench-runner** with a `.cursor/agent-state/<run-folder>/` (it continues the queue on per-script errors; publish stays human-gated).
 
 Optional durable copies of plans under `internal/plans/` are human-requested only; the live bus is always `.cursor/agent-state/`.

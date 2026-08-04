@@ -26,11 +26,16 @@ track: backend | ui | mixed
   unit-test-result.md     # backend-unit-tester / ui-unit-tester success (or failure payload)
   code-review.md          # backend-code-reviewer or ui-reviewer (overwrite each try)
   ui-sim-result.md        # ui-simulator (UI track only; run committed Playwright — no new mock authorship)
+
+# bench-runner ops (not a product track) — e.g. bench-20260805/
+  bench-queue.md          # ordered scripts + done/failed/pending
+  bench-run-<script>.md   # per-script run/report outcome
+  bench-ledger.md         # rolling paired/survival/excluded + publish gate
 ```
 
 Optional: `ui-handoff.md` if a run needs a UI-specific handoff template distinct from `handoff.md` (default remains `handoff.md`).
 
-`<run-folder>` is a short kebab slug from the requirement/goal (e.g. `address-duplicate-logic`). Create the folder before try 1.
+`<run-folder>` is a short kebab slug from the requirement/goal (e.g. `address-duplicate-logic`, `bench-20260805`). Create the folder before try 1.
 
 ## Rules
 
