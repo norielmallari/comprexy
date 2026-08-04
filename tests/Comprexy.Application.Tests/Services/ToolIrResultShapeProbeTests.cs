@@ -269,7 +269,13 @@ public class ToolIrResultShapeProbeTests
         Assert.False(store.TryGet(a, "Read", out _));
         Assert.True(store.TryGet(c, "Read", out _));
 
-        var off = new ToolIrResultShapeStore(Options.Create(new ToolSchemaOptions()));
+        var off = new ToolIrResultShapeStore(Options.Create(new ToolSchemaOptions
+        {
+            ResultShape = new ResultShapeOptions
+            {
+                Learner = new ShapeLearnerOptions { Enabled = false }
+            }
+        }));
         Assert.False(off.ShouldSample(Guid.NewGuid(), "Read"));
     }
 }

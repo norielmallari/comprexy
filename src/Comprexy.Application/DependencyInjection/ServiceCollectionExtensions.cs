@@ -110,7 +110,7 @@ public static class ServiceCollectionExtensions
             .GetSection(ToolSchemaOptions.SectionName)
             .GetSection("ResultShape")
             .GetSection("Learner")
-            .GetValue<bool>("Enabled");
+            .GetValue("Enabled", defaultValue: true);
         if (learnerEnabled)
         {
             services.AddHostedService<ToolIrShapeLearnerService>();

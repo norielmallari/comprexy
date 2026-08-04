@@ -117,7 +117,7 @@ Virtual Tools (Tool IR) is a primary Comprexy capability for OpenAI-compatible `
 | `ResultShape:MinSamplesBeforeProposal` | `2` | Minimum samples before a learn job may enqueue / promote. |
 | `ResultShape:MaxProposalAttemptsPerKey` | `2` | Max promote attempts per (conversation, client tool). |
 | `ResultShape:LearnQueueCapacity` | `64` | Bounded learn-queue capacity (`DropWrite` on overflow). |
-| `ResultShape:Learner:Enabled` | `false` | Hosted idle learner + sampling/enqueue. Default off; never blocks a chat turn. |
+| `ResultShape:Learner:Enabled` | `true` | Hosted idle learner + sampling/enqueue. Default on; never blocks a chat turn. Set `false` to disable. |
 | `ResultShape:Learner:IdleDebounce` | `00:00:05` | Debounce after upstream busy reaches zero before a learn job runs. |
 | `ResultShape:Learner:MaxPromotionsPerConversation` | `8` | Max promotions retained per conversation. |
 

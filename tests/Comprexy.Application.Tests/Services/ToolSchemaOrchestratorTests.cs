@@ -1805,6 +1805,106 @@ public class ToolSchemaOrchestratorTests
         Assert.False(_fileCache.TryGet(conversationId, "docs/a.md", out _));
     }
 
+    [Fact]
+    public async Task ValidateInbound_KiloWroteFileSuccessfully_InvalidatesFileCache()
+    {
+        var orchestrator = CreateOrchestrator();
+        var conversationId = Guid.NewGuid();
+        _fileCache.Set(conversationId, "docs/a.md", "stale body", bodyComplete: true);
+        Assert.True(_fileCache.TryGet(conversationId, "docs/a.md", out _));
+
+        const string writeCallId = "call_write_1";
+        var assistantWire = JsonSerializer.Serialize(new
+        {
+            role = "assistant",
+            content = (string?)null,
+            tool_calls = new[]
+            {
+                new
+                {
+                    id = writeCallId,
+                    type = "function",
+                    function = new
+                    {
+                        name = "write",
+                        arguments = JsonSerializer.Serialize(new
+                        {
+                            filePath = "docs/a.md",
+                            content = "fresh body"
+                        })
+                    }
+                }
+            }
+        });
+        using var assistantDoc = JsonDocument.Parse(assistantWire);
+        var assistant = new ChatMessage(
+            MessageRole.Assistant,
+            string.Empty,
+            assistantDoc.RootElement.Clone());
+        var tool = ToolCallWireHelper.BuildToolResultMessage(writeCallId, "Wrote file successfully.");
+
+        await orchestrator.ValidateAndRewriteInboundToolResultsAsync(
+            conversationId,
+            [assistant, tool],
+            [],
+            [],
+            CancellationToken.None);
+
+        Assert.False(_fileCache.TryGet(conversationId, "docs/a.md", out _));
+    }
+
+    [Fact]
+    public async Task ValidateInbound_FailedEdit_DoesNotInvalidateFileCache()
+    {
+        var orchestrator = CreateOrchestrator();
+        var conversationId = Guid.NewGuid();
+        _fileCache.Set(conversationId, "docs/a.md", "cached body", bodyComplete: true);
+        Assert.True(_fileCache.TryGet(conversationId, "docs/a.md", out _));
+
+        const string editCallId = "call_edit_fail_1";
+        var assistantWire = JsonSerializer.Serialize(new
+        {
+            role = "assistant",
+            content = (string?)null,
+            tool_calls = new[]
+            {
+                new
+                {
+                    id = editCallId,
+                    type = "function",
+                    function = new
+                    {
+                        name = "edit",
+                        arguments = JsonSerializer.Serialize(new
+                        {
+                            filePath = "docs/a.md",
+                            oldString = "missing",
+                            newString = "fresh"
+                        })
+                    }
+                }
+            }
+        });
+        using var assistantDoc = JsonDocument.Parse(assistantWire);
+        var assistant = new ChatMessage(
+            MessageRole.Assistant,
+            string.Empty,
+            assistantDoc.RootElement.Clone());
+        var tool = ToolCallWireHelper.BuildToolResultMessage(
+            editCallId,
+            "Could not find oldString in the file. It must match exactly, including whitespace, indentation, and line endings.");
+
+        await orchestrator.ValidateAndRewriteInboundToolResultsAsync(
+            conversationId,
+            [assistant, tool],
+            [],
+            [],
+            CancellationToken.None);
+
+        Assert.True(_fileCache.TryGet(conversationId, "docs/a.md", out var kept));
+        Assert.Equal("cached body", kept!.Body);
+    }
+
     private async Task<IReadOnlyList<ChatMessage>> ValidateInboundAndCompleteAsync(
         ToolSchemaOrchestrator orchestrator,
         Guid conversationId,

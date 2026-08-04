@@ -300,7 +300,7 @@ Client tools[] → catalog hash + mapper → model IR tools
 | Shell family | Bound `comprexy_shell` replaces native Shell/bash backends |
 | Observations | Distilled IR discloses requested vs returned spans, `body_complete` / `complete` / `next_start_line`, and related search/dir honesty fields; caps are also described on Virtual tool schemas |
 | Cache | File-body cache tracks `BodyComplete` / `TotalLineCount`; incomplete entries rematerialize (never local-satisfy). Local-satisfy IR turns are still persisted |
-| Shapes | First-result shape probes always run; optional idle learner (`ToolSchema:ResultShape:Learner`, default off) may promote closed `result_shapes` into MappingJson |
+| Shapes | First-result shape probes always run; idle learner (`ToolSchema:ResultShape:Learner`, default on) may promote closed `result_shapes` into MappingJson |
 | Denylist | `ExcludeFromModelTools` omits listed client tools from the model catalog |
 | Meta | `comprexy_get_current_conversation_id` runs proxy-locally |
 | Failure | Mapper exhaustion drops only the bindings that failed validation and keeps the rest; if nothing usable survives, `ToolIrDisabled` is set for that catalog hash and client tools are forwarded unchanged. Compression/budgets stay on either way |
@@ -316,7 +316,7 @@ Settings load from `appsettings.json`, environment overlays, and optional gitign
 | `Provider` | Upstream OpenAI-compatible chat endpoint |
 | `Compression` | Optional separate Compression endpoint for ToolSchema mapper; Inline wrap-up prompts |
 | `ContextPolicy` | Soft token limit, Inline cooldown / retain tip (mid-chain prefix when eligible) |
-| `ToolSchema` | Virtual Tools (`Mode: Virtual` default), file/shell IR, `ExcludeFromModelTools`, observation/cache TTLs, `FirstRead*`, optional `ResultShape` learner |
+| `ToolSchema` | Virtual Tools (`Mode: Virtual` default), file/shell IR, `ExcludeFromModelTools`, observation/cache TTLs, `FirstRead*`, `ResultShape` learner (default on) |
 | `Metrics` | Read-side `PromptTokenBasis` (`ProviderActual` default); SoftBudget persistence stays estimate-based |
 | `McpTelemetry` | Control-api MCP row limits and query timeout |
 | `Auth` | Optional API key gate on `/v1/*` and control-api `/mcp` |

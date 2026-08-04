@@ -4,7 +4,8 @@ namespace Comprexy.Application.Services;
 
 /// <summary>
 /// Shared heuristics for client passthrough file-mutation tools (StrReplace / Write / …).
-/// Used by Virtual Tools cache invalidation, live failed-edit dedupe, and Inline fold pin.
+/// Used by Virtual Tools cache invalidation (invalidate-unless-failed), live failed-edit dedupe,
+/// and Inline fold pin.
 /// </summary>
 public static class FileMutationClassifier
 {
@@ -45,6 +46,7 @@ public static class FileMutationClassifier
 
         return content.Contains("Edit applied successfully", StringComparison.OrdinalIgnoreCase) ||
                content.Contains("Wrote contents", StringComparison.OrdinalIgnoreCase) ||
+               content.Contains("Wrote file successfully", StringComparison.OrdinalIgnoreCase) ||
                content.Contains("Updated file", StringComparison.OrdinalIgnoreCase) ||
                content.Contains("has been written", StringComparison.OrdinalIgnoreCase) ||
                content.Contains("has been updated", StringComparison.OrdinalIgnoreCase) ||
@@ -63,6 +65,14 @@ public static class FileMutationClassifier
                content.Contains("Error:", StringComparison.OrdinalIgnoreCase) ||
                content.Contains("failed", StringComparison.OrdinalIgnoreCase);
     }
+
+    /// <summary>
+    /// File-body cache bust for passthrough mutates. Announced tool name + path are already
+    /// 1:1; skip only when the native result clearly indicates the disk was not changed.
+    /// Ambiguous vendor success text still invalidates (stale local-satisfy is worse).
+    /// </summary>
+    public static bool ShouldInvalidateFileCache(string? toolResultContent) =>
+        !LooksLikeFailedFileMutation(toolResultContent);
 
     public static string? TryExtractPathFromToolArguments(string? argumentsJson)
     {

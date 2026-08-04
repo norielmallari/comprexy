@@ -129,8 +129,8 @@ public class ResultShapeOptions
 
 public class ShapeLearnerOptions
 {
-    /// <summary>When false (default), no sampling, enqueue, or hosted worker.</summary>
-    public bool Enabled { get; set; }
+    /// <summary>When false, no sampling, enqueue, or hosted worker. Default on.</summary>
+    public bool Enabled { get; set; } = true;
 
     /// <summary>Debounce after the upstream busy counter reaches zero before a learn job runs.</summary>
     public TimeSpan IdleDebounce { get; set; } = TimeSpan.FromSeconds(5);

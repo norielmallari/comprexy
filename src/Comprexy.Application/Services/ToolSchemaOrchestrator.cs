@@ -1625,9 +1625,9 @@ public class ToolSchemaOrchestrator
         string? toolResultContent,
         Dictionary<string, AnnouncedClientToolCall> announcedCalls)
     {
-        if (!FileMutationClassifier.LooksLikeSuccessfulFileMutation(toolResultContent) ||
-            !announcedCalls.TryGetValue(toolCallId, out var call) ||
-            !FileMutationClassifier.IsMutatingFileTool(call.Name))
+        if (!announcedCalls.TryGetValue(toolCallId, out var call) ||
+            !FileMutationClassifier.IsMutatingFileTool(call.Name) ||
+            !FileMutationClassifier.ShouldInvalidateFileCache(toolResultContent))
         {
             return;
         }
@@ -1642,7 +1642,7 @@ public class ToolSchemaOrchestrator
         if (removed > 0)
         {
             _logger.LogDebug(
-                "Invalidated {Count} file-cache entr(y/ies) for conversation {ConversationId} path {Path} after {Tool} success.",
+                "Invalidated {Count} file-cache entr(y/ies) for conversation {ConversationId} path {Path} after {Tool} result.",
                 removed,
                 conversationId,
                 path,
