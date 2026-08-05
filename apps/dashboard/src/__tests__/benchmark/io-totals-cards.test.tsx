@@ -59,12 +59,12 @@ describe('IoTotalsCards', () => {
     render(<IoTotalsCards showComparison deltas={deltas} />);
 
     const inputDelta = screen.getByRole('region', { name: 'Input tokens comparison' });
-    const negativeValue = inputDelta.querySelector('.text-red-600');
+    const negativeValue = inputDelta.querySelector('.text-red-700');
     expect(negativeValue).not.toBeNull();
     expect(negativeValue?.textContent).toMatch(/-2,000/);
 
     const outputDelta = screen.getByRole('region', { name: 'Output tokens comparison' });
-    const positiveValue = outputDelta.querySelector('.text-green-600');
+    const positiveValue = outputDelta.querySelector('.text-green-700');
     expect(positiveValue).not.toBeNull();
     expect(positiveValue?.textContent).toMatch(/\+1,000/);
   });

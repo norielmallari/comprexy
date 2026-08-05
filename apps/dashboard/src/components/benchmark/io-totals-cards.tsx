@@ -52,9 +52,9 @@ function DeltaBadge({
       <p
         className={`mt-2 text-lg font-semibold ${
           isNegative
-            ? 'text-red-600 dark:text-red-400'
+            ? 'text-red-700 dark:text-red-400'
             : isPositive
-              ? 'text-green-600 dark:text-green-400'
+              ? 'text-green-700 dark:text-green-400'
               : 'text-slate-900 dark:text-slate-100'
         }`}
       >

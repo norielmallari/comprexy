@@ -237,7 +237,7 @@ export function StartBenchmarkPanel({
       </label>
 
       {conflictMessage && (
-        <p className="mt-3 text-sm text-amber-600 dark:text-amber-400" role="alert">
+        <p className="mt-3 text-sm text-amber-700 dark:text-amber-400" role="alert">
           {conflictMessage}
         </p>
       )}

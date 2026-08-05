@@ -22,7 +22,7 @@ export function HeroCard({ tokensSaved }: HeroCardProps) {
         Tokens Saved
       </p>
       <p className="flex items-baseline gap-1.5">
-        <span className="font-mono text-4xl leading-tight font-semibold text-emerald-600 dark:text-emerald-400">
+        <span className="font-mono text-4xl leading-tight font-semibold text-emerald-700 dark:text-emerald-400">
           {tokensSaved !== null ? formatNumber(tokensSaved) : "\u2014"}
         </span>
       </p>

@@ -4,6 +4,7 @@
 
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
+import { WM_COLORS_DARK, WM_COLORS_LIGHT } from '@/lib/constants';
 import type { ConversationTurnMetricDto } from '@/types/api';
 import type { ChartDataPoint } from '@/types/chart';
 
@@ -195,21 +196,37 @@ export function decodeConversationId(encoded: string): string {
 }
 
 /**
+ * Relative luminance (WCAG) for a hex color (`#rgb` / `#rrggbb`).
+ */
+export function hexRelativeLuminance(hex: string): number {
+  const raw = hex.replace('#', '');
+  const full =
+    raw.length === 3 ? raw.split('').map((c) => c + c).join('') : raw;
+  const channels = [0, 2, 4].map((i) => {
+    const c = parseInt(full.slice(i, i + 2), 16) / 255;
+    return c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
+  });
+  return 0.2126 * channels[0]! + 0.7152 * channels[1]! + 0.0722 * channels[2]!;
+}
+
+/**
+ * Pick black-ish or white foreground for AA contrast on a solid badge fill.
+ */
+export function getContrastingForeground(backgroundHex: string): string {
+  return hexRelativeLuminance(backgroundHex) > 0.179 ? '#0f172a' : '#ffffff';
+}
+
+/**
  * Get the color for a working memory version.
  *
  * @param version - Working memory version number
  * @param isDark - Whether dark mode is active
  * @returns Color hex string
  */
-export function getWmColor(
-  version: number,
-  isDark: boolean,
-): string {
-  const colors = isDark
-    ? ['#2a3a52', '#3d5a80', '#4a7ab5', '#5b8fd4']
-    : ['#e0e7ef', '#a8c4e0', '#6ba3d6', '#2d6bc4'];
-
-  return colors[version] ?? colors[0];
+export function getWmColor(version: number, isDark: boolean): string {
+  const colors = isDark ? WM_COLORS_DARK : WM_COLORS_LIGHT;
+  const key = (version >= 0 && version <= 3 ? version : 0) as 0 | 1 | 2 | 3;
+  return colors[key];
 }
 
 /**

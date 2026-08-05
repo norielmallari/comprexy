@@ -11,7 +11,7 @@ vi.mock('@/lib/utils', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/lib/utils')>();
   return {
     ...actual,
-    getWmColor: vi.fn().mockReturnValue('#a8c4e0'),
+    getWmColor: vi.fn().mockReturnValue('#2563eb'),
   };
 });
 
@@ -75,7 +75,7 @@ describe('WorkingMemoryCard', () => {
   });
 
   it('renders with dark theme when theme is dark', () => {
-    vi.mocked(getWmColor).mockReturnValue('#3d5a80');
+    vi.mocked(getWmColor).mockReturnValue('#60a5fa');
     render(<WorkingMemoryCard maxWorkingMemoryVersion={1} />);
     expect(screen.getByText('v1')).toBeInTheDocument();
   });

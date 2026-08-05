@@ -3,15 +3,18 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { CompressionHealthCard } from '@/components/metrics/compression-health-card';
 
-vi.mock('@/lib/utils', () => ({
-  cn: (...args: string[]) => args.filter(Boolean).join(' '),
-  getWmColor: (v: number, _isDark: boolean) => {
-    if (v === 0) return '#10b981';
-    if (v === 1) return '#3b82f6';
-    if (v === 2) return '#f59e0b';
-    return '#ef4444';
-  },
-}));
+vi.mock('@/lib/utils', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/utils')>();
+  return {
+    ...actual,
+    getWmColor: (v: number, _isDark: boolean) => {
+      if (v === 0) return '#10b981';
+      if (v === 1) return '#3b82f6';
+      if (v === 2) return '#f59e0b';
+      return '#ef4444';
+    },
+  };
+});
 
 vi.mock('@/hooks/use-theme', () => ({
   useTheme: () => ({ theme: 'light' }),

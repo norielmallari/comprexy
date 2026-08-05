@@ -3,6 +3,9 @@
  *
  * Includes working memory version colors, overhead color, ghost bar color,
  * and other reusable values.
+ *
+ * Chart fills target WCAG 2.1 AA non-text contrast (≥3:1) against card/page
+ * backgrounds. Badge text uses {@link getContrastingForeground}.
  */
 
 // ---------------------------------------------------------------------------
@@ -10,44 +13,49 @@
 // ---------------------------------------------------------------------------
 
 /**
- * Color palette for working memory versions.
+ * Color palette for working memory versions (WCAG AA).
  *
- * Light mode:
- *   v0 = #e0e7ef (light gray-blue)
- *   v1 = #a8c4e0
- *   v2 = #6ba3d6
- *   v3 = #2d6bc4 (deep blue)
+ * Light mode (fills ≥3:1 vs white; v1+ support white label text ≥4.5:1):
+ *   v0 = #64748b
+ *   v1 = #2563eb
+ *   v2 = #1d4ed8
+ *   v3 = #1e3a8a
  *
- * Dark mode (darker tones):
- *   v0 = #2a3a52
- *   v1 = #3d5a80
- *   v2 = #4a7ab5
- *   v3 = #5b8fd4
+ * Dark mode (fills ≥3:1 vs slate-800 card; labels via contrasting foreground):
+ *   v0 = #94a3b8
+ *   v1 = #60a5fa
+ *   v2 = #93c5fd
+ *   v3 = #bfdbfe
  */
 
 export const WM_COLORS_LIGHT = {
-  0: '#e0e7ef',
-  1: '#a8c4e0',
-  2: '#6ba3d6',
-  3: '#2d6bc4',
+  0: '#64748b',
+  1: '#2563eb',
+  2: '#1d4ed8',
+  3: '#1e3a8a',
 } as const;
 
 export const WM_COLORS_DARK = {
-  0: '#2a3a52',
-  1: '#3d5a80',
-  2: '#4a7ab5',
-  3: '#5b8fd4',
+  0: '#94a3b8',
+  1: '#60a5fa',
+  2: '#93c5fd',
+  3: '#bfdbfe',
 } as const;
 
 // ---------------------------------------------------------------------------
 // Prepared Prompt Segment Colors
 // ---------------------------------------------------------------------------
 
-/** Captured system prompt — constant across a conversation */
-export const SYSTEM_SEGMENT_COLOR = '#cbd5e0';
+/** Captured system prompt — constant across a conversation (≥3:1 vs white) */
+export const SYSTEM_SEGMENT_COLOR = '#475569';
 
-/** Still-unfolded raw turns plus the model-facing tool catalog */
-export const HISTORY_SEGMENT_COLOR = '#94a3b8';
+/** Still-unfolded raw turns plus the model-facing tool catalog (≥3:1 vs white) */
+export const HISTORY_SEGMENT_COLOR = '#0f766e';
+
+/** Stacked-bar separator stroke so adjacent segments stay distinguishable (1.4.11). */
+export const CHART_SEGMENT_STROKE_LIGHT = '#ffffff';
+export const CHART_SEGMENT_STROKE_DARK = '#0f172a';
+export const CHART_SEGMENT_STROKE_WIDTH = 1;
 
 // ---------------------------------------------------------------------------
 // Ghost Bar (baseline reference drawn behind the stack)
@@ -57,10 +65,10 @@ export const HISTORY_SEGMENT_COLOR = '#94a3b8';
  * The ghost is an outlined backdrop rather than a solid bar so it stays readable behind the
  * stacked segments. It must not reuse a segment color.
  */
-export const GHOST_BAR_FILL_LIGHT = '#64748b';
-export const GHOST_BAR_FILL_DARK = '#475569';
-export const GHOST_BAR_STROKE_LIGHT = '#475569';
-export const GHOST_BAR_STROKE_DARK = '#e2e8f0';
+export const GHOST_BAR_FILL_LIGHT = '#78716c';
+export const GHOST_BAR_FILL_DARK = '#a8a29e';
+export const GHOST_BAR_STROKE_LIGHT = '#1e293b';
+export const GHOST_BAR_STROKE_DARK = '#f8fafc';
 export const GHOST_BAR_FILL_OPACITY = 0.18;
 
 /** SoftBudget chart ghost baseline — IR full prompt estimate (no WM fold). */

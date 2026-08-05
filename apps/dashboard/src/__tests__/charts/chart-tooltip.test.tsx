@@ -163,7 +163,7 @@ describe('ChartTooltip', () => {
     render(<ChartTooltip data={{ ...mockDataPoint, netTokensSaved: 500 }} active={true} />);
 
     expect(
-      screen.getByTestId('chart-tooltip').querySelectorAll('span.text-emerald-600').length,
+      screen.getByTestId('chart-tooltip').querySelectorAll('span.text-emerald-700').length,
     ).toBeGreaterThan(0);
   });
 
@@ -171,7 +171,7 @@ describe('ChartTooltip', () => {
     render(<ChartTooltip data={mockDataPoint} active={true} />);
 
     expect(
-      screen.getByTestId('chart-tooltip').querySelectorAll('span.text-red-600').length,
+      screen.getByTestId('chart-tooltip').querySelectorAll('span.text-red-700').length,
     ).toBeGreaterThan(0);
   });
 });

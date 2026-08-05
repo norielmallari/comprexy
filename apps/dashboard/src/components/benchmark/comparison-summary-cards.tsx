@@ -54,9 +54,9 @@ function ClockCard({
         <p
           className={`mt-2 text-lg font-semibold ${
             delta.delta < 0
-              ? 'text-green-600 dark:text-green-400'
+              ? 'text-green-700 dark:text-green-400'
               : delta.delta > 0
-                ? 'text-red-600 dark:text-red-400'
+                ? 'text-red-700 dark:text-red-400'
                 : ''
           }`}
         >
@@ -64,7 +64,7 @@ function ClockCard({
         </p>
       )}
       {label.includes('Wall') && !baselineMs && !compareMs && (
-        <p className="mt-1 text-xs text-amber-600 dark:text-amber-400">
+        <p className="mt-1 text-xs text-amber-700 dark:text-amber-400">
           Wall clock unavailable for ad-hoc operator conversations.
         </p>
       )}

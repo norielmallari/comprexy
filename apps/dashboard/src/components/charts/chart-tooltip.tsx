@@ -82,7 +82,7 @@ export function ChartTooltip({ data, active }: ChartTooltipProps) {
             className="font-mono font-medium text-gray-500 dark:text-gray-400"
           />
           {data.isLegacyMixedAxis && (
-            <p className="text-[11px] text-amber-700 dark:text-amber-400">
+            <p className="text-[11px] text-amber-800 dark:text-amber-400">
               Legacy mixed-axis — ghost uses NativeRaw
             </p>
           )}
@@ -91,8 +91,8 @@ export function ChartTooltip({ data, active }: ChartTooltipProps) {
             value={`${data.netTokensSaved >= 0 ? '+' : ''}${formatCompactNumber(data.netTokensSaved)}`}
             className={`font-mono font-medium ${
               data.netTokensSaved >= 0
-                ? 'text-emerald-600 dark:text-emerald-400'
-                : 'text-red-600 dark:text-red-400'
+                ? 'text-emerald-700 dark:text-emerald-400'
+                : 'text-red-700 dark:text-red-400'
             }`}
           />
           <Row
@@ -107,8 +107,8 @@ export function ChartTooltip({ data, active }: ChartTooltipProps) {
                 value={`${vt >= 0 ? '+' : ''}${formatCompactNumber(vt)}`}
                 className={`font-mono font-medium ${
                   vt >= 0
-                    ? 'text-emerald-600 dark:text-emerald-400'
-                    : 'text-red-600 dark:text-red-400'
+                    ? 'text-emerald-700 dark:text-emerald-400'
+                    : 'text-red-700 dark:text-red-400'
                 }`}
               />
               <p className="text-[11px] leading-snug text-gray-500 dark:text-gray-400">
@@ -122,12 +122,12 @@ export function ChartTooltip({ data, active }: ChartTooltipProps) {
         {(data.softBudgetExceeded || data.hardBudgetExceeded) && (
           <div className="flex gap-2">
             {data.softBudgetExceeded && (
-              <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-700 dark:bg-amber-900/30 dark:text-amber-400">
+              <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-800 dark:bg-amber-900/30 dark:text-amber-400">
                 Soft Budget
               </span>
             )}
             {data.hardBudgetExceeded && (
-              <span className="rounded-full bg-red-100 px-2 py-0.5 text-xs font-medium text-red-700 dark:bg-red-900/30 dark:text-red-400">
+              <span className="rounded-full bg-red-100 px-2 py-0.5 text-xs font-medium text-red-800 dark:bg-red-900/30 dark:text-red-400">
                 Hard Budget
               </span>
             )}

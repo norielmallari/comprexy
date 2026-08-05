@@ -28,6 +28,9 @@ import {
   WM_COLORS_DARK,
   SYSTEM_SEGMENT_COLOR,
   HISTORY_SEGMENT_COLOR,
+  CHART_SEGMENT_STROKE_LIGHT,
+  CHART_SEGMENT_STROKE_DARK,
+  CHART_SEGMENT_STROKE_WIDTH,
   GHOST_BAR_STROKE_LIGHT,
   GHOST_BAR_STROKE_DARK,
   SOFTBUDGET_GHOST_LABEL,
@@ -242,18 +245,29 @@ export function BarChart({
               })}
             />
 
-            <Bar name="System" dataKey="system" stackId="prompt" fill={SYSTEM_SEGMENT_COLOR} />
+            <Bar
+              name="System"
+              dataKey="system"
+              stackId="prompt"
+              fill={SYSTEM_SEGMENT_COLOR}
+              stroke={isDark ? CHART_SEGMENT_STROKE_DARK : CHART_SEGMENT_STROKE_LIGHT}
+              strokeWidth={CHART_SEGMENT_STROKE_WIDTH}
+            />
             <Bar
               name="History + tools"
               dataKey="history"
               stackId="prompt"
               fill={HISTORY_SEGMENT_COLOR}
+              stroke={isDark ? CHART_SEGMENT_STROKE_DARK : CHART_SEGMENT_STROKE_LIGHT}
+              strokeWidth={CHART_SEGMENT_STROKE_WIDTH}
             />
             <Bar
               name="Compressed WM"
               dataKey="workingMemory"
               stackId="prompt"
               fill={getWorkingMemoryColor(isDark)}
+              stroke={isDark ? CHART_SEGMENT_STROKE_DARK : CHART_SEGMENT_STROKE_LIGHT}
+              strokeWidth={CHART_SEGMENT_STROKE_WIDTH}
               radius={[4, 4, 0, 0]}
             />
           </RechartsBarChart>

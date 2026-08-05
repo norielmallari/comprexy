@@ -12,6 +12,7 @@ import {
   getAverageCompressionRatio,
   getBestCompressionRatio,
   getWmColor,
+  getContrastingForeground,
   softBudgetBaselineTokens,
   transformTurnsToChartData,
 } from '@/lib/utils';
@@ -287,28 +288,38 @@ describe('encodeConversationId() / decodeConversationId()', () => {
 
 describe('getWmColor()', () => {
   it('returns correct dark mode colors for versions 0-3', () => {
-    expect(getWmColor(0, true)).toBe('#2a3a52');
-    expect(getWmColor(1, true)).toBe('#3d5a80');
-    expect(getWmColor(2, true)).toBe('#4a7ab5');
-    expect(getWmColor(3, true)).toBe('#5b8fd4');
+    expect(getWmColor(0, true)).toBe('#94a3b8');
+    expect(getWmColor(1, true)).toBe('#60a5fa');
+    expect(getWmColor(2, true)).toBe('#93c5fd');
+    expect(getWmColor(3, true)).toBe('#bfdbfe');
   });
 
   it('returns correct light mode colors for versions 0-3', () => {
-    expect(getWmColor(0, false)).toBe('#e0e7ef');
-    expect(getWmColor(1, false)).toBe('#a8c4e0');
-    expect(getWmColor(2, false)).toBe('#6ba3d6');
-    expect(getWmColor(3, false)).toBe('#2d6bc4');
+    expect(getWmColor(0, false)).toBe('#64748b');
+    expect(getWmColor(1, false)).toBe('#2563eb');
+    expect(getWmColor(2, false)).toBe('#1d4ed8');
+    expect(getWmColor(3, false)).toBe('#1e3a8a');
   });
 
   it('returns fallback color for out-of-range versions', () => {
-    expect(getWmColor(4, true)).toBe('#2a3a52');
-    expect(getWmColor(10, true)).toBe('#2a3a52');
-    expect(getWmColor(4, false)).toBe('#e0e7ef');
+    expect(getWmColor(4, true)).toBe('#94a3b8');
+    expect(getWmColor(10, true)).toBe('#94a3b8');
+    expect(getWmColor(4, false)).toBe('#64748b');
   });
 
   it('returns fallback for negative versions', () => {
-    expect(getWmColor(-1, true)).toBe('#2a3a52');
-    expect(getWmColor(-1, false)).toBe('#e0e7ef');
+    expect(getWmColor(-1, true)).toBe('#94a3b8');
+    expect(getWmColor(-1, false)).toBe('#64748b');
+  });
+});
+
+describe('getContrastingForeground()', () => {
+  it('returns dark text on light fills', () => {
+    expect(getContrastingForeground('#bfdbfe')).toBe('#0f172a');
+  });
+
+  it('returns white text on dark fills', () => {
+    expect(getContrastingForeground('#1e3a8a')).toBe('#ffffff');
   });
 });
 

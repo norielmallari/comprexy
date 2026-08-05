@@ -82,7 +82,7 @@ export function RunStatusPanel({ run, isLoading }: RunStatusPanelProps) {
       )}
 
       {run.lastError && (
-        <p className="mt-2 text-sm text-red-600 dark:text-red-400" data-testid="run-last-error">
+        <p className="mt-2 text-sm text-red-700 dark:text-red-400" data-testid="run-last-error">
           {run.lastError}
         </p>
       )}

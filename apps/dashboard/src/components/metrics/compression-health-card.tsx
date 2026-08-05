@@ -4,7 +4,7 @@
  */
 
 import { Badge } from "@/components/ui/badge";
-import { getWmColor } from "@/lib/utils";
+import { getContrastingForeground, getWmColor } from "@/lib/utils";
 import { useTheme } from "@/hooks/use-theme";
 
 interface CompressionHealthCardProps {
@@ -50,7 +50,7 @@ export function CompressionHealthCard({
       <div className="flex items-center justify-between gap-4">
         {/* Best Compression */}
         <div>
-          <p className="text-xs font-medium text-slate-400 dark:text-slate-500">
+          <p className="text-xs font-medium text-slate-500 dark:text-slate-400">
             Best Compression
           </p>
           <p className="text-lg font-semibold text-slate-900 dark:text-slate-100">
@@ -60,7 +60,7 @@ export function CompressionHealthCard({
 
         {/* Overhead */}
         <div>
-          <p className="text-xs font-medium text-slate-400 dark:text-slate-500">
+          <p className="text-xs font-medium text-slate-500 dark:text-slate-400">
             Overhead
           </p>
           <p className="text-lg font-semibold text-slate-900 dark:text-slate-100">
@@ -70,7 +70,7 @@ export function CompressionHealthCard({
 
         {/* Working Memory */}
         <div>
-          <p className="text-xs font-medium text-slate-400 dark:text-slate-500">
+          <p className="text-xs font-medium text-slate-500 dark:text-slate-400">
             Working Memory
           </p>
           {maxWorkingMemoryVersion !== null ? (
@@ -78,13 +78,15 @@ export function CompressionHealthCard({
               variant="default"
               style={{
                 backgroundColor: getWmColor(maxWorkingMemoryVersion, isDark),
-                color: maxWorkingMemoryVersion === 0 ? "#1e293b" : "#ffffff",
+                color: getContrastingForeground(
+                  getWmColor(maxWorkingMemoryVersion, isDark),
+                ),
               }}
             >
               v{maxWorkingMemoryVersion}
             </Badge>
           ) : (
-            <p className="text-sm text-slate-400 dark:text-slate-500">{"\u2014"}</p>
+            <p className="text-sm text-slate-500 dark:text-slate-400">{"\u2014"}</p>
           )}
         </div>
       </div>
