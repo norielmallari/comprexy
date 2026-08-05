@@ -10,6 +10,8 @@ interface MetricCardProps {
   value: string;
   unit: string;
   variant?: "default" | "compact";
+  /** Optional factual note under the value (e.g. SoftBudget / VT channel copy). */
+  description?: string;
 }
 
 export function MetricCard({
@@ -17,6 +19,7 @@ export function MetricCard({
   value,
   unit,
   variant = "default",
+  description,
 }: MetricCardProps) {
   return (
     <div
@@ -46,6 +49,11 @@ export function MetricCard({
           </span>
         </p>
       )}
+      {description ? (
+        <p className="mt-1 text-xs leading-snug text-slate-500 dark:text-slate-400">
+          {description}
+        </p>
+      ) : null}
     </div>
   );
 }

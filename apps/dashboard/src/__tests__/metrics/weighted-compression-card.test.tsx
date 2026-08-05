@@ -17,4 +17,11 @@ describe('WeightedCompressionCard', () => {
 
     expect(screen.getByText('—')).toBeInTheDocument();
   });
+
+  it('keeps Weighted Compression region name with SoftBudget description', () => {
+    render(<WeightedCompressionCard weightedTokenSavingsRatio={0.33} />);
+
+    const region = screen.getByRole('region', { name: 'Weighted Compression' });
+    expect(region).toHaveTextContent('SoftBudget weighted ratio');
+  });
 });

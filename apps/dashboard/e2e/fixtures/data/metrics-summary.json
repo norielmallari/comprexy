@@ -8,6 +8,7 @@
   "totalBaselineTokensEstimated": 12600,
   "totalActualTokensEstimated": 8600,
   "totalNetTokensSaved": 4000,
+  "totalVirtualToolsTokensSaved": 1000,
   "averageTokenSavingsRatio": 0.33,
   "compressionEventCount": 1,
   "createdAt": "2026-01-15T11:00:00.000Z",

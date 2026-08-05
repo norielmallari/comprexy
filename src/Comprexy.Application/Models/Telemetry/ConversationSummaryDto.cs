@@ -16,6 +16,8 @@ public sealed class ConversationSummaryDto
 
     public long TotalNetTokensSaved { get; init; }
 
+    public long TotalVirtualToolsTokensSaved { get; init; }
+
     public long TotalCompressionOverheadTokens { get; init; }
 
     /// <summary>Whole-conversation weighted savings (rollup totals).</summary>

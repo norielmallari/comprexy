@@ -16,12 +16,13 @@ public sealed class EvidenceMarkdownService : IEvidenceMarkdownService
             ## Validation Metrics
 
             - Total turns analyzed: {summary.TurnCount.ToString("N0", CultureInfo.InvariantCulture)}
-            - Total baseline tokens estimated: {summary.TotalBaselineTokensEstimated.ToString("N0", CultureInfo.InvariantCulture)}
-            - Total compressed/sent-equivalent tokens: {summary.TotalCompressedTokensEstimated.ToString("N0", CultureInfo.InvariantCulture)}
-            - Total net tokens saved: {summary.TotalNetTokensSaved.ToString("N0", CultureInfo.InvariantCulture)}
-            - Weighted average token savings: {weightedPct}%
-            - Final turn token savings: {finalPct}%
-            - Final payload reduction: {finalTurn.BaselineTotalTokensEstimated.ToString("N0", CultureInfo.InvariantCulture)} -> {finalTurn.CompressedTotalTokensEstimated.ToString("N0", CultureInfo.InvariantCulture)} tokens
+            - Total SoftBudget baseline tokens estimated (IrFull + completion when IrFull present): {summary.TotalBaselineTokensEstimated.ToString("N0", CultureInfo.InvariantCulture)}
+            - Total prepared/sent-equivalent tokens: {summary.TotalCompressedTokensEstimated.ToString("N0", CultureInfo.InvariantCulture)}
+            - Total SoftBudget net tokens saved (IrFull − Prepared when IrFull present): {summary.TotalNetTokensSaved.ToString("N0", CultureInfo.InvariantCulture)}
+            - Total virtual-tools / native-wire channel tokens (NativeRaw − IrFull; not tools-only; may be negative): {summary.TotalVirtualToolsTokensSaved.ToString("N0", CultureInfo.InvariantCulture)}
+            - Weighted average SoftBudget token savings: {weightedPct}%
+            - Final turn SoftBudget token savings: {finalPct}%
+            - Final SoftBudget payload: {finalTurn.BaselineTotalTokensEstimated.ToString("N0", CultureInfo.InvariantCulture)} -> {finalTurn.CompressedTotalTokensEstimated.ToString("N0", CultureInfo.InvariantCulture)} tokens
             - Raw messages reduced: {finalTurn.RawMessageCount.ToString("N0", CultureInfo.InvariantCulture)} -> {finalTurn.SentMessageCount.ToString("N0", CultureInfo.InvariantCulture)}
             """;
     }

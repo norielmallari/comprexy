@@ -53,7 +53,7 @@ public class RegressionDetectorTests
 public class EvidenceMarkdownServiceTests
 {
     [Fact]
-    public void Build_ProducesValidationMetricsFormat()
+    public void Build_ProducesSoftBudgetAndVirtualToolsWording()
     {
         var summary = new ConversationSummaryDto
         {
@@ -61,6 +61,7 @@ public class EvidenceMarkdownServiceTests
             TotalBaselineTokensEstimated = 123_456,
             TotalCompressedTokensEstimated = 45_678,
             TotalNetTokensSaved = 77_778,
+            TotalVirtualToolsTokensSaved = 12_345,
             WeightedSavingsRatio = 0.63
         };
         var final = new FinalTurnSnapshotDto
@@ -79,15 +80,18 @@ public class EvidenceMarkdownServiceTests
             ## Validation Metrics
 
             - Total turns analyzed: 12
-            - Total baseline tokens estimated: 123,456
-            - Total compressed/sent-equivalent tokens: 45,678
-            - Total net tokens saved: 77,778
-            - Weighted average token savings: 63.00%
-            - Final turn token savings: 75.00%
-            - Final payload reduction: 20,000 -> 5,000 tokens
+            - Total SoftBudget baseline tokens estimated (IrFull + completion when IrFull present): 123,456
+            - Total prepared/sent-equivalent tokens: 45,678
+            - Total SoftBudget net tokens saved (IrFull − Prepared when IrFull present): 77,778
+            - Total virtual-tools / native-wire channel tokens (NativeRaw − IrFull; not tools-only; may be negative): 12,345
+            - Weighted average SoftBudget token savings: 63.00%
+            - Final turn SoftBudget token savings: 75.00%
+            - Final SoftBudget payload: 20,000 -> 5,000 tokens
             - Raw messages reduced: 40 -> 10
             """,
             markdown);
+        Assert.DoesNotContain("compressed/sent-equivalent", markdown, StringComparison.Ordinal);
+        Assert.DoesNotContain("tools-only", markdown.Replace("not tools-only", string.Empty, StringComparison.Ordinal), StringComparison.Ordinal);
     }
 }
 
@@ -297,6 +301,109 @@ public class ConversationMetricsTelemetryTests
     }
 
     [Fact]
+    public async Task GetTelemetrySummaryAsync_ProviderActual_TotalVtEqualsSumOfProjectedTurnVt()
+    {
+        var id = Guid.NewGuid();
+        var turn1 = TelemetryTestData.TurnMetric(
+            id,
+            turn: 1,
+            compressedInput: 20_000,
+            workingMemoryVersion: 1,
+            rawInput: 80_000,
+            irFull: 60_000,
+            actualPrompt: 30_000,
+            completion: 1_000);
+        var turn2 = TelemetryTestData.TurnMetric(
+            id,
+            turn: 2,
+            compressedInput: 10_000,
+            workingMemoryVersion: 1,
+            rawInput: 40_000,
+            irFull: 25_000,
+            actualPrompt: 12_000,
+            completion: 500);
+        var estimateVtRollup = (turn1.VirtualToolsTokensSaved ?? 0) + (turn2.VirtualToolsTokensSaved ?? 0);
+        _summaries
+            .Setup(x => x.GetRollupAsync(id, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ConversationSummaryRollup
+            {
+                ConversationId = id,
+                TotalTurns = 2,
+                TotalBaselineTokensEstimated = turn1.BaselineTotalTokensEstimated + turn2.BaselineTotalTokensEstimated,
+                TotalCompressedPromptTokens = 30_000,
+                TotalCompletionTokens = 1_500,
+                TotalNetTokensSaved = 55_000,
+                TotalVirtualToolsTokensSaved = estimateVtRollup,
+                TotalCompressionOverheadTokens = 0
+            });
+        var projections = new[]
+        {
+            TelemetryTestData.ProjectionFromMetric(turn1),
+            TelemetryTestData.ProjectionFromMetric(turn2)
+        };
+        SetupTurns(id, projections);
+        _turns
+            .Setup(x => x.GetFinalTurnProjectionAsync(id, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(projections[^1]);
+        _turns
+            .Setup(x => x.ListByConversationIdAsync(id, It.IsAny<CancellationToken>()))
+            .ReturnsAsync([turn1, turn2]);
+
+        var expectedVt = PromptTokenBasisProjector.Project(turn1, PromptTokenBasis.ProviderActual).VirtualToolsTokensSaved!.Value
+            + PromptTokenBasisProjector.Project(turn2, PromptTokenBasis.ProviderActual).VirtualToolsTokensSaved!.Value;
+
+        var result = await CreateService(PromptTokenBasis.ProviderActual)
+            .GetTelemetrySummaryAsync(id, 50, CancellationToken.None);
+
+        Assert.NotNull(result);
+        Assert.Equal(expectedVt, result.TotalVirtualToolsTokensSaved);
+        Assert.NotEqual(estimateVtRollup, expectedVt);
+        _turns.Verify(
+            x => x.ListByConversationIdAsync(id, It.IsAny<CancellationToken>()),
+            Times.Once);
+    }
+
+    [Fact]
+    public async Task GetTelemetryTurnsAsync_ExposesIrFullVtAndLegacyFlag()
+    {
+        var id = Guid.NewGuid();
+        var withIrFull = TelemetryTestData.Projection(
+            1,
+            ratio: 0.5,
+            baseline: 60_000,
+            actualPrompt: 20_000,
+            irFull: 60_000,
+            virtualTools: 20_000,
+            rawInput: 80_000);
+        var legacy = TelemetryTestData.Projection(
+            2,
+            ratio: 0.4,
+            baseline: 50_000,
+            actualPrompt: 30_000,
+            irFull: null,
+            virtualTools: null,
+            rawInput: 50_000);
+        SetupTurns(id, [withIrFull, legacy]);
+
+        var turns = await CreateService().GetTelemetryTurnsAsync(id, 50, CancellationToken.None);
+
+        Assert.Collection(
+            turns,
+            first =>
+            {
+                Assert.Equal(60_000, first.IrFullInputTokensEstimated);
+                Assert.Equal(20_000, first.VirtualToolsTokensSaved);
+                Assert.False(first.IsLegacyMixedAxis);
+            },
+            second =>
+            {
+                Assert.Null(second.IrFullInputTokensEstimated);
+                Assert.Null(second.VirtualToolsTokensSaved);
+                Assert.True(second.IsLegacyMixedAxis);
+            });
+    }
+
+    [Fact]
     public async Task GetTelemetrySummaryAsync_ReturnsNullWithoutRollup()
     {
         var id = Guid.NewGuid();
@@ -461,13 +568,14 @@ public class ConversationMetricsTelemetryTests
                 + breakdown.HistoryAndToolsTokensEstimated);
     }
 
-    private ConversationMetricsQueryService CreateService()
+    private ConversationMetricsQueryService CreateService(
+        PromptTokenBasis basis = PromptTokenBasis.Estimated)
     {
         var options = new Mock<IOptionsMonitor<MetricsOptions>>();
         options.Setup(o => o.CurrentValue).Returns(new MetricsOptions
         {
-            // Telemetry rollup unit tests assert estimate-ledger MapSummary paths.
-            PromptTokenBasis = PromptTokenBasis.Estimated
+            // Telemetry rollup unit tests assert estimate-ledger MapSummary paths by default.
+            PromptTokenBasis = basis
         });
         return new ConversationMetricsQueryService(
             _summaries.Object,
@@ -515,13 +623,17 @@ internal static class TelemetryTestData
         int baseline = 200,
         int rawMessages = 10,
         int sentMessages = 5,
-        string model = "test-model") =>
+        string model = "test-model",
+        int? irFull = null,
+        int? virtualTools = null,
+        int? rawInput = null) =>
         new()
         {
             TurnIndex = turn,
             RequestStartedAt = DateTimeOffset.UnixEpoch.AddMinutes(turn),
             Model = model,
-            RawInputTokensEstimated = baseline,
+            RawInputTokensEstimated = rawInput ?? baseline,
+            IrFullInputTokensEstimated = irFull,
             CompressedInputTokensEstimated = actualPrompt ?? 100,
             ActualPromptTokens = actualPrompt,
             ActualCompletionTokens = 0,
@@ -529,6 +641,7 @@ internal static class TelemetryTestData
             CompressedTotalTokensEstimated = actualPrompt ?? 100,
             NetTokensSaved = (int)Math.Round(baseline * ratio),
             NetTokenSavingsRatio = ratio,
+            VirtualToolsTokensSaved = virtualTools,
             SoftBudgetExceeded = soft,
             HardBudgetExceeded = hard,
             TrimTriggered = trim,
@@ -538,20 +651,52 @@ internal static class TelemetryTestData
             CreatedAt = DateTimeOffset.UnixEpoch.AddMinutes(turn)
         };
 
+    public static ConversationTurnProjection ProjectionFromMetric(ConversationTurnMetric turn) =>
+        new()
+        {
+            TurnIndex = turn.TurnIndex,
+            RequestStartedAt = turn.RequestStartedAt,
+            Model = turn.Model,
+            RawInputTokensEstimated = turn.RawInputTokensEstimated,
+            IrFullInputTokensEstimated = turn.IrFullInputTokensEstimated,
+            CompressedInputTokensEstimated = turn.CompressedInputTokensEstimated,
+            ActualPromptTokens = turn.ActualPromptTokens,
+            ActualCompletionTokens = turn.ActualCompletionTokens,
+            BaselineTotalTokensEstimated = turn.BaselineTotalTokensEstimated,
+            CompressedTotalTokensEstimated = turn.CompressedTotalTokensEstimated,
+            NetTokensSaved = turn.NetTokensSaved,
+            NetTokenSavingsRatio = turn.NetTokenSavingsRatio,
+            VirtualToolsTokensSaved = turn.VirtualToolsTokensSaved,
+            SoftBudgetExceeded = turn.SoftBudgetExceeded,
+            HardBudgetExceeded = turn.HardBudgetExceeded,
+            TrimTriggered = turn.TrimTriggered,
+            WorkingMemoryVersionUsed = turn.WorkingMemoryVersionUsed,
+            RawMessageCount = turn.RawMessageCount,
+            SentMessageCount = turn.SentMessageCount,
+            DurationMs = turn.DurationMs,
+            UpstreamDurationMs = turn.UpstreamDurationMs,
+            PrepareDurationMs = turn.PrepareDurationMs,
+            CreatedAt = turn.CreatedAt
+        };
+
     public static ConversationTurnMetric TurnMetric(
         Guid conversationId,
         int turn,
         int compressedInput,
-        int? workingMemoryVersion) =>
+        int? workingMemoryVersion,
+        int? rawInput = null,
+        int? irFull = null,
+        int? actualPrompt = null,
+        int completion = 0) =>
         ConversationTurnMetric.Create(
             conversationId,
             turn,
             DateTimeOffset.UnixEpoch.AddMinutes(turn),
             "test-model",
-            rawInputTokensEstimated: compressedInput * 2,
+            rawInputTokensEstimated: rawInput ?? compressedInput * 2,
             compressedInputTokensEstimated: compressedInput,
-            actualPromptTokens: compressedInput,
-            actualCompletionTokens: 0,
+            actualPromptTokens: actualPrompt ?? compressedInput,
+            actualCompletionTokens: completion,
             softBudgetExceeded: false,
             hardBudgetExceeded: false,
             trimTriggered: false,
@@ -563,7 +708,8 @@ internal static class TelemetryTestData
             durationMs: null,
             upstreamDurationMs: null,
             prepareDurationMs: null,
-            createdAt: DateTimeOffset.UnixEpoch.AddMinutes(turn));
+            createdAt: DateTimeOffset.UnixEpoch.AddMinutes(turn),
+            irFullInputTokensEstimated: irFull);
 
     public static ConversationSummaryRollup Rollup(Guid id) =>
         new()

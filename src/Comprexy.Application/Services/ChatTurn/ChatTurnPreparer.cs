@@ -27,6 +27,7 @@ public sealed class ChatTurnPreparer
     private readonly ToolSchemaOrchestrator _toolSchemaOrchestrator;
     private readonly ClientHistorySynchronizer _historySynchronizer;
     private readonly OutgoingContextMaterializer _contextMaterializer;
+    private readonly IrFullPromptEstimator _irFullPromptEstimator;
     private readonly ChatTurnMessageHelper _messageHelper;
     private readonly ISystemRulesDetector _systemRulesDetector;
     private readonly ITranscriptRulesDetector _transcriptRulesDetector;
@@ -55,6 +56,7 @@ public sealed class ChatTurnPreparer
         ToolSchemaOrchestrator toolSchemaOrchestrator,
         ClientHistorySynchronizer historySynchronizer,
         OutgoingContextMaterializer contextMaterializer,
+        IrFullPromptEstimator irFullPromptEstimator,
         ChatTurnMessageHelper messageHelper,
         ISystemRulesDetector systemRulesDetector,
         ITranscriptRulesDetector transcriptRulesDetector,
@@ -82,6 +84,7 @@ public sealed class ChatTurnPreparer
         _toolSchemaOrchestrator = toolSchemaOrchestrator;
         _historySynchronizer = historySynchronizer;
         _contextMaterializer = contextMaterializer;
+        _irFullPromptEstimator = irFullPromptEstimator;
         _messageHelper = messageHelper;
         _systemRulesDetector = systemRulesDetector;
         _transcriptRulesDetector = transcriptRulesDetector;
@@ -410,6 +413,22 @@ public sealed class ChatTurnPreparer
         var estimatePayload = toolSchema?.RewrittenClientRequest ?? request.RawRequest;
         var estimatedTokens = _tokenEstimator.CountPromptTokens(estimateMessages, estimatePayload);
         var decision = _budgetEvaluator.Evaluate(estimatedTokens);
+        if (metricsPrepare is not null)
+        {
+            var irFullTokens = _irFullPromptEstimator.Estimate(
+                new IrFullEstimateRequest(
+                    conversation.Id,
+                    conversation.SystemPrompt,
+                    rulesSnapshot,
+                    allMessages,
+                    currentMessageEntity,
+                    currentUserMessage,
+                    workingMemory,
+                    estimatedTokens,
+                    estimatePayload));
+            metricsPrepare = metricsPrepare with { IrFullInputTokensEstimated = irFullTokens };
+        }
+
         var windowStart = recentRaw.Count > 0 ? recentRaw[0].Sequence : (int?)null;
         var windowEnd = currentMessageEntity.Sequence;
         LogContextBudget(

@@ -10,6 +10,8 @@ public sealed class ConversationTurnDto
 
     public int RawInputTokensEstimated { get; init; }
 
+    public int? IrFullInputTokensEstimated { get; init; }
+
     public int CompressedInputTokensEstimated { get; init; }
 
     public int? ActualPromptTokens { get; init; }
@@ -23,6 +25,11 @@ public sealed class ConversationTurnDto
     public int NetTokensSaved { get; init; }
 
     public double NetTokenSavingsRatio { get; init; }
+
+    public int? VirtualToolsTokensSaved { get; init; }
+
+    /// <summary>True when IrFull was not captured (pre-migration / mixed-axis SoftBudget).</summary>
+    public bool IsLegacyMixedAxis { get; init; }
 
     public double CompressionRatio { get; init; }
 

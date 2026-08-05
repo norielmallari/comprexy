@@ -46,6 +46,7 @@ const conversations: ConversationMetricsListItemDto[] = [
     totalRawInputTokensEstimated: 12_000,
     totalActualTokensEstimated: 8_000,
     totalNetTokensSaved: 4_000,
+    totalVirtualToolsTokensSaved: 1_000,
     averageTokenSavingsRatio: 0.33,
     totalCompressionOverheadTokens: 200,
     updatedAt: '2026-01-15T12:00:00.000Z',

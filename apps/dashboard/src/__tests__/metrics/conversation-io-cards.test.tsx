@@ -107,4 +107,52 @@ describe('ConversationIoCards', () => {
     expect(input).toHaveTextContent('tokens');
     expect(output).toHaveTextContent('tokens');
   });
+
+  it('renders Virtual Tools channel when totalVirtualToolsTokensSaved is provided', () => {
+    render(
+      <ConversationIoCards
+        totalRawInputTokensEstimated={12000}
+        totalCompressedPromptTokens={8000}
+        totalCompletionTokens={600}
+        totalVirtualToolsTokensSaved={1000}
+      />,
+    );
+
+    const vt = screen.getByRole('region', { name: 'Virtual Tools channel' });
+    expect(vt).toHaveTextContent('1,000');
+    expect(vt).toHaveTextContent('not tools-only');
+    expect(vt).toHaveTextContent('may be negative');
+    expect(
+      screen.getByRole('region', { name: 'Raw input tokens' }),
+    ).toHaveTextContent('12,000');
+  });
+
+  it('omits Virtual Tools channel when totalVirtualToolsTokensSaved is undefined', () => {
+    render(
+      <ConversationIoCards
+        totalRawInputTokensEstimated={12000}
+        totalCompressedPromptTokens={8000}
+        totalCompletionTokens={600}
+      />,
+    );
+
+    expect(
+      screen.queryByRole('region', { name: 'Virtual Tools channel' }),
+    ).not.toBeInTheDocument();
+  });
+
+  it('shows Virtual Tools channel with em dash when totalVirtualToolsTokensSaved is null', () => {
+    render(
+      <ConversationIoCards
+        totalRawInputTokensEstimated={12000}
+        totalCompressedPromptTokens={8000}
+        totalCompletionTokens={600}
+        totalVirtualToolsTokensSaved={null}
+      />,
+    );
+
+    expect(
+      screen.getByRole('region', { name: 'Virtual Tools channel' }),
+    ).toHaveTextContent('—');
+  });
 });

@@ -73,4 +73,27 @@ describe('MetricCard', () => {
     render(<MetricCard title="Big" value="999999" unit="bytes" />);
     expect(screen.getByText('999999')).toBeInTheDocument();
   });
+
+  it('renders optional description under the value', () => {
+    render(
+      <MetricCard
+        title="Baseline (combined)"
+        value="1,000"
+        unit="tokens"
+        description="SoftBudget IR full + completion"
+      />,
+    );
+
+    expect(
+      screen.getByRole('region', { name: 'Baseline (combined)' }),
+    ).toHaveTextContent('SoftBudget IR full + completion');
+  });
+
+  it('omits description when not provided', () => {
+    render(<MetricCard title="Overhead" value="1.6" unit="%" />);
+
+    expect(screen.getByRole('region', { name: 'Overhead' })).not.toHaveTextContent(
+      'SoftBudget',
+    );
+  });
 });

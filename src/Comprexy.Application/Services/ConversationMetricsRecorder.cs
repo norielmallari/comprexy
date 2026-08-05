@@ -64,7 +64,8 @@ public sealed class ConversationMetricsRecorder : IConversationMetricsRecorder
             input.Timings.DurationMs,
             input.Timings.UpstreamDurationMs,
             input.Timings.PrepareDurationMs,
-            now);
+            now,
+            input.IrFullInputTokensEstimated);
 
         _turnMetricRepository.Add(turn);
 

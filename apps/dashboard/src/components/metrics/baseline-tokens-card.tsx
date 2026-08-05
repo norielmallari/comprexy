@@ -1,5 +1,6 @@
 /**
- * Baseline (combined) card — estimated uncompressed input + output (not input-only).
+ * Baseline (combined) card — SoftBudget IR full + completion (not NativeRaw input-only).
+ * Kept distinct from the chart SoftBudget (IR full) ghost, which is prompt-only.
  */
 
 import { formatNumber } from "@/lib/utils";
@@ -22,6 +23,7 @@ export function BaselineTokensCard({
           : "—"
       }
       unit="tokens"
+      description="SoftBudget IR full + completion"
     />
   );
 }

@@ -8,7 +8,7 @@ test.describe('token counts chart', () => {
     await page.goto(`/?conv=${MOCK_CONVERSATION_ID}`);
   });
 
-  test('renders the prepared-prompt stack with a baseline ghost behind it', async ({ page }) => {
+  test('renders the prepared-prompt stack with a SoftBudget IR-full ghost behind it', async ({ page }) => {
     const chart = page.getByTestId('token-counts-by-turn-chart');
     await expect(chart).toBeVisible();
     await expect(chart).toHaveAttribute('aria-label', /3 turns/);
@@ -29,7 +29,7 @@ test.describe('token counts chart', () => {
     await expect(legend.getByText('System', { exact: true })).toBeVisible();
     await expect(legend.getByText('History + tools', { exact: true })).toBeVisible();
     await expect(legend.getByText('Compressed WM', { exact: true })).toBeVisible();
-    await expect(legend.getByText('Baseline (ghost)', { exact: true })).toBeVisible();
+    await expect(legend.getByText('SoftBudget (IR full)', { exact: true })).toBeVisible();
 
     // Per-turn overhead has no source in the turns DTO; the entry was removed rather than zeroed.
     await expect(legend.getByText('Overhead', { exact: true })).toHaveCount(0);

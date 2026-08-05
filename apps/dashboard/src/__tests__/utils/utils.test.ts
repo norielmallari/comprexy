@@ -12,6 +12,7 @@ import {
   getAverageCompressionRatio,
   getBestCompressionRatio,
   getWmColor,
+  softBudgetBaselineTokens,
   transformTurnsToChartData,
 } from '@/lib/utils';
 import type { ConversationTurnMetricDto } from '@/types/api';
@@ -323,6 +324,7 @@ const makeTurn = (
   requestStartedAt: '2025-07-29T10:00:00Z',
   model: 'gpt-4',
   rawInputTokensEstimated: 5000,
+  irFullInputTokensEstimated: 4500,
   compressedInputTokensEstimated: 2000,
   systemPromptTokensEstimated: 300,
   workingMemoryTokensEstimated: 700,
@@ -331,8 +333,10 @@ const makeTurn = (
   actualCompletionTokens: 500,
   baselineTotalTokensEstimated: 5000,
   compressedTotalTokensEstimated: 3000,
-  netTokensSaved: 1000,
-  netTokenSavingsRatio: 0.2,
+  netTokensSaved: 2500,
+  netTokenSavingsRatio: 0.5,
+  virtualToolsTokensSaved: 500,
+  isLegacyMixedAxis: false,
   softBudgetExceeded: false,
   hardBudgetExceeded: false,
   trimTriggered: false,
@@ -360,10 +364,12 @@ describe('transformTurnsToChartData()', () => {
     expect(point.historyTokens).toBe(1000);
     expect(point.workingMemoryTokens).toBe(700);
     expect(point.preparedPromptTokens).toBe(2000);
-    expect(point.baselineTokens).toBe(5000);
+    expect(point.baselineTokens).toBe(4500);
+    expect(point.virtualToolsTokensSaved).toBe(500);
+    expect(point.isLegacyMixedAxis).toBe(false);
     expect(point.workingMemoryVersion).toBe(1);
-    expect(point.netTokensSaved).toBe(1000);
-    expect(point.savingsRatio).toBe(0.2);
+    expect(point.netTokensSaved).toBe(2500);
+    expect(point.savingsRatio).toBe(0.5);
     expect(point.softBudgetExceeded).toBe(false);
     expect(point.hardBudgetExceeded).toBe(false);
   });
@@ -445,6 +451,73 @@ describe('transformTurnsToChartData()', () => {
 
     const point = result[0] as ChartDataPoint;
     expect(point.savingsRatio).toBe(0.35);
+  });
+
+  it('uses IrFull for SoftBudget ghost baseline when present', () => {
+    const point = transformTurnsToChartData([
+      makeTurn({
+        rawInputTokensEstimated: 9000,
+        irFullInputTokensEstimated: 7000,
+        isLegacyMixedAxis: false,
+      }),
+    ])[0];
+
+    expect(point.baselineTokens).toBe(7000);
+  });
+
+  it('falls back to NativeRaw when IrFull is null or legacy mixed-axis', () => {
+    const nullIrFull = transformTurnsToChartData([
+      makeTurn({
+        rawInputTokensEstimated: 9000,
+        irFullInputTokensEstimated: null,
+        virtualToolsTokensSaved: null,
+        isLegacyMixedAxis: true,
+      }),
+    ])[0];
+
+    expect(nullIrFull.baselineTokens).toBe(9000);
+    expect(nullIrFull.isLegacyMixedAxis).toBe(true);
+    expect(nullIrFull.virtualToolsTokensSaved).toBeNull();
+  });
+
+  it('passes through Virtual Tools tokens when present', () => {
+    const point = transformTurnsToChartData([
+      makeTurn({ virtualToolsTokensSaved: -150 }),
+    ])[0];
+
+    expect(point.virtualToolsTokensSaved).toBe(-150);
+  });
+});
+
+describe('softBudgetBaselineTokens()', () => {
+  it('returns IrFull when present and not legacy', () => {
+    expect(
+      softBudgetBaselineTokens({
+        rawInputTokensEstimated: 9000,
+        irFullInputTokensEstimated: 7000,
+        isLegacyMixedAxis: false,
+      }),
+    ).toBe(7000);
+  });
+
+  it('returns NativeRaw when IrFull is null', () => {
+    expect(
+      softBudgetBaselineTokens({
+        rawInputTokensEstimated: 9000,
+        irFullInputTokensEstimated: null,
+        isLegacyMixedAxis: false,
+      }),
+    ).toBe(9000);
+  });
+
+  it('returns NativeRaw when legacy mixed-axis even if IrFull is set', () => {
+    expect(
+      softBudgetBaselineTokens({
+        rawInputTokensEstimated: 9000,
+        irFullInputTokensEstimated: 7000,
+        isLegacyMixedAxis: true,
+      }),
+    ).toBe(9000);
   });
 });
 

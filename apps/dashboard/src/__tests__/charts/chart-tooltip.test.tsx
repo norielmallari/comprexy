@@ -12,6 +12,8 @@ const mockDataPoint: ChartDataPoint = {
   workingMemoryTokens: 2000,
   preparedPromptTokens: 10000,
   baselineTokens: 10500,
+  virtualToolsTokensSaved: -200,
+  isLegacyMixedAxis: false,
   workingMemoryVersion: 2,
   netTokensSaved: -500,
   savingsRatio: 0.05,
@@ -115,10 +117,46 @@ describe('ChartTooltip', () => {
     expect(content).toHaveTextContent('History + tools');
     expect(content).toHaveTextContent('Compressed WM');
     expect(content).toHaveTextContent('Prepared prompt');
-    expect(content).toHaveTextContent('Baseline (ghost)');
-    expect(content).toHaveTextContent('Net Saved');
-    expect(content).toHaveTextContent('Savings Ratio');
+    expect(content).toHaveTextContent('SoftBudget (IR full)');
+    expect(content).toHaveTextContent('SoftBudget net');
+    expect(content).toHaveTextContent('SoftBudget ratio');
+    expect(content).toHaveTextContent('VT / native-wire');
+    expect(content).toHaveTextContent('not tools-only');
+    expect(content).toHaveTextContent('may be negative');
     expect(content).not.toHaveTextContent('Overhead');
+    expect(content).not.toHaveTextContent('Baseline (ghost)');
+    expect(content).not.toHaveTextContent('Net Saved');
+    expect(content).not.toHaveTextContent('Savings Ratio');
+  });
+
+  it('hides the VT / native-wire row when virtualToolsTokensSaved is null', () => {
+    render(
+      <ChartTooltip
+        data={{ ...mockDataPoint, virtualToolsTokensSaved: null }}
+        active={true}
+      />,
+    );
+
+    const content = screen.getByTestId('chart-tooltip');
+    expect(content).not.toHaveTextContent('VT / native-wire');
+    expect(content).not.toHaveTextContent('not tools-only');
+  });
+
+  it('shows a legacy mixed-axis note when isLegacyMixedAxis is true', () => {
+    render(
+      <ChartTooltip
+        data={{
+          ...mockDataPoint,
+          isLegacyMixedAxis: true,
+          virtualToolsTokensSaved: null,
+        }}
+        active={true}
+      />,
+    );
+
+    expect(screen.getByTestId('chart-tooltip')).toHaveTextContent(
+      'Legacy mixed-axis — ghost uses NativeRaw',
+    );
   });
 
   it('applies emerald color for positive net tokens saved', () => {

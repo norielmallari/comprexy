@@ -199,6 +199,7 @@ public class ProxyChatCompletionServiceTests
             toolSchemaOrchestrator,
             historySynchronizer,
             contextMaterializer,
+            new IrFullPromptEstimator(rulesInjector, contextBuilder, contextMaterializer, _tokenEstimator.Object),
             messageHelper,
             systemRulesDetector,
             transcriptRulesDetector,

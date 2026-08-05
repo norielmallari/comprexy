@@ -23,6 +23,8 @@ public sealed class ConversationSummaryRollup
 
     public long TotalNetTokensSaved { get; init; }
 
+    public long TotalVirtualToolsTokensSaved { get; init; }
+
     public double AverageTokenSavingsRatio { get; init; }
 
     public int CompressionEventCount { get; init; }

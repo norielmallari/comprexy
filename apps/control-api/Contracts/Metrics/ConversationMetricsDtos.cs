@@ -17,6 +17,8 @@ public sealed class ConversationMetricsListItemDto
 
     public long TotalNetTokensSaved { get; init; }
 
+    public long TotalVirtualToolsTokensSaved { get; init; }
+
     public double AverageTokenSavingsRatio { get; init; }
 
     public long TotalCompressionOverheadTokens { get; init; }
@@ -46,6 +48,8 @@ public sealed class ConversationMetricsSummaryDto
 
     public long TotalNetTokensSaved { get; init; }
 
+    public long TotalVirtualToolsTokensSaved { get; init; }
+
     public double AverageTokenSavingsRatio { get; init; }
 
     public int CompressionEventCount { get; init; }
@@ -68,6 +72,8 @@ public sealed class ConversationTurnMetricDto
     public string Model { get; init; } = string.Empty;
 
     public int RawInputTokensEstimated { get; init; }
+
+    public int? IrFullInputTokensEstimated { get; init; }
 
     public int CompressedInputTokensEstimated { get; init; }
 
@@ -92,6 +98,11 @@ public sealed class ConversationTurnMetricDto
     public int NetTokensSaved { get; init; }
 
     public double NetTokenSavingsRatio { get; init; }
+
+    public int? VirtualToolsTokensSaved { get; init; }
+
+    /// <summary>True when IrFull was not captured (pre-migration / mixed-axis SoftBudget).</summary>
+    public bool IsLegacyMixedAxis { get; init; }
 
     public bool SoftBudgetExceeded { get; init; }
 
@@ -139,6 +150,7 @@ public static class ConversationMetricsMapper
                 TotalRawInputTokensEstimated = summary.TotalRawInputTokensEstimated,
                 TotalActualTokensEstimated = summary.TotalActualTokensEstimated,
                 TotalNetTokensSaved = summary.TotalNetTokensSaved,
+                TotalVirtualToolsTokensSaved = summary.TotalVirtualToolsTokensSaved,
                 AverageTokenSavingsRatio = summary.AverageTokenSavingsRatio,
                 TotalCompressionOverheadTokens = summary.TotalCompressionOverheadTokens,
                 UpdatedAt = summary.UpdatedAt,
@@ -154,6 +166,7 @@ public static class ConversationMetricsMapper
             TotalRawInputTokensEstimated = projected.TotalRawInputTokens,
             TotalActualTokensEstimated = projected.TotalActualTokens,
             TotalNetTokensSaved = projected.TotalNetTokensSaved,
+            TotalVirtualToolsTokensSaved = projected.TotalVirtualToolsTokensSaved,
             AverageTokenSavingsRatio = projected.AverageTokenSavingsRatio,
             TotalCompressionOverheadTokens = summary.TotalCompressionOverheadTokens,
             UpdatedAt = summary.UpdatedAt,
@@ -182,6 +195,7 @@ public static class ConversationMetricsMapper
                 TotalBaselineTokensEstimated = summary.TotalBaselineTokensEstimated,
                 TotalActualTokensEstimated = summary.TotalActualTokensEstimated,
                 TotalNetTokensSaved = summary.TotalNetTokensSaved,
+                TotalVirtualToolsTokensSaved = summary.TotalVirtualToolsTokensSaved,
                 AverageTokenSavingsRatio = summary.AverageTokenSavingsRatio,
                 CompressionEventCount = summary.CompressionEventCount,
                 CreatedAt = summary.CreatedAt,
@@ -202,6 +216,7 @@ public static class ConversationMetricsMapper
             TotalBaselineTokensEstimated = projected.TotalBaselineTokens,
             TotalActualTokensEstimated = projected.TotalActualTokens,
             TotalNetTokensSaved = projected.TotalNetTokensSaved,
+            TotalVirtualToolsTokensSaved = projected.TotalVirtualToolsTokensSaved,
             AverageTokenSavingsRatio = projected.AverageTokenSavingsRatio,
             CompressionEventCount = summary.CompressionEventCount,
             CreatedAt = summary.CreatedAt,
@@ -224,6 +239,7 @@ public static class ConversationMetricsMapper
             RequestStartedAt = turn.RequestStartedAt,
             Model = turn.Model,
             RawInputTokensEstimated = projected.RawInputTokens,
+            IrFullInputTokensEstimated = projected.IrFullInputTokens,
             CompressedInputTokensEstimated = compressedInput,
             SystemPromptTokensEstimated = breakdown?.SystemPromptTokensEstimated ?? 0,
             WorkingMemoryTokensEstimated = breakdown?.WorkingMemoryTokensEstimated ?? 0,
@@ -235,6 +251,8 @@ public static class ConversationMetricsMapper
             CompressedTotalTokensEstimated = projected.CompressedTotalTokens,
             NetTokensSaved = projected.NetTokensSaved,
             NetTokenSavingsRatio = projected.NetTokenSavingsRatio,
+            VirtualToolsTokensSaved = projected.VirtualToolsTokensSaved,
+            IsLegacyMixedAxis = projected.IrFullInputTokens is null,
             SoftBudgetExceeded = turn.SoftBudgetExceeded,
             HardBudgetExceeded = turn.HardBudgetExceeded,
             TrimTriggered = turn.TrimTriggered,
@@ -256,6 +274,7 @@ public static class ConversationMetricsMapper
         long TotalBaselineTokens,
         long TotalActualTokens,
         long TotalNetTokensSaved,
+        long TotalVirtualToolsTokensSaved,
         double AverageTokenSavingsRatio) ProjectSummary(
         ConversationMetricsSummary summary,
         IReadOnlyList<ConversationTurnMetric> turns)
@@ -265,6 +284,7 @@ public static class ConversationMetricsMapper
         long completion = 0;
         long baseline = 0;
         long compressedTotals = 0;
+        long virtualTools = 0;
         foreach (var turn in turns)
         {
             var p = PromptTokenBasisProjector.Project(turn, PromptTokenBasis.ProviderActual);
@@ -273,6 +293,7 @@ public static class ConversationMetricsMapper
             completion += p.ActualCompletionTokens;
             baseline += p.BaselineTotalTokens;
             compressedTotals += p.CompressedTotalTokens;
+            virtualTools += p.VirtualToolsTokensSaved ?? 0;
         }
 
         var totalActual = compressedTotals + summary.TotalCompressionOverheadTokens;
@@ -281,6 +302,6 @@ public static class ConversationMetricsMapper
             ? Math.Round((double)totalNet / baseline, 6)
             : 0d;
 
-        return (raw, compressedPrompt, completion, baseline, totalActual, totalNet, average);
+        return (raw, compressedPrompt, completion, baseline, totalActual, totalNet, virtualTools, average);
     }
 }

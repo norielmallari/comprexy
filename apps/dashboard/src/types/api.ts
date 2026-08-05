@@ -21,6 +21,8 @@ export interface ConversationMetricsListItemDto {
   totalRawInputTokensEstimated: number;
   totalActualTokensEstimated: number;
   totalNetTokensSaved: number;
+  /** NativeRaw − IrFull channel rollup; not tools-only; may be negative. */
+  totalVirtualToolsTokensSaved: number;
   averageTokenSavingsRatio: number;
   totalCompressionOverheadTokens: number;
   updatedAt: string;
@@ -41,9 +43,13 @@ export interface ConversationMetricsSummaryDto {
   totalCompressedPromptTokens: number;
   totalCompletionTokens: number;
   totalCompressionOverheadTokens: number;
+  /** SoftBudget baseline (IR full + completion when IrFull present). */
   totalBaselineTokensEstimated: number;
   totalActualTokensEstimated: number;
+  /** SoftBudget net (IR full − prepared when IrFull present). */
   totalNetTokensSaved: number;
+  /** NativeRaw − IrFull channel rollup; not tools-only; may be negative. */
+  totalVirtualToolsTokensSaved: number;
   averageTokenSavingsRatio: number;
   compressionEventCount: number;
   createdAt: string;
@@ -63,7 +69,13 @@ export interface ConversationTurnMetricDto {
   turnIndex: number;
   requestStartedAt: string;
   model: string;
+  /** Native wire + native tools (NativeRaw). */
   rawInputTokensEstimated: number;
+  /**
+   * IR tools + full IR transcript without WM fold (SoftBudget baseline input).
+   * Null on pre-migration / legacy mixed-axis rows.
+   */
+  irFullInputTokensEstimated: number | null;
   compressedInputTokensEstimated: number;
   /**
    * Prepared-prompt split derived by the control API. The three sum to
@@ -77,8 +89,16 @@ export interface ConversationTurnMetricDto {
   actualCompletionTokens: number;
   baselineTotalTokensEstimated: number;
   compressedTotalTokensEstimated: number;
+  /** SoftBudget net (IR full − prepared when IrFull present). */
   netTokensSaved: number;
   netTokenSavingsRatio: number;
+  /**
+   * NativeRaw − IrFull when IrFull present; null on legacy rows.
+   * Not tools-only; may be negative when IR history tax exceeds native-wire savings.
+   */
+  virtualToolsTokensSaved: number | null;
+  /** True when IrFull was not captured (pre-migration mixed-axis SoftBudget). */
+  isLegacyMixedAxis: boolean;
   softBudgetExceeded: boolean;
   hardBudgetExceeded: boolean;
   trimTriggered: boolean;

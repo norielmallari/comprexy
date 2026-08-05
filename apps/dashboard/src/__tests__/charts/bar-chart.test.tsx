@@ -13,6 +13,8 @@ const makePoint = (partial: Partial<ChartDataPoint> = {}): ChartDataPoint => ({
   workingMemoryTokens: 2000,
   preparedPromptTokens: 10000,
   baselineTokens: 14000,
+  virtualToolsTokensSaved: 500,
+  isLegacyMixedAxis: false,
   workingMemoryVersion: 2,
   netTokensSaved: 4000,
   savingsRatio: 0.28,
@@ -88,6 +90,7 @@ describe('BarChart', () => {
     const chart = screen.getByTestId('token-counts-by-turn-chart');
     expect(chart).toHaveAttribute('role', 'img');
     expect(chart.getAttribute('aria-label')).toMatch(/2 turns/);
+    expect(chart.getAttribute('aria-label')).toMatch(/SoftBudget IR full/);
   });
 
   it('renders empty state when no data', () => {
@@ -193,7 +196,7 @@ describe('BarChart', () => {
     expect(screen.getByText('System')).toBeInTheDocument();
     expect(screen.getByText('History + tools')).toBeInTheDocument();
     expect(screen.getByText('Compressed WM')).toBeInTheDocument();
-    expect(screen.getByText('Baseline (ghost)')).toBeInTheDocument();
+    expect(screen.getByText('SoftBudget (IR full)')).toBeInTheDocument();
     expect(screen.queryByText('Overhead')).not.toBeInTheDocument();
     expect(screen.queryByText('Prompt')).not.toBeInTheDocument();
   });

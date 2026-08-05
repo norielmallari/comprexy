@@ -21,4 +21,5 @@ public sealed record SuccessfulTurnMetricInput(
     int SentMessageCount,
     string RequestHash,
     string SentPayloadHash,
-    TurnTimings Timings);
+    TurnTimings Timings,
+    int? IrFullInputTokensEstimated = null);

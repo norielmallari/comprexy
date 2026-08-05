@@ -32,7 +32,9 @@ test.describe('benchmark page', () => {
     await mockBenchmarkApi(page);
     await page.goto('/benchmark');
 
-    await page.getByLabel('fixture-scenario-a (5 prompts)').check();
+    await page
+      .getByRole('checkbox', { name: 'fixture-scenario-a (5 prompts)' })
+      .check();
     await page.getByTestId('benchmark-ack-checkbox').check();
     await page.getByTestId('start-benchmark-button').click();
 
@@ -49,7 +51,9 @@ test.describe('benchmark page', () => {
     await mockBenchmarkApi(page);
     await page.goto('/benchmark');
 
-    await page.getByLabel('fixture-scenario-a (5 prompts)').check();
+    await page
+      .getByRole('checkbox', { name: 'fixture-scenario-a (5 prompts)' })
+      .check();
     await page.getByTestId('benchmark-ack-checkbox').check();
     await page.getByTestId('start-benchmark-button').click();
 
@@ -87,7 +91,9 @@ test.describe('benchmark page', () => {
 
     await page.goto('/benchmark');
 
-    await page.getByLabel('fixture-scenario-a (5 prompts)').check();
+    await page
+      .getByRole('checkbox', { name: 'fixture-scenario-a (5 prompts)' })
+      .check();
     await page.getByTestId('benchmark-ack-checkbox').check();
     await page.getByTestId('start-benchmark-button').click();
 

@@ -13,6 +13,8 @@ public sealed class ConversationTurnProjection
 
     public int RawInputTokensEstimated { get; init; }
 
+    public int? IrFullInputTokensEstimated { get; init; }
+
     public int CompressedInputTokensEstimated { get; init; }
 
     public int? ActualPromptTokens { get; init; }
@@ -26,6 +28,8 @@ public sealed class ConversationTurnProjection
     public int NetTokensSaved { get; init; }
 
     public double NetTokenSavingsRatio { get; init; }
+
+    public int? VirtualToolsTokensSaved { get; init; }
 
     public bool SoftBudgetExceeded { get; init; }
 

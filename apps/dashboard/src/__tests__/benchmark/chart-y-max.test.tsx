@@ -13,6 +13,8 @@ function makePoint(baselineTokens: number, preparedPromptTokens: number): ChartD
     workingMemoryTokens: 500,
     preparedPromptTokens,
     baselineTokens,
+    virtualToolsTokensSaved: null,
+    isLegacyMixedAxis: false,
     workingMemoryVersion: 1,
     netTokensSaved: baselineTokens - preparedPromptTokens,
     savingsRatio: 0.1,

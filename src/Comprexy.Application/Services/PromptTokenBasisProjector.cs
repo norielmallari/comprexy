@@ -6,7 +6,8 @@ namespace Comprexy.Application.Services;
 
 /// <summary>
 /// Read-side projection of turn token proof onto <see cref="PromptTokenBasis"/>.
-/// Does not mutate persisted rows or SoftBudget accounting.
+/// Does not mutate persisted rows. SoftBudget arms use IrFull vs Prepared when IrFull is present;
+/// Virtual Tools uses NativeRaw vs IrFull.
 /// </summary>
 public static class PromptTokenBasisProjector
 {
@@ -19,7 +20,9 @@ public static class PromptTokenBasisProjector
         double NetTokenSavingsRatio,
         int ActualCompletionTokens,
         int? ActualPromptTokens,
-        int CompressedInputTokensEstimated);
+        int CompressedInputTokensEstimated,
+        int? IrFullInputTokens,
+        int? VirtualToolsTokensSaved);
 
     public static ProjectedTurn Project(ConversationTurnMetric turn, PromptTokenBasis basis) =>
         Project(
@@ -31,7 +34,9 @@ public static class PromptTokenBasisProjector
             turn.CompressedTotalTokensEstimated,
             turn.NetTokensSaved,
             turn.NetTokenSavingsRatio,
-            basis);
+            basis,
+            turn.IrFullInputTokensEstimated,
+            turn.VirtualToolsTokensSaved);
 
     public static ProjectedTurn Project(ConversationTurnProjection turn, PromptTokenBasis basis) =>
         Project(
@@ -43,7 +48,9 @@ public static class PromptTokenBasisProjector
             turn.CompressedTotalTokensEstimated,
             turn.NetTokensSaved,
             turn.NetTokenSavingsRatio,
-            basis);
+            basis,
+            turn.IrFullInputTokensEstimated,
+            turn.VirtualToolsTokensSaved);
 
     public static ProjectedTurn Project(
         int rawInputEstimated,
@@ -54,7 +61,9 @@ public static class PromptTokenBasisProjector
         int compressedTotalEstimated,
         int netTokensSaved,
         double netTokenSavingsRatio,
-        PromptTokenBasis basis)
+        PromptTokenBasis basis,
+        int? irFullInputEstimated = null,
+        int? virtualToolsTokensSaved = null)
     {
         if (basis != PromptTokenBasis.ProviderActual
             || actualPromptTokens is not int actual
@@ -69,14 +78,39 @@ public static class PromptTokenBasisProjector
                 netTokenSavingsRatio,
                 actualCompletionTokens,
                 actualPromptTokens,
-                compressedInputEstimated);
+                compressedInputEstimated,
+                irFullInputEstimated,
+                virtualToolsTokensSaved);
         }
 
         var compressedInput = actual;
         var rawInput = compressedInputEstimated > 0
             ? (int)Math.Round(rawInputEstimated * ((double)actual / compressedInputEstimated))
             : rawInputEstimated;
-        var baselineTotal = rawInput + actualCompletionTokens;
+
+        int? scaledIrFull = null;
+        int? scaledVt = null;
+        int softBudgetBaselineInput;
+        if (irFullInputEstimated is int irFull)
+        {
+            if (compressedInputEstimated > 0)
+            {
+                scaledIrFull = (int)Math.Round(irFull * ((double)actual / compressedInputEstimated));
+            }
+            else
+            {
+                scaledIrFull = irFull;
+            }
+
+            softBudgetBaselineInput = scaledIrFull.Value;
+            scaledVt = rawInput - scaledIrFull.Value;
+        }
+        else
+        {
+            softBudgetBaselineInput = rawInput;
+        }
+
+        var baselineTotal = softBudgetBaselineInput + actualCompletionTokens;
         var compressedTotal = compressedInput + actualCompletionTokens;
         var netSaved = baselineTotal - compressedTotal;
         var ratio = baselineTotal > 0
@@ -92,7 +126,9 @@ public static class PromptTokenBasisProjector
             ratio,
             actualCompletionTokens,
             actual,
-            compressedInputEstimated);
+            compressedInputEstimated,
+            scaledIrFull,
+            scaledVt);
     }
 
     /// <summary>
@@ -110,7 +146,9 @@ public static class PromptTokenBasisProjector
 
         var p = Project(turn, basis);
         if (p.CompressedInputTokens == turn.CompressedInputTokensEstimated
-            && p.BaselineTotalTokens == turn.BaselineTotalTokensEstimated)
+            && p.BaselineTotalTokens == turn.BaselineTotalTokensEstimated
+            && p.IrFullInputTokens == turn.IrFullInputTokensEstimated
+            && p.VirtualToolsTokensSaved == turn.VirtualToolsTokensSaved)
         {
             return turn;
         }
@@ -121,6 +159,7 @@ public static class PromptTokenBasisProjector
             RequestStartedAt = turn.RequestStartedAt,
             Model = turn.Model,
             RawInputTokensEstimated = p.RawInputTokens,
+            IrFullInputTokensEstimated = p.IrFullInputTokens,
             CompressedInputTokensEstimated = p.CompressedInputTokens,
             ActualPromptTokens = turn.ActualPromptTokens,
             ActualCompletionTokens = turn.ActualCompletionTokens,
@@ -128,6 +167,7 @@ public static class PromptTokenBasisProjector
             CompressedTotalTokensEstimated = p.CompressedTotalTokens,
             NetTokensSaved = p.NetTokensSaved,
             NetTokenSavingsRatio = p.NetTokenSavingsRatio,
+            VirtualToolsTokensSaved = p.VirtualToolsTokensSaved,
             SoftBudgetExceeded = turn.SoftBudgetExceeded,
             HardBudgetExceeded = turn.HardBudgetExceeded,
             TrimTriggered = turn.TrimTriggered,

@@ -39,4 +39,12 @@ describe('HeroCard', () => {
       screen.getByRole('region', { name: 'Tokens Saved' }),
     ).toBeInTheDocument();
   });
+
+  it('keeps Tokens Saved accessible name and SoftBudget subtitle', () => {
+    render(<HeroCard tokensSaved={1000} />);
+
+    const region = screen.getByRole('region', { name: 'Tokens Saved' });
+    expect(region).toHaveTextContent('Tokens Saved');
+    expect(region).toHaveTextContent('SoftBudget net (IR full − prepared)');
+  });
 });

@@ -14,7 +14,7 @@ test.describe('dashboard metric cards', () => {
     await page.goto(`/?conv=${MOCK_CONVERSATION_ID}`);
   });
 
-  test('renders eleven named metric regions with fixture values', async ({
+  test('renders twelve named metric regions with fixture values', async ({
     page,
   }) => {
     const bestRatio = Math.max(
@@ -117,6 +117,13 @@ test.describe('dashboard metric cards', () => {
     await expect(
       page.getByRole('region', { name: 'Output tokens', exact: true }),
     ).toContainText('600');
+
+    await expect(
+      page.getByRole('region', { name: 'Virtual Tools channel', exact: true }),
+    ).toBeVisible();
+    await expect(
+      page.getByRole('region', { name: 'Virtual Tools channel', exact: true }),
+    ).toContainText('1,000');
 
     await expect(
       page.getByRole('region', { name: 'Baseline Tokens' }),

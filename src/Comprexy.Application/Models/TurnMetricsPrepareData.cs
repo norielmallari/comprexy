@@ -9,4 +9,5 @@ public sealed record TurnMetricsPrepareData(
     string RequestHash,
     int RawMessageCount,
     int? WorkingMemoryVersionUsed,
-    bool TrimTriggered);
+    bool TrimTriggered,
+    int? IrFullInputTokensEstimated = null);

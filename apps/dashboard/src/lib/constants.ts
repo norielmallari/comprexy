@@ -63,6 +63,12 @@ export const GHOST_BAR_STROKE_LIGHT = '#475569';
 export const GHOST_BAR_STROKE_DARK = '#e2e8f0';
 export const GHOST_BAR_FILL_OPACITY = 0.18;
 
+/** SoftBudget chart ghost baseline — IR full prompt estimate (no WM fold). */
+export const SOFTBUDGET_GHOST_LABEL = 'SoftBudget (IR full)';
+
+/** Virtual Tools / native-wire channel secondary metric title. */
+export const VIRTUAL_TOOLS_CHANNEL_LABEL = 'Virtual Tools channel';
+
 // ---------------------------------------------------------------------------
 // Working Memory Version Labels
 // ---------------------------------------------------------------------------

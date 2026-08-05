@@ -2,8 +2,9 @@ namespace Comprexy.Domain.Entities;
 
 /// <summary>
 /// Conversation-level rollup of token metrics for operator proof and reporting.
-/// Prompt totals and net savings use tiktoken estimates (raw baseline vs prepared
-/// upstream). Per-turn <c>ActualPromptTokens</c> stay on turn rows for accuracy only.
+/// SoftBudget prompt totals and net savings use tiktoken IrFull (when present) vs prepared
+/// upstream; <see cref="TotalVirtualToolsTokensSaved"/> rolls NativeRaw − IrFull per turn.
+/// Per-turn <c>ActualPromptTokens</c> stay on turn rows for accuracy only.
 /// </summary>
 public class ConversationMetricsSummary : EntityBase
 {
@@ -24,6 +25,11 @@ public class ConversationMetricsSummary : EntityBase
     public long TotalActualTokensEstimated { get; private set; }
 
     public long TotalNetTokensSaved { get; private set; }
+
+    /// <summary>
+    /// Sum of per-turn <see cref="ConversationTurnMetric.VirtualToolsTokensSaved"/> (0 when null).
+    /// </summary>
+    public long TotalVirtualToolsTokensSaved { get; private set; }
 
     public double AverageTokenSavingsRatio { get; private set; }
 
@@ -55,6 +61,11 @@ public class ConversationMetricsSummary : EntityBase
         TotalCompressedPromptTokens += turn.CompressedInputTokensEstimated;
         TotalCompletionTokens += turn.ActualCompletionTokens;
         TotalBaselineTokensEstimated += turn.BaselineTotalTokensEstimated;
+        if (turn.VirtualToolsTokensSaved is int vt)
+        {
+            TotalVirtualToolsTokensSaved += vt;
+        }
+
         RecalculateActualAndSavings(now);
     }
 

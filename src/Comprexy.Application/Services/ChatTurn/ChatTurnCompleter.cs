@@ -128,7 +128,8 @@ public sealed class ChatTurnCompleter
                     prepared.UpstreamRequest.Messages.Count,
                     prepared.MetricsPrepare.RequestHash,
                     MetricsPayloadHasher.HashJsonElement(sentPayload),
-                    timing.ToTurnTimings()),
+                    timing.ToTurnTimings(),
+                    prepared.MetricsPrepare.IrFullInputTokensEstimated),
                 cancellationToken);
         }
 

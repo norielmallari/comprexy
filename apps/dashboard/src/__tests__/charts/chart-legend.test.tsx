@@ -67,7 +67,7 @@ describe('ChartLegend', () => {
     const root = container.querySelector('div.flex.flex-wrap');
     expect(root).toBeInTheDocument();
     expect(root?.className).toContain('justify-center');
-    expect(root?.className).toContain('gap-4');
+    expect(root?.className).toContain('gap-3');
   });
 
   it('renders each legend item with correct structure', () => {
@@ -84,7 +84,7 @@ describe('ChartLegend', () => {
 
   it('draws outlined items as a dashed border instead of a solid swatch', () => {
     const { container } = render(
-      <ChartLegend items={[{ label: 'Baseline (ghost)', color: '#64748b', outlined: true }]} />,
+      <ChartLegend items={[{ label: 'SoftBudget (IR full)', color: '#64748b', outlined: true }]} />,
     );
 
     const block = container.querySelector('span.inline-block');

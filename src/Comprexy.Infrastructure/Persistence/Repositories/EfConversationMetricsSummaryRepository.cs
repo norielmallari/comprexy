@@ -47,6 +47,7 @@ public sealed class EfConversationMetricsSummaryRepository(ComprexyDbContext dbC
                 TotalBaselineTokensEstimated = s.TotalBaselineTokensEstimated,
                 TotalActualTokensEstimated = s.TotalActualTokensEstimated,
                 TotalNetTokensSaved = s.TotalNetTokensSaved,
+                TotalVirtualToolsTokensSaved = s.TotalVirtualToolsTokensSaved,
                 AverageTokenSavingsRatio = s.AverageTokenSavingsRatio,
                 CompressionEventCount = s.CompressionEventCount,
                 CreatedAt = s.CreatedAt,

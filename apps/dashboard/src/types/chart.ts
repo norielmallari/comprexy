@@ -21,13 +21,23 @@ export interface ChartDataPoint {
   workingMemoryTokens: number;
   /** Prompt actually sent upstream — the sum of the three segments above */
   preparedPromptTokens: number;
-  /** Uncompressed prompt estimate, drawn as the ghost bar behind the stack */
+  /**
+   * SoftBudget ghost baseline: IR full (no WM fold), or NativeRaw when legacy mixed-axis.
+   * Drawn as the ghost bar behind the stack.
+   */
   baselineTokens: number;
+  /**
+   * NativeRaw − IrFull when present; null on legacy mixed-axis turns.
+   * Not tools-only; may be negative.
+   */
+  virtualToolsTokensSaved: number | null;
+  /** True when ghost baseline fell back to NativeRaw (no IrFull). */
+  isLegacyMixedAxis: boolean;
   /** Working memory version used (null = none yet) */
   workingMemoryVersion: number | null;
-  /** Net tokens saved in this turn */
+  /** SoftBudget net tokens saved in this turn */
   netTokensSaved: number;
-  /** Token savings ratio */
+  /** SoftBudget token savings ratio */
   savingsRatio: number;
   /** Whether soft budget was exceeded */
   softBudgetExceeded: boolean;

@@ -2,9 +2,12 @@ namespace Comprexy.Domain.Entities;
 
 /// <summary>
 /// Per-turn token accounting for a successful compressed-path chat completion.
-/// Savings compare tiktoken estimates of the client baseline vs the prepared upstream
-/// prompt (ToolSchema / working memory / injects). <see cref="ActualPromptTokens"/> is
-/// retained for estimate-accuracy reporting and is not used in <see cref="NetTokensSaved"/>.
+/// SoftBudget savings compare tiktoken <see cref="IrFullInputTokensEstimated"/> (IR tools +
+/// full unfolded IR transcript) vs <see cref="CompressedInputTokensEstimated"/> (prepared with
+/// WM/retain) when IrFull is present. Legacy rows with null IrFull keep NativeRaw vs Prepared.
+/// <see cref="VirtualToolsTokensSaved"/> is NativeRaw − IrFull when IrFull is present (can be
+/// negative). <see cref="ActualPromptTokens"/> is retained for estimate-accuracy reporting and
+/// is not used in <see cref="NetTokensSaved"/>.
 /// </summary>
 public class ConversationTurnMetric : EntityBase
 {
@@ -17,6 +20,12 @@ public class ConversationTurnMetric : EntityBase
     public string Model { get; private set; } = string.Empty;
 
     public int RawInputTokensEstimated { get; private set; }
+
+    /// <summary>
+    /// IR tools + full unfolded IR transcript (no WM fold), when captured at prepare.
+    /// Null on legacy / pre-migration rows (mixed-axis SoftBudget).
+    /// </summary>
+    public int? IrFullInputTokensEstimated { get; private set; }
 
     public int CompressedInputTokensEstimated { get; private set; }
 
@@ -31,6 +40,12 @@ public class ConversationTurnMetric : EntityBase
     public int NetTokensSaved { get; private set; }
 
     public double NetTokenSavingsRatio { get; private set; }
+
+    /// <summary>
+    /// NativeRaw − IrFull when IrFull is present; null on legacy rows. May be negative when
+    /// IR history tax exceeds native-wire catalog savings.
+    /// </summary>
+    public int? VirtualToolsTokensSaved { get; private set; }
 
     public bool SoftBudgetExceeded { get; private set; }
 
@@ -91,16 +106,21 @@ public class ConversationTurnMetric : EntityBase
         int? durationMs,
         int? upstreamDurationMs,
         int? prepareDurationMs,
-        DateTimeOffset createdAt)
+        DateTimeOffset createdAt,
+        int? irFullInputTokensEstimated = null)
     {
-        // Like-for-like: both sides are tiktoken estimates. Mixing provider usage.prompt_tokens
-        // into savings invents fake losses when the upstream tokenizer/template disagrees.
-        var baselineTotal = rawInputTokensEstimated + actualCompletionTokens;
+        // SoftBudget: IrFull vs Prepared when IrFull present; legacy null IrFull keeps NativeRaw vs Prepared.
+        // ActualPromptTokens is accuracy-only — never enters persisted NetTokensSaved.
+        var softBudgetBaselineInput = irFullInputTokensEstimated ?? rawInputTokensEstimated;
+        var baselineTotal = softBudgetBaselineInput + actualCompletionTokens;
         var compressedTotal = compressedInputTokensEstimated + actualCompletionTokens;
         var netSaved = baselineTotal - compressedTotal;
         var ratio = baselineTotal > 0
             ? Math.Round((double)netSaved / baselineTotal, 6)
             : 0d;
+        int? virtualToolsTokensSaved = irFullInputTokensEstimated is int irFull
+            ? rawInputTokensEstimated - irFull
+            : null;
 
         return new ConversationTurnMetric
         {
@@ -110,6 +130,7 @@ public class ConversationTurnMetric : EntityBase
             RequestStartedAt = requestStartedAt,
             Model = model,
             RawInputTokensEstimated = rawInputTokensEstimated,
+            IrFullInputTokensEstimated = irFullInputTokensEstimated,
             CompressedInputTokensEstimated = compressedInputTokensEstimated,
             ActualPromptTokens = actualPromptTokens,
             ActualCompletionTokens = actualCompletionTokens,
@@ -117,6 +138,7 @@ public class ConversationTurnMetric : EntityBase
             CompressedTotalTokensEstimated = compressedTotal,
             NetTokensSaved = netSaved,
             NetTokenSavingsRatio = ratio,
+            VirtualToolsTokensSaved = virtualToolsTokensSaved,
             SoftBudgetExceeded = softBudgetExceeded,
             HardBudgetExceeded = hardBudgetExceeded,
             TrimTriggered = trimTriggered,

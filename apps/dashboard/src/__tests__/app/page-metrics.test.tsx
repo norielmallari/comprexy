@@ -107,6 +107,7 @@ const metricsSummary: ConversationMetricsSummaryDto = {
   totalBaselineTokensEstimated: 12600,
   totalActualTokensEstimated: 8600,
   totalNetTokensSaved: 4000,
+  totalVirtualToolsTokensSaved: 1000,
   averageTokenSavingsRatio: 0.33,
   compressionEventCount: 1,
   createdAt: '2026-01-15T11:00:00.000Z',
@@ -120,16 +121,19 @@ const turns: ConversationTurnMetricDto[] = [
     requestStartedAt: '2026-01-15T11:00:00.000Z',
     model: 'test-model',
     rawInputTokensEstimated: 3000,
+    irFullInputTokensEstimated: 2500,
     compressedInputTokensEstimated: 2500,
     systemPromptTokensEstimated: 300,
     workingMemoryTokensEstimated: 0,
     historyAndToolsTokensEstimated: 2200,
     actualPromptTokens: 2480,
     actualCompletionTokens: 200,
-    baselineTotalTokensEstimated: 3200,
+    baselineTotalTokensEstimated: 2700,
     compressedTotalTokensEstimated: 2700,
-    netTokensSaved: 500,
+    netTokensSaved: 0,
     netTokenSavingsRatio: 0.15625,
+    virtualToolsTokensSaved: 500,
+    isLegacyMixedAxis: false,
     softBudgetExceeded: false,
     hardBudgetExceeded: false,
     trimTriggered: false,
@@ -147,6 +151,7 @@ const turns: ConversationTurnMetricDto[] = [
     requestStartedAt: '2026-01-15T12:00:00.000Z',
     model: 'test-model',
     rawInputTokensEstimated: 4500,
+    irFullInputTokensEstimated: 4500,
     compressedInputTokensEstimated: 1500,
     systemPromptTokensEstimated: 300,
     workingMemoryTokensEstimated: 800,
@@ -157,6 +162,8 @@ const turns: ConversationTurnMetricDto[] = [
     compressedTotalTokensEstimated: 1700,
     netTokensSaved: 3000,
     netTokenSavingsRatio: 0.638298,
+    virtualToolsTokensSaved: 0,
+    isLegacyMixedAxis: false,
     softBudgetExceeded: false,
     hardBudgetExceeded: false,
     trimTriggered: false,
@@ -270,6 +277,7 @@ describe('Dashboard page metric composition', () => {
       'Raw input tokens',
       'Input tokens',
       'Output tokens',
+      'Virtual Tools channel',
     ];
 
     for (const name of expectedRegions) {
@@ -297,6 +305,7 @@ describe('Dashboard page metric composition', () => {
       'Raw input tokens',
       'Input tokens',
       'Output tokens',
+      'Virtual Tools channel',
     ];
 
     for (const name of standardMetrics) {
@@ -364,5 +373,18 @@ describe('Dashboard page metric composition', () => {
     expect(
       screen.getByRole('region', { name: 'Output tokens' }),
     ).toHaveTextContent('600');
+    expect(
+      screen.getByRole('region', { name: 'Virtual Tools channel' }),
+    ).toHaveTextContent('1,000');
+  });
+
+  it('keeps Tokens Saved region name with SoftBudget hero subtitle', () => {
+    render(<Home />);
+
+    const hero = screen.getByRole('region', { name: 'Tokens Saved' });
+    expect(hero).toHaveTextContent('SoftBudget net (IR full − prepared)');
+    expect(
+      screen.queryByRole('region', { name: 'SoftBudget tokens saved' }),
+    ).not.toBeInTheDocument();
   });
 });

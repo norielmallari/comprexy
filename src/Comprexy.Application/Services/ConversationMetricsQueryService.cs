@@ -316,11 +316,13 @@ public sealed class ConversationMetricsQueryService : IConversationMetricsQueryS
         long baseline = 0;
         long compressedPromptAndCompletion = 0;
         long netExcludingOverhead = 0;
+        long totalVirtualTools = 0;
         foreach (var p in allProjected)
         {
             baseline += p.BaselineTotalTokens;
             compressedPromptAndCompletion += p.CompressedTotalTokens;
             netExcludingOverhead += p.NetTokensSaved;
+            totalVirtualTools += p.VirtualToolsTokensSaved ?? 0;
         }
 
         // Match stored rollup: TotalActual includes compression overhead; net subtracts it.
@@ -353,6 +355,7 @@ public sealed class ConversationMetricsQueryService : IConversationMetricsQueryS
             TotalBaselineTokensEstimated = baseline,
             TotalCompressedTokensEstimated = compressedPromptAndCompletion,
             TotalNetTokensSaved = totalNet,
+            TotalVirtualToolsTokensSaved = totalVirtualTools,
             TotalCompressionOverheadTokens = overhead,
             WeightedSavingsRatio = weighted,
             SimpleAverageSavingsRatio = simpleAverage,
@@ -408,6 +411,7 @@ public sealed class ConversationMetricsQueryService : IConversationMetricsQueryS
             TotalBaselineTokensEstimated = rollup.TotalBaselineTokensEstimated,
             TotalCompressedTokensEstimated = compressedEquivalent,
             TotalNetTokensSaved = rollup.TotalNetTokensSaved,
+            TotalVirtualToolsTokensSaved = rollup.TotalVirtualToolsTokensSaved,
             TotalCompressionOverheadTokens = rollup.TotalCompressionOverheadTokens,
             WeightedSavingsRatio = weighted,
             SimpleAverageSavingsRatio = simpleAverage,
@@ -447,6 +451,7 @@ public sealed class ConversationMetricsQueryService : IConversationMetricsQueryS
             RequestStartedAt = turn.RequestStartedAt,
             Model = turn.Model,
             RawInputTokensEstimated = turn.RawInputTokensEstimated,
+            IrFullInputTokensEstimated = turn.IrFullInputTokensEstimated,
             CompressedInputTokensEstimated = turn.CompressedInputTokensEstimated,
             ActualPromptTokens = turn.ActualPromptTokens,
             ActualCompletionTokens = turn.ActualCompletionTokens,
@@ -454,6 +459,8 @@ public sealed class ConversationMetricsQueryService : IConversationMetricsQueryS
             CompressedTotalTokensEstimated = turn.CompressedTotalTokensEstimated,
             NetTokensSaved = turn.NetTokensSaved,
             NetTokenSavingsRatio = turn.NetTokenSavingsRatio,
+            VirtualToolsTokensSaved = turn.VirtualToolsTokensSaved,
+            IsLegacyMixedAxis = turn.IrFullInputTokensEstimated is null,
             CompressionRatio = compressionRatio,
             PromptEstimateError = promptEstimateError,
             MessageReductionRatio = messageReductionRatio,

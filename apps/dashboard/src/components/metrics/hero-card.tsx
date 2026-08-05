@@ -1,6 +1,6 @@
 /**
  * Hero card showing the single most important metric:
- * - Tokens Saved (absolute)
+ * - Tokens Saved (SoftBudget net absolute)
  *
  * Displays the number in large monospaced font.
  */
@@ -25,6 +25,9 @@ export function HeroCard({ tokensSaved }: HeroCardProps) {
         <span className="font-mono text-4xl leading-tight font-semibold text-emerald-600 dark:text-emerald-400">
           {tokensSaved !== null ? formatNumber(tokensSaved) : "\u2014"}
         </span>
+      </p>
+      <p className="mt-1 text-xs leading-snug text-slate-500 dark:text-slate-400">
+        SoftBudget net (IR full − prepared)
       </p>
     </div>
   );

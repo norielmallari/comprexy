@@ -1,5 +1,6 @@
 /**
- * Actual (combined) card — compressed input + output + overhead (absolute).
+ * Actual (combined) card — SoftBudget prepared input + output + overhead (absolute).
+ * Kept distinct from the chart SoftBudget (IR full) ghost baseline.
  */
 
 import { formatNumber } from "@/lib/utils";
@@ -22,6 +23,7 @@ export function ActualTokensCard({
           : "—"
       }
       unit="tokens"
+      description="SoftBudget prepared + completion + overhead"
     />
   );
 }

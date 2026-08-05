@@ -101,6 +101,7 @@ public static class ServiceCollectionExtensions
         services.AddScoped<ChatTurnMessageHelper>();
         services.AddScoped<ClientHistorySynchronizer>();
         services.AddScoped<OutgoingContextMaterializer>();
+        services.AddScoped<IrFullPromptEstimator>();
         services.AddScoped<InlineWrapUpRunner>();
         services.AddScoped<ChatTurnPreparer>();
         services.AddScoped<ChatTurnCompleter>();

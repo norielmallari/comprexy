@@ -108,6 +108,7 @@ function DashboardContent() {
                 totalCompressedPromptTokens={metrics.totalCompressedPromptTokens}
                 totalCompletionTokens={metrics.totalCompletionTokens}
                 totalRawInputTokensEstimated={metrics.totalRawInputTokensEstimated}
+                totalVirtualToolsTokensSaved={metrics.totalVirtualToolsTokensSaved}
               />
             )}
           </div>

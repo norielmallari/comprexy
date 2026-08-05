@@ -1,5 +1,5 @@
 /**
- * Weighted Compression card — aggregate savings divided by aggregate baseline tokens.
+ * Weighted Compression card — SoftBudget aggregate savings ÷ SoftBudget aggregate baseline.
  *
  * The REST contract exposes this value as `AverageTokenSavingsRatio` for legacy reasons.
  */
@@ -23,6 +23,7 @@ export function WeightedCompressionCard({
       title="Weighted Compression"
       value={displayValue}
       unit="%"
+      description="SoftBudget weighted ratio"
     />
   );
 }

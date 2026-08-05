@@ -5,6 +5,7 @@
     "totalRawInputTokensEstimated": 12000,
     "totalActualTokensEstimated": 8000,
     "totalNetTokensSaved": 4000,
+    "totalVirtualToolsTokensSaved": 1000,
     "averageTokenSavingsRatio": 0.33,
     "totalCompressionOverheadTokens": 200,
     "updatedAt": "2026-01-15T12:00:00.000Z"
@@ -15,6 +16,7 @@
     "totalRawInputTokensEstimated": 11000,
     "totalActualTokensEstimated": 7500,
     "totalNetTokensSaved": 3500,
+    "totalVirtualToolsTokensSaved": 800,
     "averageTokenSavingsRatio": 0.3,
     "totalCompressionOverheadTokens": 180,
     "updatedAt": "2026-01-15T13:00:00.000Z"

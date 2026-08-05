@@ -158,7 +158,7 @@ Server-side MCP clients (Cursor, etc.) do not rely on CORS. Wildcard `AllowedHos
 
 | Key | Default | Description |
 | --- | --- | --- |
-| `PassThrough` | `false` | When true, forwards the original chat body with no context rebuild, compression / working memory, or Virtual Tools rewrite. Escape hatch only. |
+| `PassThrough` | `false` | When true, forwards the original chat body with no context rebuild, compression / working memory, Virtual Tools rewrite, or client rules path. Escape hatch only. |
 | `StripReasoningContent` | `false` | When true, strips `reasoning_content` / `reasoning` from outbound chat and compression messages. |
 
 ---
@@ -170,7 +170,7 @@ Token proof ledger for successful compressed-path turns. Persisted in SQLite (no
 | Key | Default | Description |
 | --- | --- | --- |
 | `Enabled` | `true` | When true, records per-turn raw vs compressed token metrics and folds Inline wrap-up and Tool IR schema-mapping LLM usage into conversation summaries. |
-| `PromptTokenBasis` | `ProviderActual` | Read-side only. `ProviderActual` prefers upstream `usage.prompt_tokens` when present and scales the same-turn raw baseline by `actual / estimate` so both arms of a turn share one tokenizer basis; completion stays `usage.completion_tokens`. `Estimated` reports stored tiktoken proof (SoftBudget ledger). Persistence and SoftBudget math are unchanged. Override per request with `?promptTokenBasis=Estimated` (or `ProviderActual`) on metrics REST endpoints. |
+| `PromptTokenBasis` | `ProviderActual` | Read-side only. `ProviderActual` prefers upstream `usage.prompt_tokens` when present and scales same-turn NativeRaw and IrFull by `actual / prepared-estimate` so SoftBudget (IrFull vs Prepared) and Virtual Tools (NativeRaw vs IrFull) share one tokenizer basis; completion stays `usage.completion_tokens`. SoftBudget net sign matches the estimate IrFull − Prepared gap. The VT channel can be negative. `Estimated` reports stored tiktoken proof. Persistence and SoftBudget eligibility stay estimate-based on prepared size. Override per request with `?promptTokenBasis=Estimated` (or `ProviderActual`) on metrics REST endpoints. |
 
 Operator read API (same `/v1/*` API-key gate as chat):
 
@@ -196,7 +196,7 @@ control-api only. Bounds and timeouts for the remote telemetry + retrieval MCP e
 | `MaxRowLimit` | `1000` | Hard cap applied before EF `Take(...)`. |
 | `QueryTimeoutSeconds` | `5` | Linked cancellation timeout for each MCP telemetry/retrieval query. |
 
-Telemetry summary semantics: `TurnCount`, weighted savings, simple average, peak, and final-turn fields are whole-conversation (rollup + final-turn query + EF aggregates). Under `PromptTokenBasis=ProviderActual` (default), read-side totals prefer `usage.prompt_tokens` when present and scale the same-turn raw baseline by `actual / estimate`. Under `Estimated`, `NetTokensSaved` / savings ratios compare tiktoken **raw client** vs **prepared upstream** estimates only; `ActualPromptTokens` and `PromptEstimateError` measure estimate accuracy against upstream `usage.prompt_tokens` and do not enter the savings numerator on the SoftBudget ledger. SoftBudget persistence is always estimate-based. `MedianSavingsRatio` and `SavingsRegressions` use the bounded `TurnIndex`-ordered sample only; when `IsPartialTurnSample` is true, those sample fields cover `SampleFirstTurnIndex`–`SampleLastTurnIndex` (`SampleTurnCount` turns), not the full conversation.
+Telemetry summary semantics: `TurnCount`, weighted savings, simple average, peak, and final-turn fields are whole-conversation (rollup + final-turn query + EF aggregates). Under `PromptTokenBasis=ProviderActual` (default), read-side SoftBudget totals prefer `usage.prompt_tokens` when present and scale IrFull (and NativeRaw for the VT channel) by `actual / prepared-estimate`. Under `Estimated`, SoftBudget `NetTokensSaved` / savings ratios compare tiktoken **IrFull** vs **Prepared** when IrFull was captured (legacy null IrFull rows keep NativeRaw vs Prepared); `totalVirtualToolsTokensSaved` is NativeRaw − IrFull (not tools-only; may be negative). `ActualPromptTokens` and `PromptEstimateError` measure estimate accuracy against upstream `usage.prompt_tokens` and do not enter the SoftBudget savings numerator. SoftBudget persistence and fold eligibility are always estimate-based on prepared size. `MedianSavingsRatio` and `SavingsRegressions` use the bounded `TurnIndex`-ordered sample only; when `IsPartialTurnSample` is true, those sample fields cover `SampleFirstTurnIndex`–`SampleLastTurnIndex` (`SampleTurnCount` turns), not the full conversation.
 
 Retrieval tools (keyword search, sequence windows, recent messages, working-memory snapshot, open tool chains) read `ConversationMessage` / `WorkingMemory` with snippet truncation (500 chars content / 4096 chars optional wire JSON). Message tools use `Sequence`; do not conflate with telemetry `TurnIndex`. Open tool chains reuse `ToolCallChainState` over unfolded messages.
 
@@ -206,7 +206,7 @@ Local MCP URL: `http://localhost:8130/mcp`. Any IDE, coding agent, or MCP client
 
 ## BenchOrchestration
 
-Operator control-api only. Spawns `tests/Comprexy.Bench` for dashboard-started runs; CLI `./comprexy.sh bench` bypasses the active-run lock.
+Operator control-api only. Spawns `tests/Comprexy.Bench` for dashboard-started runs. Both the orchestrator and CLI `./comprexy.sh bench run` take the same `reports/bench/.active-run.lock` (CLI skips acquire only when spawned with `--under-orchestrator-lock`). Stale locks whose recorded pid is dead are reclaimed. Spawn also fails fast when the configured bench ports are already bound.
 
 | Key | Default | Description |
 | --- | --- | --- |
@@ -214,7 +214,7 @@ Operator control-api only. Spawns `tests/Comprexy.Bench` for dashboard-started r
 | `AllowSpawn` | `true` | When false, orchestrator refuses to start child processes. |
 | `HarnessProjectPath` | `tests/Comprexy.Bench/Comprexy.Bench.csproj` | Project passed to `dotnet run --project`. |
 | `RunsRootRelative` | `reports/bench` | Run artifacts root relative to repo root. |
-| `LockFileName` | `.active-run.lock` | Exclusive lock file under the runs root (orchestrator-only). |
+| `LockFileName` | `.active-run.lock` | Exclusive lock file under the runs root (CLI + orchestrator). |
 | `DatabasePathRelative` | `data/comprexy-bench.db` | Bench SQLite path relative to repo root. |
 | `MafCompactPort` | `18129` | Baseline proxy port for spawned harness. |
 | `ComprexyPort` | `18131` | Treatment proxy port for spawned harness. |
@@ -224,7 +224,7 @@ Operator control-api only. Spawns `tests/Comprexy.Bench` for dashboard-started r
 | `SmokeConversationTimeoutSeconds` | `1200` | Per-conversation cap when a dashboard run selects only `smoke-*` scenarios; also passes `--continue-past-baseline-failure`. |
 | `RepoRoot` | (auto) | Optional repo root override when content-root walk fails. |
 
-Concurrent CLI and dashboard writers under `reports/bench/` are unsupported in v1.
+Concurrent writers under `reports/bench/` are refused by the active-run lock (and by port preflight on spawn).
 
 ---
 

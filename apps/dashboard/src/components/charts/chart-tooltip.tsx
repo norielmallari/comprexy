@@ -8,6 +8,7 @@
 'use client';
 
 import { type ChartDataPoint } from '@/types/chart';
+import { SOFTBUDGET_GHOST_LABEL } from '@/lib/constants';
 import { formatCompactNumber, formatPercentage } from '@/lib/utils';
 
 export interface ChartTooltipProps {
@@ -33,13 +34,15 @@ function Row({
 }
 
 /**
- * Shows the prepared-prompt breakdown, the baseline it is compared against, budget flags, and the
- * working memory version in play for a turn.
+ * Shows the prepared-prompt breakdown, SoftBudget IR-full ghost baseline, VT channel when
+ * present, budget flags, and the working memory version in play for a turn.
  */
 export function ChartTooltip({ data, active }: ChartTooltipProps) {
   if (!active || !data) {
     return null;
   }
+
+  const vt = data.virtualToolsTokensSaved;
 
   return (
     <div
@@ -74,12 +77,17 @@ export function ChartTooltip({ data, active }: ChartTooltipProps) {
             className="font-mono font-medium text-gray-700 dark:text-gray-300"
           />
           <Row
-            label="Baseline (ghost)"
+            label={SOFTBUDGET_GHOST_LABEL}
             value={formatCompactNumber(data.baselineTokens)}
             className="font-mono font-medium text-gray-500 dark:text-gray-400"
           />
+          {data.isLegacyMixedAxis && (
+            <p className="text-[11px] text-amber-700 dark:text-amber-400">
+              Legacy mixed-axis — ghost uses NativeRaw
+            </p>
+          )}
           <Row
-            label="Net Saved"
+            label="SoftBudget net"
             value={`${data.netTokensSaved >= 0 ? '+' : ''}${formatCompactNumber(data.netTokensSaved)}`}
             className={`font-mono font-medium ${
               data.netTokensSaved >= 0
@@ -88,10 +96,27 @@ export function ChartTooltip({ data, active }: ChartTooltipProps) {
             }`}
           />
           <Row
-            label="Savings Ratio"
+            label="SoftBudget ratio"
             value={formatPercentage(data.savingsRatio)}
             className="font-mono font-medium text-blue-600 dark:text-blue-400"
           />
+          {vt !== null && (
+            <>
+              <Row
+                label="VT / native-wire"
+                value={`${vt >= 0 ? '+' : ''}${formatCompactNumber(vt)}`}
+                className={`font-mono font-medium ${
+                  vt >= 0
+                    ? 'text-emerald-600 dark:text-emerald-400'
+                    : 'text-red-600 dark:text-red-400'
+                }`}
+              />
+              <p className="text-[11px] leading-snug text-gray-500 dark:text-gray-400">
+                NativeRaw − IR full; not tools-only; may be negative when IR history tax exceeds
+                native-wire catalog savings.
+              </p>
+            </>
+          )}
         </div>
 
         {(data.softBudgetExceeded || data.hardBudgetExceeded) && (

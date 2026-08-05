@@ -1,9 +1,9 @@
 /**
- * BarChart component — stacked vertical bar chart for compression metrics.
+ * BarChart component — stacked vertical bar chart for SoftBudget compression metrics.
  *
  * Each bar is the prompt actually prepared for a turn, split into system prompt,
  * history + tools, and working memory. A ghost bar behind the stack shows the
- * uncompressed prompt estimate for the same turn.
+ * SoftBudget IR-full estimate (no WM fold) for the same turn.
  */
 
 'use client';
@@ -30,6 +30,7 @@ import {
   HISTORY_SEGMENT_COLOR,
   GHOST_BAR_STROKE_LIGHT,
   GHOST_BAR_STROKE_DARK,
+  SOFTBUDGET_GHOST_LABEL,
 } from '@/lib/constants';
 import { formatCompactNumber } from '@/lib/utils';
 import { ChartLegend } from './chart-legend';
@@ -78,7 +79,7 @@ function getLegendItems(isDark: boolean): ChartLegendItem[] {
     { label: 'History + tools', color: HISTORY_SEGMENT_COLOR },
     { label: 'Compressed WM', color: getWorkingMemoryColor(isDark) },
     {
-      label: 'Baseline (ghost)',
+      label: SOFTBUDGET_GHOST_LABEL,
       color: isDark ? GHOST_BAR_STROKE_DARK : GHOST_BAR_STROKE_LIGHT,
       outlined: true,
     },
@@ -182,7 +183,7 @@ export function BarChart({
 
       <div
         role="img"
-        aria-label={`Prepared prompt tokens per turn across ${data.length} turns, with an uncompressed baseline reference behind each bar`}
+        aria-label={`Prepared prompt tokens per turn across ${data.length} turns, with SoftBudget IR full (no WM fold) as the ghost baseline behind each bar`}
         data-testid={testId}
         className={fill ? 'min-h-0 flex-1' : undefined}
       >
@@ -233,7 +234,7 @@ export function BarChart({
 
             {/* Declared first so it paints behind the stacked segments. */}
             <Bar
-              name="Baseline (ghost)"
+              name={SOFTBUDGET_GHOST_LABEL}
               {...getGhostBarProps({
                 dataKey: 'baseline',
                 xAxisId: GHOST_X_AXIS_ID,
@@ -262,8 +263,8 @@ export function BarChart({
       {!compact && (
         <p className="shrink-0 text-xs text-gray-500 dark:text-gray-400">
           Bars show the prompt Comprexy actually prepared for each turn. The dashed ghost behind each
-          bar is the uncompressed prompt estimate for the same turn. Compressed WM stays empty until
-          the first working memory version exists.
+          bar is SoftBudget IR full (no WM fold). On legacy turns without IrFull, the ghost falls back
+          to NativeRaw. Compressed WM stays empty until the first working memory version exists.
         </p>
       )}
     </div>

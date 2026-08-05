@@ -213,11 +213,27 @@ export function getWmColor(
 }
 
 /**
+ * SoftBudget chart ghost baseline for a turn: IR full when present, else NativeRaw
+ * (legacy mixed-axis / null IrFull).
+ */
+export function softBudgetBaselineTokens(
+  turn: Pick<
+    ConversationTurnMetricDto,
+    'irFullInputTokensEstimated' | 'rawInputTokensEstimated' | 'isLegacyMixedAxis'
+  >,
+): number {
+  if (turn.isLegacyMixedAxis || turn.irFullInputTokensEstimated == null) {
+    return turn.rawInputTokensEstimated;
+  }
+  return turn.irFullInputTokensEstimated;
+}
+
+/**
  * Transform turn metrics from the API into chart-ready data points.
  *
  * The stack is the prepared prompt split into system / history+tools / working memory, which the
  * control API derives so the three sum to `compressedInputTokensEstimated`. The ghost bar is the
- * uncompressed prompt estimate for the same turn, so both sides are prompt-to-prompt.
+ * SoftBudget IR-full estimate (no WM fold), falling back to NativeRaw on legacy mixed-axis rows.
  *
  * @param turns - API turn metrics
  * @returns Chart data points
@@ -232,7 +248,9 @@ export function transformTurnsToChartData(
     historyTokens: turn.historyAndToolsTokensEstimated,
     workingMemoryTokens: turn.workingMemoryTokensEstimated,
     preparedPromptTokens: turn.compressedInputTokensEstimated,
-    baselineTokens: turn.rawInputTokensEstimated,
+    baselineTokens: softBudgetBaselineTokens(turn),
+    virtualToolsTokensSaved: turn.virtualToolsTokensSaved,
+    isLegacyMixedAxis: turn.isLegacyMixedAxis,
     workingMemoryVersion: turn.workingMemoryVersionUsed,
     netTokensSaved: turn.netTokensSaved,
     savingsRatio: turn.netTokenSavingsRatio,
