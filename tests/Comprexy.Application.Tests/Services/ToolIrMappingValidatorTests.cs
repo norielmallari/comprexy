@@ -642,6 +642,147 @@ public class ToolIrMappingValidatorTests
             VirtualToolRegistry.GetWireJson(ToolSchemaConstants.ShellToolName).Trim());
     }
 
+    [Theory]
+    [InlineData("ReadLints")]
+    [InlineData("TodoWrite")]
+    [InlineData("Task")]
+    public void Validate_WhenVirtualPrimaryIsDenylistStubOrTask_IsInvalid(string primary)
+    {
+        const string hash = "abc";
+        var catalog = new HashSet<string>(StringComparer.Ordinal) { "ReadFile", primary };
+        var json = MappingJson(
+            hash,
+            [
+                Capability("ReadFile"),
+                Capability(primary, "NON_FILE")
+            ],
+            [
+                new
+                {
+                    comprexy_tool = "comprexy_read_file_range",
+                    primary_client_tool = primary,
+                    strategy = "read_then_slice",
+                    arg_map = new { path = "path" }
+                }
+            ]);
+
+        var result = ToolIrMappingValidator.Validate(json, catalog, hash);
+
+        Assert.False(result.IsValid);
+        Assert.Contains(primary, result.Error);
+        Assert.Contains("NON_FILE", result.Error);
+        Assert.Contains("FILE_READ_RAW", result.Error);
+    }
+
+    [Fact]
+    public void Validate_MafIdeBandCatalog_AcceptsNonFileStubsAndTask_BindsOnlyRealBackends()
+    {
+        const string hash = "maf-ide-band";
+        string[] denylist =
+        [
+            "ReadLints",
+            "TodoWrite",
+            "AwaitShell",
+            "UpdateCurrentStep",
+            "EditNotebook",
+            "SwitchMode",
+            "agent_manager",
+            "agent_manager_models",
+            "background_process",
+            "kilo_local_recall"
+        ];
+
+        var catalog = new HashSet<string>(StringComparer.Ordinal)
+        {
+            "ReadFile",
+            "SearchFiles",
+            "ListDirectory",
+            "RunShellCommand",
+            "WriteFile",
+            "EditFile",
+            "Task"
+        };
+        foreach (var name in denylist)
+        {
+            catalog.Add(name);
+        }
+
+        var capabilities = new List<object>
+        {
+            Capability("ReadFile"),
+            Capability("SearchFiles", "FILE_SEARCH_BACKEND"),
+            Capability("ListDirectory", "DIRECTORY_LIST_BACKEND"),
+            Capability("RunShellCommand", "SHELL_BACKEND"),
+            Capability("WriteFile", "NON_FILE"),
+            Capability("EditFile", "NON_FILE"),
+            Capability("Task", "NON_FILE")
+        };
+        foreach (var name in denylist)
+        {
+            capabilities.Add(Capability(name, "NON_FILE"));
+        }
+
+        var json = MappingJson(
+            hash,
+            capabilities.ToArray(),
+            [
+                new
+                {
+                    comprexy_tool = "comprexy_read_file_range",
+                    primary_client_tool = "ReadFile",
+                    strategy = "read_then_slice",
+                    arg_map = new { path = "path" }
+                },
+                new
+                {
+                    comprexy_tool = "comprexy_read_file_manifest",
+                    primary_client_tool = "ReadFile",
+                    strategy = "direct",
+                    arg_map = new { path = "path" }
+                },
+                new
+                {
+                    comprexy_tool = "comprexy_read_file_search",
+                    primary_client_tool = "SearchFiles",
+                    strategy = "direct",
+                    arg_map = new { query = "query" }
+                },
+                new
+                {
+                    comprexy_tool = "comprexy_dir_list",
+                    primary_client_tool = "ListDirectory",
+                    strategy = "direct",
+                    arg_map = new { path = "path" }
+                },
+                new
+                {
+                    comprexy_tool = "comprexy_shell",
+                    primary_client_tool = "RunShellCommand",
+                    strategy = "direct",
+                    arg_map = new { command = "command" }
+                }
+            ]);
+
+        var result = ToolIrMappingValidator.Validate(json, catalog, hash);
+
+        Assert.True(result.IsValid, result.Error);
+        Assert.NotNull(result.Document);
+        Assert.All(
+            result.Document!.Bindings,
+            binding => Assert.DoesNotContain(
+                binding.PrimaryClientTool,
+                denylist.Append("Task"),
+                StringComparer.Ordinal));
+        Assert.Contains(
+            result.Document.ClientCapabilities,
+            c => c.ClientTool == "Task" && c.Capability == "NON_FILE");
+        Assert.All(
+            denylist,
+            name => Assert.Contains(
+                result.Document.ClientCapabilities,
+                c => c.ClientTool == name && c.Capability == "NON_FILE"));
+    }
+
     private static ToolIrClientCapability Cap(string tool, string capability) => new()
     {
         ClientTool = tool,

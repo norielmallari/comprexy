@@ -222,6 +222,178 @@ public class ToolSchemaOrchestratorTests
             }
             """);
 
+    /// <summary>
+    /// MAF-shaped client catalog: replaced-family backends + mutates + stock denylist stubs + Task.
+    /// </summary>
+    private static readonly string[] StockExcludeFixture =
+    [
+        "ReadLints",
+        "TodoWrite",
+        "AwaitShell",
+        "UpdateCurrentStep",
+        "EditNotebook",
+        "SwitchMode",
+        "agent_manager",
+        "agent_manager_models",
+        "background_process",
+        "kilo_local_recall"
+    ];
+
+    private static JsonElement MafIdeBandToolsRequest()
+    {
+        var tools = new List<object>
+        {
+            ToolWire("ReadFile", "Read a file.", new { path = new { type = "string" } }, ["path"]),
+            ToolWire("SearchFiles", "Search files.", new { query = new { type = "string" }, path = new { type = "string" } }, ["query"]),
+            ToolWire("ListDirectory", "List a directory.", new { path = new { type = "string" } }, ["path"]),
+            ToolWire(
+                "RunShellCommand",
+                "Run a shell command.",
+                new { command = new { type = "string" }, working_directory = new { type = "string" } },
+                ["command"]),
+            ToolWire(
+                "WriteFile",
+                "Write a file.",
+                new { path = new { type = "string" }, content = new { type = "string" } },
+                ["path", "content"]),
+            ToolWire(
+                "EditFile",
+                "Edit a file.",
+                new
+                {
+                    path = new { type = "string" },
+                    old_string = new { type = "string" },
+                    new_string = new { type = "string" }
+                },
+                ["path", "old_string", "new_string"])
+        };
+
+        foreach (var name in StockExcludeFixture)
+        {
+            tools.Add(ToolWire(name, $"{name} stub.", new { arg = new { type = "string" } }, null));
+        }
+
+        tools.Add(ToolWire(
+            "Task",
+            "Spawn a subagent task.",
+            new { prompt = new { type = "string" }, description = new { type = "string" } },
+            ["prompt"]));
+
+        return ParseRequest(JsonSerializer.Serialize(new { model = "client-model", tools }));
+    }
+
+    private static object ToolWire(
+        string name,
+        string description,
+        object properties,
+        string[]? required) =>
+        new
+        {
+            type = "function",
+            function = new
+            {
+                name,
+                description,
+                parameters = required is null
+                    ? (object)new { type = "object", properties }
+                    : new { type = "object", properties, required }
+            }
+        };
+
+    private static object NonFileCap(string tool) => new
+    {
+        client_tool = tool,
+        capability = "NON_FILE",
+        risk = "low",
+        supports = new { path = false, offset = false, limit = false, query = false }
+    };
+
+    private static string ValidMafIdeBandMappingJson(string schemaHash)
+    {
+        var capabilities = new List<object>
+        {
+            new
+            {
+                client_tool = "ReadFile",
+                capability = "FILE_READ_RAW",
+                risk = "low",
+                supports = new { path = true, offset = false, limit = false, query = false }
+            },
+            new
+            {
+                client_tool = "SearchFiles",
+                capability = "FILE_SEARCH_BACKEND",
+                risk = "low",
+                supports = new { path = true, offset = false, limit = false, query = true }
+            },
+            new
+            {
+                client_tool = "ListDirectory",
+                capability = "DIRECTORY_LIST_BACKEND",
+                risk = "low",
+                supports = new { path = true, offset = false, limit = false, query = false }
+            },
+            new
+            {
+                client_tool = "RunShellCommand",
+                capability = "SHELL_BACKEND",
+                risk = "high",
+                supports = new { path = false, offset = false, limit = false, query = false }
+            },
+            NonFileCap("WriteFile"),
+            NonFileCap("EditFile"),
+            NonFileCap("Task")
+        };
+        foreach (var name in StockExcludeFixture)
+        {
+            capabilities.Add(NonFileCap(name));
+        }
+
+        return JsonSerializer.Serialize(new
+        {
+            schema_hash = schemaHash,
+            client_capabilities = capabilities,
+            bindings = new object[]
+            {
+                new
+                {
+                    comprexy_tool = "comprexy_read_file_range",
+                    primary_client_tool = "ReadFile",
+                    strategy = "read_then_slice",
+                    arg_map = new { path = "path" }
+                },
+                new
+                {
+                    comprexy_tool = "comprexy_read_file_manifest",
+                    primary_client_tool = "ReadFile",
+                    strategy = "direct",
+                    arg_map = new { path = "path" }
+                },
+                new
+                {
+                    comprexy_tool = "comprexy_read_file_search",
+                    primary_client_tool = "SearchFiles",
+                    strategy = "direct",
+                    arg_map = new { query = "query", path = "path" }
+                },
+                new
+                {
+                    comprexy_tool = "comprexy_dir_list",
+                    primary_client_tool = "ListDirectory",
+                    strategy = "direct",
+                    arg_map = new { path = "path" }
+                },
+                new
+                {
+                    comprexy_tool = "comprexy_shell",
+                    primary_client_tool = "RunShellCommand",
+                    strategy = "direct",
+                    arg_map = new { command = "command", working_directory = "working_directory" }
+                }
+            }
+        });
+    }
+
     private static string CatalogHashFor(JsonElement request)
     {
         var parsed = new ToolCatalogParser().TryParse(request);
@@ -799,11 +971,19 @@ public class ToolSchemaOrchestratorTests
         var assistantJson = """
             {"role":"assistant","content":null,"tool_calls":[{"id":"ir_lint_1","type":"function","function":{"name":"ReadLints","arguments":"{\"paths\":[\"apps/dashboard/src/lib/utils.ts\"]}"}}]}
             """;
+        string? chatToolPayload = null;
         _chatCompletionClient
             .Setup(c => c.CompleteAsync(
                 It.IsAny<ProviderEndpoint>(),
                 It.Is<UpstreamRequest>(r => r.Purpose == UpstreamRequestPurpose.Chat),
                 It.IsAny<CancellationToken>()))
+            .Callback<ProviderEndpoint, UpstreamRequest, CancellationToken>((_, upstream, _) =>
+            {
+                chatToolPayload ??= upstream.Messages
+                    .Where(m => m.Role == MessageRole.Tool)
+                    .Select(m => m.Content)
+                    .FirstOrDefault(c => c is not null && c.Contains("tool_excluded", StringComparison.Ordinal));
+            })
             .ReturnsAsync(new UpstreamChatResult("done", "stop", 1, 1, AssistantMessageJson:
                 """{"role":"assistant","content":"done"}"""));
 
@@ -823,12 +1003,67 @@ public class ToolSchemaOrchestratorTests
         Assert.Empty(loop.AllowedRealToolCalls);
         Assert.Equal("done", loop.FinalUpstreamResult.Content);
         Assert.False(_callIdMap.TryGetByIrId(conversationId, "ir_lint_1", out _));
+        Assert.Contains("tool_excluded", chatToolPayload);
         _chatCompletionClient.Verify(
             c => c.CompleteAsync(
                 It.IsAny<ProviderEndpoint>(),
                 It.Is<UpstreamRequest>(r => r.Purpose == UpstreamRequestPurpose.Chat),
                 It.IsAny<CancellationToken>()),
             Times.AtLeastOnce);
+    }
+
+    [Fact]
+    public async Task RunInternalLoopAsync_DenylistStub_LocalReject_ToolExcluded_NoClientFacingCall()
+    {
+        _options.ExcludeFromModelTools = [.. StockExcludeFixture];
+        var request = MafIdeBandToolsRequest();
+        var hash = CatalogHashFor(request);
+        var conversationId = Guid.NewGuid();
+        var orchestrator = CreateOrchestrator();
+        SetupMapperReturns(ValidMafIdeBandMappingJson(hash));
+
+        var prepare = await orchestrator.TryPrepareRewriteAsync(
+            conversationId,
+            [new ChatMessage(MessageRole.User, "hello")],
+            request,
+            CancellationToken.None);
+        Assert.NotNull(prepare.Result);
+
+        var assistantJson = """
+            {"role":"assistant","content":null,"tool_calls":[{"id":"ir_todo_1","type":"function","function":{"name":"TodoWrite","arguments":"{\"arg\":\"x\"}"}}]}
+            """;
+        string? chatToolPayload = null;
+        _chatCompletionClient
+            .Setup(c => c.CompleteAsync(
+                It.IsAny<ProviderEndpoint>(),
+                It.Is<UpstreamRequest>(r => r.Purpose == UpstreamRequestPurpose.Chat),
+                It.IsAny<CancellationToken>()))
+            .Callback<ProviderEndpoint, UpstreamRequest, CancellationToken>((_, upstream, _) =>
+            {
+                chatToolPayload ??= upstream.Messages
+                    .Where(m => m.Role == MessageRole.Tool)
+                    .Select(m => m.Content)
+                    .FirstOrDefault(c => c is not null && c.Contains("tool_excluded", StringComparison.Ordinal));
+            })
+            .ReturnsAsync(new UpstreamChatResult("done", "stop", 1, 1, AssistantMessageJson:
+                """{"role":"assistant","content":"done"}"""));
+
+        var loop = await orchestrator.RunInternalLoopAsync(
+            prepare.Result!.Session,
+            ChatEndpoint(),
+            ChatUpstream(prepare.Result.RewrittenClientRequest, new ChatMessage(MessageRole.User, "hello")),
+            new UpstreamChatResult(
+                string.Empty,
+                "tool_calls",
+                1,
+                1,
+                RawResponseJson: """{"choices":[{"message":{"role":"assistant","tool_calls":[]},"finish_reason":"tool_calls"}]}""",
+                AssistantMessageJson: assistantJson),
+            CancellationToken.None);
+
+        Assert.Empty(loop.AllowedRealToolCalls);
+        Assert.Contains("tool_excluded", chatToolPayload);
+        Assert.False(_callIdMap.TryGetByIrId(conversationId, "ir_todo_1", out _));
     }
 
     [Fact]
@@ -885,6 +1120,47 @@ public class ToolSchemaOrchestratorTests
 
         Assert.Null(outcome.Result);
         Assert.False(outcome.CatalogMutated);
+    }
+
+    [Fact]
+    public async Task TryPrepareRewriteAsync_MafCatalog_Virtual_HidesStockDenylistStubs_KeepsMutatesAndTask()
+    {
+        _options.ExcludeFromModelTools = [.. StockExcludeFixture];
+        var request = MafIdeBandToolsRequest();
+        var hash = CatalogHashFor(request);
+        var orchestrator = CreateOrchestrator();
+        SetupMapperReturns(ValidMafIdeBandMappingJson(hash));
+
+        var outcome = await orchestrator.TryPrepareRewriteAsync(
+            Guid.NewGuid(),
+            [new ChatMessage(MessageRole.User, "hello")],
+            request,
+            CancellationToken.None);
+
+        Assert.NotNull(outcome.Result);
+        Assert.True(outcome.Result!.RewrittenClientRequest.TryGetProperty("tools", out var tools));
+        var names = tools.EnumerateArray()
+            .Select(t => t.GetProperty("function").GetProperty("name").GetString()!)
+            .ToList();
+
+        foreach (var excluded in StockExcludeFixture)
+        {
+            Assert.Contains(excluded, outcome.Result.Session.ExcludedFromModelToolNames);
+            Assert.DoesNotContain(excluded, names);
+        }
+
+        Assert.Contains(ToolSchemaConstants.FileRangeToolName, names);
+        Assert.Contains(ToolSchemaConstants.FileManifestToolName, names);
+        Assert.Contains(ToolSchemaConstants.FileSearchToolName, names);
+        Assert.Contains(ToolSchemaConstants.DirListToolName, names);
+        Assert.Contains(ToolSchemaConstants.ShellToolName, names);
+        Assert.Contains("WriteFile", names);
+        Assert.Contains("EditFile", names);
+        Assert.Contains("Task", names);
+        Assert.DoesNotContain("ReadFile", names);
+        Assert.DoesNotContain("SearchFiles", names);
+        Assert.DoesNotContain("ListDirectory", names);
+        Assert.DoesNotContain("RunShellCommand", names);
     }
 
     [Fact]
