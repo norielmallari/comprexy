@@ -9,14 +9,6 @@ import { API_BASE_URL } from '@/lib/constants';
 import { ApiError } from '@/types/api';
 
 /**
- * Standard API response shape.
- */
-interface ApiResponse<T> {
-  data: T;
-  error?: ApiError;
-}
-
-/**
  * Fetch configuration options.
  */
 interface FetchOptions extends RequestInit {

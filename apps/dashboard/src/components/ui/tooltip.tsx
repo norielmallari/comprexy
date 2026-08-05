@@ -4,7 +4,7 @@
 
 'use client';
 
-import React, { createContext, useContext, useState, useCallback, useRef, useEffect } from 'react';
+import React, { createContext, useContext, useState, useCallback, useId, useEffect, useRef } from 'react';
 
 import { cn } from '@/lib/utils';
 
@@ -36,22 +36,14 @@ interface TooltipProps {
   delayDuration?: number;
 }
 
-let tooltipInstanceCounter = 0;
-
-/**
- * Generates a stable tooltip ID that is deterministic across
- * server and client renders. Uses a module-level counter seeded
- * by a hash of the module path so the sequence is consistent
- * regardless of render order differences between SSR and client.
- */
-function generateTooltipId() {
-  tooltipInstanceCounter += 1;
-  return `tooltip-${tooltipInstanceCounter.toString(36).padStart(4, '0')}`;
-}
-
-export function Tooltip({ children, defaultOpen = false, open: controlledOpen, onOpenChange, delayDuration = 0 }: TooltipProps) {
+export function Tooltip({
+  children,
+  defaultOpen = false,
+  open: controlledOpen,
+  onOpenChange,
+}: TooltipProps) {
   const [internalOpen, setInternalOpen] = useState(defaultOpen);
-  const tooltipId = useRef(generateTooltipId()).current;
+  const tooltipId = useId();
   const triggerId = `${tooltipId}-trigger`;
   const contentId = `${tooltipId}-content`;
 
