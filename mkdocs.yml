@@ -1,0 +1,132 @@
+site_name: Comprexy OSS
+site_description: "Comprexy OSS — OpenAI-compatible Comprehension Proxy"
+site_url: https://comprexy.dev
+repo_url: https://github.com/norielmallari/comprexy
+repo_name: norielmallari/comprexy
+edit_uri: edit/main/docs/
+copyright: Copyright &copy; Comprexy OSS contributors &mdash; Apache License 2.0
+
+theme:
+  name: material
+  language: en
+  logo: assets/logo.svg
+  favicon: assets/favicon.svg
+  icon:
+    repo: fontawesome/brands/github
+  font:
+    text: IBM Plex Sans
+    code: IBM Plex Mono
+  palette:
+    - media: "(prefers-color-scheme)"
+      toggle:
+        icon: material/brightness-auto
+        name: Switch to light mode
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: custom
+      accent: custom
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: custom
+      accent: custom
+      toggle:
+        icon: material/brightness-4
+        name: Switch to system preference
+  features:
+    - navigation.instant
+    - navigation.instant.prefetch
+    - navigation.tracking
+    - navigation.tabs
+    - navigation.sections
+    - navigation.path
+    - navigation.top
+    - search.suggest
+    - search.highlight
+    - search.share
+    - content.code.copy
+    - content.code.annotate
+    - content.tabs.link
+    - content.tooltips
+    - toc.follow
+
+nav:
+  - Home: index.md
+  - Guides:
+    - Getting Started: getting-started.md
+    - Installation: installation.md
+    - Dashboard: dashboard.md
+    - Benchmarks:
+      - Overview: benchmarks.md
+      - Evidence 5ca87ca: evidence/5ca87ca.md
+      - Evidence 721ea29: evidence/721ea29.md
+      - Evidence d2e0faa: evidence/d2e0faa.md
+      - Evidence 65f1b1b: evidence/65f1b1b.md
+      - Evidence 62ef018: evidence/62ef018.md
+    - FAQ: faq.md
+  - Reference:
+    - Architecture: ARCHITECTURE.md
+    - Configuration: SETTINGS.md
+  - Project:
+    - Release Notes:
+      - Overview: release-notes.md
+      - v0.1.2: release-notes/RELEASE_NOTES_v0.1.2.md
+      - v0.1.1: release-notes/RELEASE_NOTES_v0.1.1.md
+    - Contributing: contributing.md
+
+markdown_extensions:
+  - abbr
+  - admonition
+  - attr_list
+  - def_list
+  - footnotes
+  - md_in_html
+  - tables
+  - toc:
+      permalink: true
+  - pymdownx.betterem
+  - pymdownx.caret
+  - pymdownx.details
+  - pymdownx.emoji:
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg
+  - pymdownx.highlight:
+      anchor_linenums: true
+      line_spans: __span
+      pygments_lang_class: true
+  - pymdownx.inlinehilite
+  - pymdownx.keys
+  - pymdownx.mark
+  - pymdownx.smartsymbols
+  - pymdownx.snippets
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.tabbed:
+      alternate_style: true
+      slugify: !!python/object/apply:pymdownx.slugs.slugify
+        kwds:
+          case: lower
+  - pymdownx.tasklist:
+      custom_checkbox: true
+  - pymdownx.tilde
+
+plugins:
+  - search:
+      lang: en
+
+extra_css:
+  - stylesheets/extra.css
+
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/norielmallari/comprexy
+      name: GitHub
+    - icon: material/file-document-outline
+      link: https://www.apache.org/licenses/LICENSE-2.0
+      name: Apache License 2.0

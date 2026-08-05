@@ -1,0 +1,30 @@
+/* Custom palette — tuned for WCAG AA (4.5:1) on light and slate surfaces.
+   Stock Material blue (#2094f3) and teal accent (#00bda4) fail AA on white. */
+
+:root {
+  --md-primary-fg-color: #0b3d5c;
+  --md-primary-fg-color--light: #1a5a7a;
+  --md-primary-fg-color--dark: #072a40;
+  --md-primary-bg-color: #ffffff;
+  --md-primary-bg-color--light: #ffffffb3;
+
+  --md-accent-fg-color: #0f766e;
+  --md-accent-fg-color--transparent: #0f766e1a;
+  --md-accent-bg-color: #ffffff;
+  --md-accent-bg-color--light: #ffffffb3;
+
+  --md-typeset-a-color: #0b5f8a;
+}
+
+[data-md-color-scheme="slate"] {
+  --md-hue: 210;
+
+  --md-primary-fg-color: #0b3d5c;
+  --md-primary-fg-color--light: #1a5a7a;
+  --md-primary-fg-color--dark: #072a40;
+
+  --md-accent-fg-color: #2dd4bf;
+  --md-accent-fg-color--transparent: #2dd4bf1a;
+
+  --md-typeset-a-color: #6eb6d9;
+}

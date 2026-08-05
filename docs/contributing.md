@@ -2,7 +2,7 @@
 
 Thanks for contributing.
 
-This repository is the **Apache 2.0–licensed open core** of Comprexy OSS. Features, bug fixes, documentation, and compatibility improvements are welcome. Further product work may also continue as Comprexy (separate from this tree); branding remains subject to the README [Trademark](README.md#trademark) terms. See [Project direction](README.md#project-direction). Contributions are accepted under the same [Apache License 2.0](LICENSE) (see Apache License §5).
+This repository is the **Apache 2.0–licensed open core** of Comprexy OSS. Features, bug fixes, documentation, and compatibility improvements are welcome. Further product work may also continue as Comprexy (separate from this tree); branding remains subject to the README [Trademark](https://github.com/norielmallari/comprexy/blob/main/README.md#trademark) terms. See [Project direction](https://github.com/norielmallari/comprexy/blob/main/README.md#project-direction). Contributions are accepted under the same [Apache License 2.0](https://github.com/norielmallari/comprexy/blob/main/LICENSE) (see Apache License §5).
 
 ## Prerequisites
 
@@ -37,7 +37,7 @@ tests/
   Comprexy.ControlApi.Tests/
 
 docs/
-  ARCHITECTURE.md            System map (chat lifecycle, Virtual Tools, persistence)
+  ARCHITECTURE.md            System map (chat lifecycle, Virtual Tools, client rules, persistence)
   SETTINGS.md                Operator config reference (including ToolSchema)
 ```
 
@@ -77,6 +77,26 @@ cp apps/control-api/appsettings.Local.json.example apps/control-api/appsettings.
 ```
 
 Use Local for upstream `Provider` settings and optional `Trace:RequestFiles` audit logging. Omit keys you do not intend to override.
+
+## CI
+
+GitHub Actions builds on push to `main`. The workflow is defined in `.github/workflows/deploy.yml` and targets GitHub Pages.
+
+## Benchmark harness
+
+`tests/Comprexy.Bench` replays a frozen prompt list through a Microsoft Agent Framework coding agent twice — once with client-side compaction alone (`ToolSchema:Mode=Off`, unreachable soft limit) and once with Comprexy compression plus Virtual Tools — against harness-spawned proxy and control-api hosts on a dedicated `data/comprexy-bench.db`.
+
+The default MAF client tool catalog is sized for IDE-comparable Off-arm `tools[]` weight (~15–16k cl100k tokens on compact OpenAI tool JSON): enriched file/shell schemas, denylist stubs whose names match stock `ToolSchema:ExcludeFromModelTools`, and a `Task` passthrough stub (not denylisted). WriteFile/EditFile stay real workspace backends. New `manifest.json` harness settings stamp `ClientToolCatalogVersion` (for example `ide-band-v1`). Lean evidence such as `docs/evidence/65f1b1b.md` was measured on the earlier 6-tool catalog and is **not** catalog-comparable to post-`ide-band-v1` runs.
+
+```bash
+./comprexy.sh bench run                              # spawn hosts, run both arms, write manifest.json
+./comprexy.sh bench report --run-id <runId>          # join control-api metrics, draft summary.md
+./comprexy.sh bench publish --run-id <runId> --confirm  # copy the reviewed summary to docs/evidence/
+```
+
+Each run writes to a gitignored directory named for the UTC minute it started, `reports/bench/20260801-1200/`, so a repeat never overwrites earlier artifacts. Only reviewed summaries are committed. Token numbers come from Comprexy's own turn metrics, so a run needs a configured provider and enough wall clock for two full passes.
+
+By default, if the `maf-compact` arm fails with a provider/context error after X prompts (HTTP 502, completion stall, context overflow), the `comprexy` arm stops once it completes X+1 (`survived_baseline_failure`) instead of finishing the script. Opt out with `--continue-past-baseline-failure` (optional `--survival-margin <n>`). Heavier Off-arm tool catalogs can move that kill point earlier; do not weaken survival defaults to chase continuity with lean catalog evidence.
 
 ## Documentation
 

@@ -11,9 +11,7 @@ wip: initial implementation of dashboard and tests
 
 ## Content
 
-Validated long-context compression across a 125-turn development workflow continuing the Comprexy Metrics Dashboard under `apps/dashboard/` (layout spacing, chart height, and bar-chart x-axis label clearance).
-
-Without Comprexy, this run would not have stayed workable. In this local-LLM setup, Qwen-35B becomes very slow past about 64k prompt tokens, so an uncompressed baseline that climbs past 100k would stall the agent loop. Comprexy kept the upstream prompt in a bounded window (about 15–60k actual prompt tokens after working-memory folds — under that 64k comfort ceiling), so the agent could finish dashboard UI fixes in one continuous conversation.
+Validated long-context compression across a 125-turn development workflow continuing the Comprexy Metrics Dashboard under `apps/dashboard/` (layout spacing, chart height, and bar-chart x-axis label clearance). In this local-LLM setup (Qwen-35B), actual upstream prompts stayed roughly 15–60k after working-memory folds while baselines climbed to 124k by turn 125.
 
 ### Coverage note
 
@@ -75,7 +73,7 @@ Working memory adoption was the dominant compression driver. The pre-WM phase ra
 
 ### Key Observations
 
-1. **Comprexy enabled a continuous dashboard UI workflow**: layout and chart polish across 125 tool-heavy turns in one parent conversation, by keeping the upstream prompt under the ~64k local-LLM comfort ceiling where this Qwen-35B setup stays responsive. Subagent token usage is outside this evidence set.
+1. **Continuous dashboard workflow across 125 parent-session turns**: layout and chart polish with upstream prompts typically 15–60k after folds (64k soft-limit configuration). Subagent token usage is outside this evidence set.
 
 2. **Three working memory versions**: first fold at turn 22 (WM v1); WM v2 from turn 50; WM v3 from turn 99 through the final turn.
 
