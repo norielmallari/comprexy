@@ -1,0 +1,2220 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Comprexy OSS — OpenAI-compatible Comprehension Proxy">
+      
+      
+      
+        <link rel="canonical" href="https://comprexy.dev/ARCHITECTURE/">
+      
+      
+        <link rel="prev" href="../faq/">
+      
+      
+        <link rel="next" href="../SETTINGS/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../assets/favicon.svg">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
+    
+    
+      
+        <title>Architecture - Comprexy OSS</title>
+      
+    
+    
+      <link rel="stylesheet" href="../assets/stylesheets/main.ec1eaa64.min.css">
+      
+        
+        <link rel="stylesheet" href="../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=IBM+Plex+Sans:300,300i,400,400i,700,700i%7CIBM+Plex+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"IBM Plex Sans";--md-code-font:"IBM Plex Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../stylesheets/extra.css">
+    
+    <script>__md_scope=new URL("..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#architecture" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+<header class="md-header" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href=".." title="Comprexy OSS" class="md-header__button md-logo" aria-label="Comprexy OSS" data-md-component="logo">
+      
+  <img src="../assets/logo.svg" alt="logo">
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            Comprexy OSS
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Architecture
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme)" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="m14.3 16-.7-2h-3.2l-.7 2H7.8L11 7h2l3.2 9zM20 8.69V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12zm-9.15 3.96h2.3L12 9z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: light)" data-md-color-scheme="default" data-md-color-primary="custom" data-md-color-accent="custom"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_2" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a4 4 0 0 0-4 4 4 4 0 0 0 4 4 4 4 0 0 0 4-4 4 4 0 0 0-4-4m0 10a6 6 0 0 1-6-6 6 6 0 0 1 6-6 6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: dark)" data-md-color-scheme="slate" data-md-color-primary="custom" data-md-color-accent="custom"  aria-label="Switch to system preference"  type="radio" name="__palette" id="__palette_2">
+    
+      <label class="md-header__button md-icon" title="Switch to system preference" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 18c-.89 0-1.74-.2-2.5-.55C11.56 16.5 13 14.42 13 12s-1.44-4.5-3.5-5.45C10.26 6.2 11.11 6 12 6a6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+          <a href="javascript:void(0)" class="md-search__icon md-icon" title="Share" aria-label="Share" data-clipboard data-clipboard-text="" data-md-component="search-share" tabindex="-1">
+            
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M18 16.08c-.76 0-1.44.3-1.96.77L8.91 12.7c.05-.23.09-.46.09-.7s-.04-.47-.09-.7l7.05-4.11c.54.5 1.25.81 2.04.81a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3c0 .24.04.47.09.7L8.04 9.81C7.5 9.31 6.79 9 6 9a3 3 0 0 0-3 3 3 3 0 0 0 3 3c.79 0 1.5-.31 2.04-.81l7.12 4.15c-.05.21-.08.43-.08.66 0 1.61 1.31 2.91 2.92 2.91s2.92-1.3 2.92-2.91A2.92 2.92 0 0 0 18 16.08"/></svg>
+          </a>
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/norielmallari/comprexy" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+  </div>
+  <div class="md-source__repository">
+    norielmallari/comprexy
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+            
+<nav class="md-tabs" aria-label="Tabs" data-md-component="tabs">
+  <div class="md-grid">
+    <ul class="md-tabs__list">
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href=".." class="md-tabs__link">
+        
+  
+  
+    
+  
+  Home
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../getting-started/" class="md-tabs__link">
+          
+  
+  
+  Guides
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+    
+  
+  
+    
+    
+      <li class="md-tabs__item md-tabs__item--active">
+        <a href="./" class="md-tabs__link">
+          
+  
+  
+  Reference
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../release-notes/" class="md-tabs__link">
+          
+  
+  
+  Project
+
+        </a>
+      </li>
+    
+  
+
+    
+  
+
+      
+    </ul>
+  </div>
+</nav>
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+  
+
+
+<nav class="md-nav md-nav--primary md-nav--lifted" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href=".." title="Comprexy OSS" class="md-nav__button md-logo" aria-label="Comprexy OSS" data-md-component="logo">
+      
+  <img src="../assets/logo.svg" alt="logo">
+
+    </a>
+    Comprexy OSS
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/norielmallari/comprexy" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+  </div>
+  <div class="md-source__repository">
+    norielmallari/comprexy
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href=".." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Guides
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Guides
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../getting-started/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Getting Started
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../installation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Installation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../dashboard/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Dashboard
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_2_4" id="__nav_2_4_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Benchmarks
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_2_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Benchmarks
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../benchmarks/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../evidence/5ca87ca/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Evidence 5ca87ca
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../evidence/721ea29/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Evidence 721ea29
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../evidence/d2e0faa/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Evidence d2e0faa
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../evidence/65f1b1b/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Evidence 65f1b1b
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../evidence/62ef018/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Evidence 62ef018
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../faq/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    FAQ
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" checked>
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Reference
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Reference
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#purpose" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Purpose
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#solution-layout" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Solution layout
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#runtime-shape" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Runtime shape
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#chat-request-lifecycle" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Chat request lifecycle
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Chat request lifecycle">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#outgoing-context" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Outgoing context
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#budgets-and-compression" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Budgets and compression
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Budgets and compression">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#closed-tool-chains" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Closed tool chains
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#soft-chat-concurrency" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Soft / chat concurrency
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#persistence" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Persistence
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Persistence">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#unit-of-work-ownership" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Unit of Work ownership
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#tool-schema-virtual-tools" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Tool schema (Virtual Tools)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#supporting-pieces" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Supporting pieces
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#debugging-with-logs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Debugging with logs
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#configuration-surfaces" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Configuration surfaces
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#boundaries-and-constraints" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Boundaries and constraints
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#where-to-change-what" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Where to change what
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../SETTINGS/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Configuration
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Project
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Project
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_1" >
+        
+          
+          <label class="md-nav__link" for="__nav_4_1" id="__nav_4_1_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Release Notes
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_1_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4_1">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Release Notes
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../release-notes/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../release-notes/RELEASE_NOTES_v0.1.2/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    v0.1.2
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../release-notes/RELEASE_NOTES_v0.1.1/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    v0.1.1
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../contributing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Contributing
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#purpose" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Purpose
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#solution-layout" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Solution layout
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#runtime-shape" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Runtime shape
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#chat-request-lifecycle" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Chat request lifecycle
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Chat request lifecycle">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#outgoing-context" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Outgoing context
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#budgets-and-compression" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Budgets and compression
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Budgets and compression">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#closed-tool-chains" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Closed tool chains
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#soft-chat-concurrency" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Soft / chat concurrency
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#persistence" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Persistence
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Persistence">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#unit-of-work-ownership" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Unit of Work ownership
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#tool-schema-virtual-tools" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Tool schema (Virtual Tools)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#supporting-pieces" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Supporting pieces
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#debugging-with-logs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Debugging with logs
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#configuration-surfaces" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Configuration surfaces
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#boundaries-and-constraints" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Boundaries and constraints
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#where-to-change-what" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Where to change what
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+                
+
+
+
+  
+
+
+  <nav class="md-path" aria-label="Navigation" >
+    <ol class="md-path__list">
+      
+        
+  
+  
+    <li class="md-path__item">
+      <a href=".." class="md-path__link">
+        
+  <span class="md-ellipsis">
+    Home
+  </span>
+
+      </a>
+    </li>
+  
+
+      
+      
+        
+  
+  
+    
+    
+      <li class="md-path__item">
+        <a href="./" class="md-path__link">
+          
+  <span class="md-ellipsis">
+    Reference
+  </span>
+
+        </a>
+      </li>
+    
+  
+
+      
+    </ol>
+  </nav>
+
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="architecture">Architecture<a class="headerlink" href="#architecture" title="Permanent link">&para;</a></h1>
+<p>Contributor-oriented map of how Comprexy is structured and how a chat request moves through the system. Operator setup and config tables live in <a href="../SETTINGS/"><code>SETTINGS.md</code></a>.</p>
+<h2 id="purpose">Purpose<a class="headerlink" href="#purpose" title="Permanent link">&para;</a></h2>
+<p>Comprexy OSS is an OpenAI-compatible <strong>Comprehension Proxy</strong>: it sits between an LLM client and an upstream <code>/v1</code> provider and manages what the model must comprehend each turn — bounded chat context plus the model-facing tool surface — so long sessions stay within a soft token budget on local or frontier endpoints.</p>
+<p>It persists conversation turns locally and folds older history into a versioned <strong>working memory</strong> without turning every reply into a blocking compact. Under Virtual Tools (default): compact <code>comprexy_*</code> IR tools for file and shell families, optional operator denylist (<code>ExcludeFromModelTools</code>), deterministic remap to native client tools, and distilled IR observations in the stored transcript. <strong>Client rules</strong> extract Cursor/Kilo attached rule bodies each prepare, inject pending overlays outside the frozen Cache Alignment Prefix, and fold standing rules into WM <code>## Rules</code> on Inline accept.</p>
+<p>Adjacent surfaces (same SQLite, separate hosts): control-api token metrics / telemetry MCP, optional dashboard UI, and the <code>Comprexy.Bench</code> harness for reproducible comparisons. Those surfaces observe and measure; they do not widen the chat path into a gateway or router.</p>
+<p>It is intentionally narrow: chat-completion context management (including tool-surface management) only — not a multi-provider gateway, router, billing layer, or agent framework.</p>
+<h2 id="solution-layout">Solution layout<a class="headerlink" href="#solution-layout" title="Permanent link">&para;</a></h2>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>apps/
+</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>  proxy/                     # Data plane: Comprexy.Api host (`Endpoints/`), chat DTOs, prompts
+</span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>  control-api/               # Control plane: REST metrics (`GET /v1/comprexy/*`) + telemetry MCP (`/mcp`)
+</span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>  dashboard/                 # Optional Next.js metrics UI over control-api (`:3000`)
+</span><span id="__span-0-5"><a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>  website/                   # Marketing site (Next.js); not on the chat/metrics path
+</span><span id="__span-0-6"><a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a>src/
+</span><span id="__span-0-7"><a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a>  Comprexy.Application/      Use cases, ports (abstractions), orchestration
+</span><span id="__span-0-8"><a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a>  Comprexy.Domain/           Entities and enums (no infrastructure deps)
+</span><span id="__span-0-9"><a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a>  Comprexy.Infrastructure/   EF Core/SQLite, HTTP upstream client, tokenizer, shared hosting
+</span><span id="__span-0-10"><a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a>
+</span><span id="__span-0-11"><a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a>tests/
+</span><span id="__span-0-12"><a id="__codelineno-0-12" name="__codelineno-0-12" href="#__codelineno-0-12"></a>  Comprexy.Application.Tests/
+</span><span id="__span-0-13"><a id="__codelineno-0-13" name="__codelineno-0-13" href="#__codelineno-0-13"></a>  Comprexy.ControlApi.Tests/
+</span><span id="__span-0-14"><a id="__codelineno-0-14" name="__codelineno-0-14" href="#__codelineno-0-14"></a>  Comprexy.Bench/               # Benchmark harness CLI (spawns proxy/control-api hosts; not a test suite)
+</span><span id="__span-0-15"><a id="__codelineno-0-15" name="__codelineno-0-15" href="#__codelineno-0-15"></a>  Comprexy.Bench.Conversations/ # Frozen prompt lists and the agent preamble for the harness
+</span></code></pre></div>
+<table>
+<thead>
+<tr>
+<th>Layer</th>
+<th>Responsibility</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Proxy (<code>apps/proxy</code>)</strong></td>
+<td>Parse OpenAI-shaped JSON, map errors/status codes, stream SSE, optional API-key gate, composition root for chat</td>
+</tr>
+<tr>
+<td><strong>Control API (<code>apps/control-api</code>)</strong></td>
+<td>Operator REST metrics and remote telemetry MCP (Streamable HTTP at <code>/mcp</code>); shares Application/Infrastructure and SQLite with the proxy. Operator control-api also owns local <strong>benchmark orchestration</strong> (<code>POST /v1/comprexy/benchmarks/runs</code>, file-backed registry under <code>reports/bench/</code>, single active-run lock).</td>
+</tr>
+<tr>
+<td><strong>Dashboard (<code>apps/dashboard</code>)</strong></td>
+<td>Optional browser UI for conversation metrics over control-api REST; does not talk to the proxy or SQLite directly</td>
+</tr>
+<tr>
+<td><strong>Application</strong></td>
+<td>Conversation identity, prepare/complete chat, soft-budget decisions, context rebuild, Inline wrap-up, Virtual Tools (ToolSchema / ToolIr), client rules (detect / consolidate / inject), token metrics / telemetry query facade, conversation retrieval (RAG) query facade</td>
+</tr>
+<tr>
+<td><strong>Domain</strong></td>
+<td><code>EntityBase</code>, <code>Conversation</code>, <code>ConversationMessage</code>, <code>WorkingMemory</code>, <code>CompressionEvent</code>, <code>ConversationTurnMetric</code>, <code>ConversationMetricsSummary</code>, <code>ConversationToolCatalog</code>, <code>ConversationToolDefinition</code>, <code>ConversationToolCallMap</code> and related enums</td>
+</tr>
+<tr>
+<td><strong>Infrastructure</strong></td>
+<td>Persistence, OpenAI-compatible HTTP client, tiktoken estimates, shared API-key middleware</td>
+</tr>
+</tbody>
+</table>
+<p>Dependency rule: hosts → Application → Domain; Infrastructure implements Application ports. Prefer constructor injection; register app services in <code>AddComprexyApplication</code> (pass <code>enableProxyServices: false</code> on control-api), adapters in <code>AddComprexyInfrastructure</code>.</p>
+<h2 id="runtime-shape">Runtime shape<a class="headerlink" href="#runtime-shape" title="Permanent link">&para;</a></h2>
+<pre class="mermaid"><code>flowchart TB
+  Client[LLM client] --&gt; Api["apps/proxy /v1"]
+  Api --&gt; Proxy[ProxyChatCompletionService]
+  Proxy --&gt; Gate[ConversationRequestGate]
+  Proxy --&gt; DB[(SQLite data/comprexy.db)]
+  Proxy --&gt; Upstream[IChatCompletionClient]
+  Api --&gt; Pass[UpstreamPassthroughProxy]
+  Pass --&gt; Provider[Other /v1/* upstream]
+  Ops[Operator / MCP client] --&gt; Control["apps/control-api /v1/comprexy + /mcp"]
+  Dashboard["apps/dashboard :3000"] --&gt; Control
+  Control --&gt; DB</code></pre>
+<ul>
+<li><strong>Chat path:</strong> <code>POST /v1/chat/completions</code> → <code>ProxyChatCompletionService</code> (rebuild, soft budget, Inline wrap-up).</li>
+<li><strong>Metrics path:</strong> <code>GET /v1/comprexy/conversations*</code> on <strong>control-api</strong> (<code>:8130</code>) → conversation token proof summaries and per-turn breakdown. Proxy emits/persists metrics; it does not serve query routes. SoftBudget headline figures use IrFull vs Prepared when IrFull is present; NativeRaw − IrFull is exposed as the virtual-tools / native-wire channel. The per-turn prepared-prompt split (system / working memory / history + tools) is derived read-side by <code>ConversationMetricsQueryService</code> from <code>Conversation.SystemPrompt</code> (BaseSystem only) and stored <code>WorkingMemory.TokenCount</code>; ephemeral injected rule tokens on the live path are not persisted and appear in the history/tools residual. Nothing extra is persisted per turn for rules, and the three parts sum to <code>CompressedInputTokensEstimated</code> so clients render them without re-deriving.</li>
+<li><strong>Benchmark path:</strong> operator control-api (<code>/v1/comprexy/benchmarks/*</code>) spawns the <code>Comprexy.Bench</code> harness CLI, owns outer <code>status.json</code> phases and <code>reports/bench/index.json</code> for dashboard-started runs, and serves presentation/compare endpoints with separated I/O totals. The harness may write in-run progress fields only (<code>runPhase</code>, arm, conversation hints). Bench artifacts stay under <code>reports/bench/</code> — not in the product SQLite schema. CLI and dashboard share <code>reports/bench/.active-run.lock</code> (stale dead-pid reclaim); spawn fails fast if the fixed bench ports are already bound. Dashboard-spawned CLI runs pass <code>--under-orchestrator-lock</code> so they verify rather than re-acquire that lock.</li>
+<li><strong>Dashboard path:</strong> optional <code>apps/dashboard</code> (<code>:3000</code>) browser UI over control-api REST (not the proxy). Enable CORS for the dashboard origin on control-api when needed.</li>
+<li><strong>Telemetry MCP path:</strong> Streamable HTTP at <code>/mcp</code> on <strong>control-api</strong> — same Application read facades as REST (<code>IConversationMetricsQueryService</code> for metrics; <code>IConversationRetrievalQueryService</code> for message/WM RAG). Tools are <code>comprexy_*</code> and require an explicit <code>conversationId</code> (from the proxy meta-tool <code>comprexy_get_current_conversation_id</code>, response header <code>X-Comprexy-Conversation-Id</code>, or operator tooling). Resources use <code>comprexy://conversation/{conversationId}/…</code> templates. Stateless transport; no ambient current-conversation header on MCP. Summary totals, weighted/simple average, peak, and final-turn fields are whole-conversation; median and savings regressions are computed from the bounded <code>TurnIndex</code>-ordered sample and are marked via <code>IsPartialTurnSample</code> when the conversation exceeds the row cap. Retrieval tools search/window <code>ConversationMessage</code> by <code>Sequence</code> and expose versioned <code>WorkingMemory</code> plus open tool-chain status derived via <code>ToolCallChainState</code> (same closed-chain rule as Inline wrap-up; <code>isAwaitingClientToolResults</code> marks tip-only in-flight batches). Host filtering defaults to loopback (<code>AllowedHosts</code>); CORS denies browser origins unless <code>Cors:AllowedOrigins</code> lists them.</li>
+<li><strong>Passthrough path:</strong> other <code>/v1/{**path}</code> → reverse-proxy to <code>Provider</code> unchanged.</li>
+<li><strong>Escape hatch:</strong> <code>Proxy:PassThrough</code> forwards the original chat body with no rebuild, compression, or turn metrics.</li>
+</ul>
+<h2 id="chat-request-lifecycle">Chat request lifecycle<a class="headerlink" href="#chat-request-lifecycle" title="Permanent link">&para;</a></h2>
+<p><code>ProxyChatCompletionService</code> owns one turn end to end (exclusive gate lease, chat <code>IUnitOfWork</code> flushes). Prepare/complete logic lives in <code>Services/ChatTurn/</code> collaborators (<code>ChatTurnPreparer</code>, <code>ChatTurnCompleter</code>, <code>InlineWrapUpRunner</code>, <code>OutgoingContextMaterializer</code>, <code>ClientHistorySynchronizer</code>); they stage repository mutations and named early flushes execute only through the façade-owned chat unit flush.</p>
+<ol>
+<li><strong>Identity</strong> — <code>ConversationIdentityResolver</code>: prefer <code>X-Comprexy-Conversation-Id</code>; else fingerprint system + first two <strong>plain</strong> user turns (Cursor <code>&lt;user_query&gt;</code> extraction / metadata strip; skip Kilo/Cursor tool-echo user turns such as <code>Called the … tool with the following input:</code>).</li>
+<li><strong>Gate</strong> — exclusive lease on the conversation key via <code>ConversationRequestGate</code> (serializes chat + Inline wrap-up for that key).</li>
+<li><strong>Prepare</strong> — load/create conversation; stage new client messages; load latest working memory + unfolded messages; build outgoing context; optionally rewrite tools via ToolSchema (Virtual Tools); evaluate soft budget; set Inline follow-up eligibility when soft pressure + closed stored chain + cooldown.</li>
+<li><strong>Upstream</strong> — non-stream <code>CompleteAsync</code> or stream with SSE; when ToolSchema Virtual is active, conversation-id meta and local file-cache satisfies stay proxy-internal (streaming clients get live content/reasoning with remapped native <code>tool_calls</code> and early <code>[DONE]</code> suppressed until the final client-bound turn); model comes from <code>Provider:Model</code> when set, otherwise the client's request <code>model</code>. On eligible Inline turns, streaming also defers the client tail until the follow-up wrap-up attempt finishes: final <code>[DONE]</code> on every eligible turn, plus the whole real <code>tool_calls</code> tail on mid-chain turns.</li>
+<li><strong>Complete</strong> — persist assistant (and staged user) turns; if Inline eligible, run a blocking wrap-up and two-phase save (visible transcript, then event ± WM); otherwise persist only.</li>
+</ol>
+<p>Persistence timing: new non-assistant messages are staged in prepare and saved in complete after a successful upstream call, except named early flushes (CatalogMutated, snapshot rewind, inbound distill commit before dual-id Complete — see Persistence § Unit of Work ownership). Treat the DB as a record of completed turns unless that contract changes.</p>
+<h3 id="outgoing-context">Outgoing context<a class="headerlink" href="#outgoing-context" title="Permanent link">&para;</a></h3>
+<p>When <code>CacheAlignment:Enabled</code> (default), <code>ICacheAlignmentService</code> owns a process-local <strong>wrap-up-ready message Prefix</strong> per conversation (BaseSystem + optional working-memory system message + closed unfolded raw). Live prepare materializes <code>Prefix[0] ⊕ pendingRuleMessages ⊕ Prefix[1…] ⊕ Suffix</code> verbatim — pending rule messages are ephemeral (not stored in Prefix bytes). No materialize-time omit on the suffix path, so the tip always reaches the model and frozen Prefix bytes are never rewritten mid-conversation. The failed-edit wire omit is applied to the retain window while a cold Prefix is built, which bakes it into those frozen bytes; the omit never sees the tip because the retain window stops before it. Prepare also guards the result: if any projection does not end at the tip, it logs a warning and re-appends the tip. Inline wrap-up appends tip (+ stop-turn visible assistant) via <code>ProjectWrapUp</code> without rewriting Prefix; MidChain-open <code>ProjectWrapUp</code> when rebuilding from stored Prefix alone intentionally omits ephemeral pending (authoritative <code>## Rules</code> overwrite on accept remains mandatory). WM accept calls <code>CommitWorkingMemory</code>; snapshot rewind and Tool IR disable call <code>Invalidate</code>. Tools stay on the wire body, never inside Prefix. <code>GetByConversationIdAsync</code> is unchanged.</p>
+<p>When Cache Alignment is disabled, <code>ContextBuilder.Build</code> assembles roughly:</p>
+<p><code>BaseSystem + optional pending rule messages + optional working-memory system message + still-unfolded raw messages (+ current tip)</code></p>
+<p><strong>Client rules (Cursor / Kilo):</strong> On each non-PassThrough prepare, Application detectors extract rule bodies from the latest client system message and new user/tool transcript slices. <code>RulesConsolidator</code> owns the active set (replace semantics per turn), compares against WM <code>## Rules</code> (<code>### rule:&lt;key&gt;</code> sections), and <code>RulesInjector</code> emits synthetic system messages for rules not yet in WM. Synthetic rule messages are materialize-only — never <code>ConversationMessage</code> rows. Inline accept deterministically overwrites WM <code>## Rules</code> from the consolidator snapshot (inserts the section when missing). <code>Conversation.SystemPrompt</code> stores BaseSystem (rules stripped); refresh invalidates Cache Alignment Prefix when BaseSystem text changes.</p>
+<p>Working memory is omitted until the first successful compression; the rebuild path is otherwise the same. Prefer <code>RawWireJson</code> on stored messages when rebuilding wire-faithful turns (tool_calls, multimodal parts). Under Virtual Tools the stored transcript is IR-side (Virtual tool names + distilled observations) — never re-forward the client’s native remapped tool history as the model transcript. <code>Proxy:PassThrough</code> is the only full bypass (no rebuild, Virtual, compression, or rules path). Conversation identity for agents that need a UUID is available via the ToolSchema meta-tool <code>comprexy_get_current_conversation_id</code> (not injected into the prompt).</p>
+<h2 id="budgets-and-compression">Budgets and compression<a class="headerlink" href="#budgets-and-compression" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Trigger</th>
+<th>Behavior</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Under soft</td>
+<td>Forward; no wrap-up eligibility</td>
+</tr>
+<tr>
+<td>Above soft (eligible turn), Inline</td>
+<td>After visible answer, blocking follow-up wrap-up produces WM; accept on complete</td>
+</tr>
+<tr>
+<td>Above soft, ineligible</td>
+<td>Forward; persist only (cooldown, or no repairable non-empty closed prefix)</td>
+</tr>
+</tbody>
+</table>
+<p>Soft Inline:</p>
+<ul>
+<li><strong>Inline</strong> (<code>ProxyChatCompletionService</code>): the main/live chat call is unmodified (no Inline system protocol or tip). On soft pressure (cooldown permitting), prepare sets <code>InlineFollowUpEligible</code> when stored history is closed or an open history has a repairable non-empty closed prefix. After the visible answer completes successfully, Comprexy issues a non-stream, proxy-internal wrap-up <code>CompleteAsync</code> on the same live endpoint, reusing the live turn's sampling / <code>chat_template_*</code> wire shape (<code>Purpose=Compression</code> for compression trace labels) and <strong>keeping</strong> the live <code>tools</code> / <code>functions</code> catalog for provider KV alignment (many local chat templates render tools early in the prompt). Wrap-up sets <code>tool_choice</code> / <code>function_call</code> to <code>none</code> so it cannot continue the agent tool loop. Comprexy still accepts client <code>functions</code> catalogs on the live path (ToolSchema converts them to <code>tools</code>). Wrap-up shape depends on the visible answer and prepare state: <strong>stop-turn</strong> appends the upstream assistant wire message plus a WM tip (<code>compression-inline.md</code> + shared template) and folds including that assistant (Id-deduped with the post–phase-1 store); <strong>mid-chain</strong> appends the tip only and folds/retains a repaired closed stored prefix. A live answer with open <code>tool_calls</code>, or any eligible turn whose store was open at prepare, uses mid-chain geometry. The open-store path rebuilds a closed-world wrap-up corpus instead of reusing open-inclusive live messages. Open assistants and all tool results for their announced ids stay unfolded for the next hop. A wrap-up reply that still carries <code>tool_calls</code> (or <code>finish_reason=tool_calls</code>) soft-fails as <code>wrapup_tool_calls</code>. Streaming holds the client tail until wrap-up finishes (success or soft-fail): stop-turn keeps content live and holds only <code>[DONE]</code>; mid-chain buffers every client-visible frame from the first real <code>tool_calls</code> delta through the finish frame, then flushes those frames in order followed by <code>[DONE]</code>, so the client executes tools only after the checkpoint attempt resolves. ToolSchema meta / local-satisfy frames stay proxy-internal and are never part of the held tail. Persistence is two-phase under the exclusive gate: phase 1 saves the visible transcript; phase 2 records <code>CompressionEvent</code> mode <code>Inline</code> and, on accept, appends WM + tip retain fold via <code>CompressionRetainMessageCount</code>. Soft failure never overwrites last known-good WM. Wrap-up user/assistant turns are not persisted. <code>MinTurnsBetweenGenerations</code> cooldown applies after successful Inline events only. Client abort after the main answer is assembled does not cancel wrap-up (post-main work uses <code>ApplicationStopping</code> only).</li>
+<li><strong>Working memory</strong>: append-only versions. Failed wrap-ups must not overwrite the last known-good version. Folding sets <code>ConversationMessage.FoldedIntoWorkingMemoryVersion</code>. Wrap-up prompts ask for <strong>literal post-edit line pins</strong> under Files And Code Context / Recent Corrections (not paraphrase-only) so the next hop can re-edit without chasing a ghost <code>old_string</code>, and instruct wrap-up to <strong>preserve Rules</strong> (carry forward prior standing rules; never drop the <code>## Rules</code> section). When the fold universe still has failed file edits on path P, the last successful mutation atomic group for P is forced into the retain set alongside <code>CompressionRetainMessageCount</code> (<code>HotPathSuccessfulEditRetainer</code>).</li>
+<li>Live outgoing context also wire-omits older identical <strong>failed</strong> file-edit tool results (path + <code>old_string</code> last-wins) when <code>DedupeDuplicateFailedEdits</code> is on: applied to the retain window (at cold Prefix build under Cache Alignment, otherwise inside <code>ContextBuilder.Build</code>), never on the tip, and never <code>MarkFoldedInto</code> — durable folding still sees every stored row.</li>
+</ul>
+<h3 id="closed-tool-chains">Closed tool chains<a class="headerlink" href="#closed-tool-chains" title="Permanent link">&para;</a></h3>
+<p>Inline prefers closed <strong>stored</strong> unfolded history (every assistant <code>tool_call</code> id has a matching tool result). Under soft pressure and outside cooldown, an open stored chain may still schedule a MidChainPrefix wrap-up when exclusion produces a non-empty closed prefix. Exclusion removes each open assistant and every matched or unmatched tool result for its announced ids from the fold and wrap-up corpus. Those messages remain unfolded. If the frontier cannot be repaired, or no closed prefix remains, Inline stays ineligible and the visible turn is persisted without replacing working memory.</p>
+<h3 id="soft-chat-concurrency">Soft / chat concurrency<a class="headerlink" href="#soft-chat-concurrency" title="Permanent link">&para;</a></h3>
+<p><code>ConversationRequestGate</code> is process-local: chat prepare/complete (including Inline wrap-up) takes an exclusive lease on the conversation key.</p>
+<h2 id="persistence">Persistence<a class="headerlink" href="#persistence" title="Permanent link">&para;</a></h2>
+<p>SQLite via EF Core (<code>ComprexyDbContext</code>). Hosts default to shared <code>data/comprexy.db</code> under the repo root; WAL + busy timeout apply on connect. Migrations run at startup; proxy <code>--clear-db</code> rebuilds from migrations.</p>
+<p>Persisted rows inherit <code>EntityBase</code>: sequential <code>ClusterId</code> (<code>long</code>, physical column 0 / SQL Server clustering surrogate) then GUID <code>Id</code> (physical column 1, primary key and app/FK identity, also returned on <code>X-Comprexy-Conversation-Id</code> for conversations). <code>ClusterId</code> is not domain identity. On SQLite, <code>ClusterIdSaveChangesInterceptor</code> assigns values; a future SQL Server provider should use IDENTITY + clustered index on <code>ClusterId</code> with a nonclustered GUID PK. Shared EF layout: <code>EntityBaseConfiguration.ConfigureKeys</code> (<code>HasColumnOrder</code> 0 / 1).</p>
+<p><code>DateTimeOffset</code> columns are stored as UTC ticks (<code>INTEGER</code>) so SQLite can filter/order timestamps server-side; converters live under <code>Persistence/Converters</code> and are registered in <code>ComprexyDbContext.ConfigureConventions</code>. EF query warnings default to throw — do not materialize then sort/filter in memory.</p>
+<p>Message conversational order is <code>ConversationMessage.Sequence</code> (unique per conversation), not <code>CreatedAt</code> or <code>ClusterId</code>. Repositories load messages with <code>OrderBy(Sequence)</code>.</p>
+<table>
+<thead>
+<tr>
+<th>Entity</th>
+<th>Role</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>Conversation</code></td>
+<td>Stable key, captured system prompt, <code>SyncedMessageCount</code> cursor</td>
+</tr>
+<tr>
+<td><code>ConversationMessage</code></td>
+<td>Ordered raw turns; optional wire JSON; fold marker</td>
+</tr>
+<tr>
+<td><code>WorkingMemory</code></td>
+<td>Immutable versioned markdown snapshot + token count</td>
+</tr>
+<tr>
+<td><code>CompressionEvent</code></td>
+<td>Attempt diagnostics (mode, status, WM tokens, compression LLM usage, duration, error)</td>
+</tr>
+<tr>
+<td><code>ConversationTurnMetric</code></td>
+<td>Per successful compressed-path turn: three tiktoken estimates when metrics are on — <code>RawInputTokensEstimated</code> (NativeRaw: client wire + native tools), nullable <code>IrFullInputTokensEstimated</code> (IR tools + full unfolded IR transcript, no WM fold), and <code>CompressedInputTokensEstimated</code> (Prepared: IR tools + prepared outgoing with WM/retain). SoftBudget <code>NetTokensSaved</code> is IrFull − Prepared when IrFull is present; legacy null IrFull keeps NativeRaw − Prepared. <code>VirtualToolsTokensSaved</code> is NativeRaw − IrFull (nullable; can be negative when IR history tax exceeds native-wire catalog savings). <code>ActualPromptTokens</code> is accuracy-only on the SoftBudget ledger (<code>PromptEstimateError</code>), not part of persisted <code>NetTokensSaved</code>. Metrics reads may project totals with <code>Metrics:PromptTokenBasis=ProviderActual</code> (prefer upstream <code>usage.prompt_tokens</code>, scale NativeRaw and IrFull by actual/prepared-estimate) without rewriting rows. When CacheAlignment is on and WM is present, SoftBudget compares fold-dominant Prepared (may use Prefix) vs Build-without-WM IrFull — not a byte-identical Prefix A/B. Nullable <code>PrepareDurationMs</code> / <code>UpstreamDurationMs</code> / <code>DurationMs</code> are proxy-measured wall clocks for the turn (prepare, provider call, and accept-through-metric-write); Inline wrap-up is timed separately on <code>CompressionEvent.DurationMs</code>, and rows written before timing capture stay null</td>
+</tr>
+<tr>
+<td><code>ConversationMetricsSummary</code></td>
+<td>Conversation rollup of SoftBudget estimate-based savings (<code>TotalNetTokensSaved</code>), <code>TotalVirtualToolsTokensSaved</code>, plus compression / Inline wrap-up / Tool IR mapper LLM overhead</td>
+</tr>
+<tr>
+<td><code>ConversationToolCatalog</code></td>
+<td>Per-conversation Virtual Tools mapping snapshot (<code>CatalogHash</code> + validated <code>MappingJson</code>; <code>ToolIrDisabled</code> on mapper failure)</td>
+</tr>
+<tr>
+<td><code>ConversationToolDefinition</code></td>
+<td>Full client tool definition JSON for passthrough and arg shapes</td>
+</tr>
+<tr>
+<td><code>ConversationToolCallMap</code></td>
+<td>Durable pending IR↔client <code>tool_call_id</code> dual identity for open Virtual Tools rounds (hot cache in process memory)</td>
+</tr>
+</tbody>
+</table>
+<h3 id="unit-of-work-ownership">Unit of Work ownership<a class="headerlink" href="#unit-of-work-ownership" title="Permanent link">&para;</a></h3>
+<p>Repositories stage changes on the request-scoped <code>ComprexyDbContext</code>. Only these owners call <code>IUnitOfWork.SaveChangesAsync</code>:</p>
+<table>
+<thead>
+<tr>
+<th>Owner</th>
+<th>Role</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>ProxyChatCompletionService</code></td>
+<td>Chat path: complete; Inline two-phase; CatalogMutated; snapshot rewind; inbound distill commit. ChatTurn collaborators stage changes; only the façade invokes <code>SaveChangesAsync</code> on the request-scoped chat unit.</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Dual-id maps</strong> (<code>ConversationToolCallMap</code>) use a short-lived context from <code>IToolIrCallIdMapUnitOfWorkFactory</code> so register-before-emit does not flush unrelated chat aggregates.</p>
+<p>Default chat timing remains: stage in prepare → upstream → commit in complete, except the named early flushes above (each has a durability reason). Application leaf services must not nest <code>SaveChanges</code> on the chat unit.</p>
+<table>
+<thead>
+<tr>
+<th>Early flush</th>
+<th>Reason</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>CatalogMutated</td>
+<td>Persist MappingJson / DisableToolIr (+ definitions) before upstream so prepare abort does not lose catalog state</td>
+</tr>
+<tr>
+<td>Snapshot rewind</td>
+<td>Commit hard-deleted messages + WM invalidation before continuing prepare</td>
+</tr>
+<tr>
+<td>Inbound distill</td>
+<td>Commit rewritten tool observations <strong>and</strong> staged <code>result_shapes</code> catalog updates before isolated dual-id Complete; condition includes completed client call ids <strong>or</strong> staged shape names; store dirty markers clear only after the flush returns</td>
+</tr>
+<tr>
+<td>Inline phase 1 / 2</td>
+<td>Visible transcript durable before wrap-up; then event ± WM</td>
+</tr>
+<tr>
+<td>Complete (non-Inline)</td>
+<td>Primary chat commit after successful upstream</td>
+</tr>
+</tbody>
+</table>
+<p>Natural indexes (in addition to the GUID PK and unique <code>ClusterId</code>): <code>ConversationKey</code>; <code>(ConversationId, Sequence)</code>; <code>(ConversationId, FoldedIntoWorkingMemoryVersion)</code>; <code>(ConversationId, Version)</code> on working memory; <code>(ConversationId, CreatedAt)</code> on compression events; unique <code>(ConversationId, TurnIndex)</code> on turn metrics; unique <code>ConversationId</code> on metrics summary and tool catalog; unique <code>(ConversationId, ToolName)</code> on tool definitions; unique <code>(ConversationId, ClientCallId)</code> and <code>(ConversationId, IrCallId)</code> plus <code>(ConversationId, Pending, RegisteredAt)</code> on tool-call maps.</p>
+<h2 id="tool-schema-virtual-tools">Tool schema (Virtual Tools)<a class="headerlink" href="#tool-schema-virtual-tools" title="Permanent link">&para;</a></h2>
+<p>When <code>ToolSchema:Mode</code> is <code>Virtual</code> (default; and <code>Proxy:PassThrough</code> is false):</p>
+<ol>
+<li><strong>Parse &amp; map</strong> — hash the client <code>tools[]</code> / <code>functions</code> catalog; on hash miss (or mismatch requiring remap), call the Compression endpoint to produce closed <strong>MappingJson</strong> (client capabilities + <code>comprexy_*</code> bindings with <code>arg_map</code> + optional <code>defaults</code>), resolving model as <code>Compression:Model</code> → <code>Provider:Model</code> → client request <code>model</code>. Validate (every inbound catalog tool exactly once in <code>client_capabilities</code>; each binding’s primary capability must match the virtual tool — e.g. <code>comprexy_read_file_manifest</code> → <code>FILE_READ_RAW</code> / <code>FILE_METADATA</code>, never Glob; <code>comprexy_shell</code> → <code>SHELL_BACKEND</code> with strategy <code>direct</code>; every client-schema <code>required</code> property covered by <code>arg_map</code> or <code>defaults</code>). Validation reports every problem it finds at once, and a rejected binding names the client tools that would satisfy it (or says to omit the binding), so one retry can fix the whole map; the first attempt samples deterministically and retries widen temperature. Retry a few times; never cache invalid maps. Invalid <strong>persisted</strong> maps are remapped (not disabled). On mapper exhaustion, salvage the last mapping by dropping only the bindings that failed — kept when at least one binding survives and no replaced capability is left without a Virtual replacement. When salvage is impossible (document-level failure, no surviving binding, stranded capability) set <code>ToolIrDisabled</code> for that hash and <strong>persist immediately</strong> on prepare, then forward client tools unchanged (compression/budgets still run). Planner also overrides a mis-bound manifest to a file-read tool when one exists in capabilities. Virtual tool names, wire schemas, allowed primary capabilities, and replaced-capability sets live in <code>VirtualToolRegistry</code> (file + shell families today).</li>
+<li><strong>Outbound rewrite</strong> — model-facing <code>tools</code> = bound Virtual tools from the registry (<code>comprexy_read_file_manifest</code>, <code>comprexy_read_file_range</code>, <code>comprexy_read_file_search</code>, <code>comprexy_dir_list</code>, <code>comprexy_shell</code>) + <code>comprexy_get_current_conversation_id</code> + full-schema passthrough of client tools that Virtual Tools does <strong>not</strong> replace and that are <strong>not</strong> listed in <code>ToolSchema:ExcludeFromModelTools</code> (mutates like <code>write</code>/<code>edit</code>, MCP/browser/<code>NON_FILE</code>, unbound <code>OTHER_FILE</code>/<code>FILE_METADATA</code>). Only replaced backends (<code>FILE_READ_RAW</code> / <code>FILE_SEARCH_BACKEND</code> / <code>DIRECTORY_LIST_BACKEND</code> / <code>SHELL_BACKEND</code> and binding primaries) plus the operator denylist are hidden from the model catalog. Model calls to an excluded name are rejected locally (<code>tool_excluded</code>) and never forwarded to the client. No compact index and no <code>get_tool_definition</code>. Upstream <strong>messages</strong> always come from the stored IR-side transcript rebuild (WM optional); client wire history is never used as the model transcript.</li>
+<li><strong>Deterministic planner</strong> — IR calls map to native client tool_calls via validated <code>arg_map</code> + <code>defaults</code> (or local file-cache satisfy for file IR). Shell IR always remaps to a native terminal call (no local-satisfy). No vendor-specific tool-name branches. Dual <code>tool_call_id</code> identity: IR for model/transcript, opaque client ids on the wire. Parallel <code>tool_calls</code> supported. Stream SSE and non-stream <code>RawResponseJson</code> both remap toward the client. Pending dual-id rows are written to <strong><code>ConversationToolCallMap</code></strong> via an <strong>isolated short-lived map UoW</strong> (committed before client-facing <code>tool_calls</code> leave the proxy; does not flush the chat unit) with an in-memory hot cache; cleared when a turn ends without open tool_calls, after inbound distill is <strong>persisted</strong> (chat inbound distill commit, then isolated Complete), or after TTL (<code>ToolSchema:CallIdMapPendingAbsoluteExpiration</code>). Outbound native args are validated against the stored client tool parameters schema; failures become local IR error observations (nothing invalid is sent downstream).</li>
+<li><strong>Inbound distill</strong> — Prepare resolves hidden native tool names (Virtual-replaced via <code>GetReplacedClientToolNames</code> / MappingJson, union <code>ExcludeFromModelTools</code>) <strong>before</strong> staging so client dumps of remapped <code>read</code>/<code>glob</code>/list/<code>Shell</code> and excluded tools (e.g. <code>ReadLints</code>) are never persisted into the IR transcript (assistants and orphan results for those tools are dropped; dual-id mapped results still distill to IR observations). Client <code>role=tool</code> results arrive with client ids; Comprexy resolves the map (memory, else SQLite), distills into compact IR observations, caches <strong>unwrapped</strong> file bodies in process memory (<code>IMemoryCache</code>, TTL/size; Cursor/Kilo Read wrappers and <code>N:</code> line prefixes are stripped before cache), and rebuilds upstream context from IR-side transcript. Envelope unwrap is <strong>gated</strong> (allowlisted prelude/trailer; last <code>&lt;/content&gt;</code> wins) so file text that merely contains <code>&lt;content&gt;</code> is not truncated. Cache entries carry <code>BodyComplete</code> / <code>TotalLineCount</code>; incomplete bodies never local-satisfy (<code>TryGetCovering</code> / manifest require complete). Observations disclose requested vs returned spans, <code>body_complete</code> / <code>complete</code> / <code>next_start_line</code>, split search truncation flags, search sentinels as zero matches, and dir <code>total_entry_count</code>. Caps live in <code>ToolSchemaOptions</code> and are disclosed in Virtual tool descriptions. Native results delivered as JSON-encoded strings are decoded (bounded unwrap) before any distill parsing. Shell observations are truncated (<code>ToolSchema:MaxShellObservationChars</code>) and do not use the file-body cache. <strong>Partial / offset Read windows</strong> (absolute first line &gt; 1) are distilled into the IR observation but are <strong>not</strong> stored as a complete cache entry. <code>end_line</code> is optional on <code>comprexy_read_file_range</code> (unwindowed first read via <code>read_then_slice</code>, capped by <code>FirstReadMaxLines</code> / <code>FirstReadMaxChars</code>). <code>SetIfRicher</code> prefers complete over incomplete and refuses to replace a longer equal-completeness body with a shorter one. Passthrough file mutations (<code>edit</code> / <code>write</code> / equivalents) <strong>invalidate</strong> that path in the cache unless the tool result looks like a failed mutation, so the next <code>comprexy_read_file_range</code> / manifest misses and refreshes via a native client Read (announced mutate + path are 1:1; do not require vendor success-string heuristics). After staging rewritten tool messages, prepare may also stage dirty <code>result_shapes</code> onto a <strong>tracked</strong> catalog row (<code>GetTrackedByConversationIdAsync</code>); an <strong>inbound distill commit</strong> on the chat UoW fires when completed dual-id ids <strong>or</strong> staged shape names are present, then Completes dual-id rows on the isolated map UoW and clears shape dirty markers. Tip sync-repair must <strong>not</strong> re-persist the native client tip when Virtual Tools already rewrote or swallowed it — IR <code>call_*</code> vs client <code>cur_*</code> wire mismatch is expected (without this guard the last result in a parallel remapped batch leaks into the IR transcript). Outgoing context must also use the IR tip in that case, not the live client tip. Announcements are self-healing across <strong>snapshot rewind</strong>: the client synced-history prefix (plus same-batch assistants) counts as announced; orphaned <code>cur_*</code> for <strong>non-replaced</strong> (passthrough) tools with no dual-id row persist as native results; replaced/excluded orphans are swallowed. Rewind that shortens client history clears pending dual-id rows, <strong>hard-deletes stored messages past the snapshot</strong> (by non-system count ↔ <code>Sequence</code>), and invalidates working-memory versions that absorbed any deleted turns (unfolding kept messages folded into those versions). Pure <strong>local-satisfy</strong> (cache-hit) rounds with at least one planned IR call persist an IR assistant announcing exactly those ids plus their observations (<code>PendingPersistedTurns</code>); meta-only / validation-error rounds stay ephemeral. Mixed meta + local yields two closed turns in meta-then-local order. First-result shape probes and an idle learner (<code>ToolSchema:ResultShape:Learner</code>, default on) record closed <code>result_shapes</code> in MappingJson; the learner waits on <code>IUpstreamActivityGate</code>, is preempted by any non-learner upstream call, sends only sanitized structural features, and promotes only when a proposal replays heuristic body boundaries — it never takes a UoW or conversation lease.</li>
+<li><strong>Meta</strong> — <code>comprexy_get_current_conversation_id</code> still executes proxy-locally. Reserved-name collision on the client catalog disables Virtual for that conversation (logged).</li>
+</ol>
+<p>Configuration: <a href="../SETTINGS/#toolschema"><code>SETTINGS.md</code></a>.</p>
+<h2 id="supporting-pieces">Supporting pieces<a class="headerlink" href="#supporting-pieces" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Concern</th>
+<th>Primary types</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Token estimates</td>
+<td><code>ITokenEstimator</code> (tiktoken for text; OpenAI-style vision tiles for <code>image_url</code> — never BPE of base64)</td>
+</tr>
+<tr>
+<td>Retain windows</td>
+<td><code>RecentContextSelector</code> (atomic groups for Inline fold tip); <code>HotPathSuccessfulEditRetainer</code> (pin last successful edit when later failures remain on that path)</td>
+</tr>
+<tr>
+<td>Duplicate failed edits</td>
+<td><code>DuplicateFailedEditDeduper</code> + <code>FileMutationClassifier</code> / <code>FileMutationEditIndexer</code> (retain-window wire omit, when enabled)</td>
+</tr>
+<tr>
+<td>Tool call wire ids</td>
+<td><code>ToolCallWireHelper</code> (assistant <code>tool_calls</code> parse, announced-id collection, tool-result id recovery from truncated wire)</td>
+</tr>
+<tr>
+<td>Upstream busy / preempt</td>
+<td><code>IUpstreamActivityGate</code> (meters non-learner <code>IChatCompletionClient</code> calls; idle shape learner waits/preempts here)</td>
+</tr>
+<tr>
+<td>Reasoning strip</td>
+<td><code>ReasoningContentStripper</code> before chat/compression upstream calls</td>
+</tr>
+<tr>
+<td>Auth</td>
+<td><code>ApiKeyAuthMiddleware</code> (Infrastructure.Hosting) — optional single <code>Auth:RequiredApiKey</code> on <code>/v1/*</code> and control-api <code>/mcp</code>; <code>/health</code> exempt</td>
+</tr>
+<tr>
+<td>Tracing</td>
+<td><code>IPayloadTraceLogger</code>, optional <code>IRequestTraceFileSession</code> under <code>logs/requests/</code></td>
+</tr>
+<tr>
+<td>Compression prompts</td>
+<td><code>apps/proxy/Prompts/compression-inline.md</code> (Inline wrap-up), shared <code>working-memory-template.md</code></td>
+</tr>
+<tr>
+<td>Tool schema prompts</td>
+<td>(none for Virtual MVP — steer via tool descriptions)</td>
+</tr>
+<tr>
+<td>Telemetry MCP</td>
+<td>control-api <code>Mcp/</code> tools + resources over <code>IConversationMetricsQueryService</code> and <code>IConversationRetrievalQueryService</code>; options under <code>McpTelemetry</code></td>
+</tr>
+</tbody>
+</table>
+<p>Repositories and <code>IUnitOfWork</code> live behind Application abstractions; implementations under <code>Infrastructure/Persistence</code>.</p>
+<h2 id="debugging-with-logs">Debugging with logs<a class="headerlink" href="#debugging-with-logs" title="Permanent link">&para;</a></h2>
+<p>When investigating prepare/upstream/complete failures, ToolSchema mapping/remap, or Inline wrap-up skips, <strong>read the logs before guessing</strong>. Prefer evidence from these sources (in order):</p>
+<ol>
+<li><strong>API process console / host logs</strong> — <code>Comprexy.*</code> categories (<code>ProxyChatCompletionService</code>, <code>ToolSchemaOrchestrator</code>, etc.). Context budget lines, catalog hash mismatches, mapping failures / DisableToolIr, and unhandled proxy errors appear here.</li>
+<li><strong>Request audit files</strong> — when <code>Trace:RequestFiles</code> is true, full per-request / per-compression payloads land under <code>Trace:RequestLogDirectory</code> (default <code>logs/requests/</code> beside the API content root). Payloads are formatted for human reading (relaxed escaping, multiline content blocks); use them for wire-level <code>tools</code>, messages, and upstream bodies.</li>
+<li><strong>Payload trace categories</strong> — <code>Trace:ClientInput</code>, <code>ModelInput</code>, <code>ContextBudget</code>, and related flags emit structured payload traces when <code>Logging:LogLevel:Comprexy</code> is <code>Trace</code> (see <a href="../SETTINGS/#trace"><code>SETTINGS.md</code></a>).</li>
+</ol>
+<p>SQLite (<code>comprexy.db</code>) remains the source of truth for persisted turns, working memory versions, tool-catalog snapshots, and pending Virtual Tools dual-id maps after a turn completes; logs explain what happened on the path that produced them.</p>
+<p>Do not invent parallel debug dumpers in Application code when these surfaces already cover the request. Toggle Trace/RequestFiles via <code>appsettings.Local.json</code> for local debugging.</p>
+<h2 id="configuration-surfaces">Configuration surfaces<a class="headerlink" href="#configuration-surfaces" title="Permanent link">&para;</a></h2>
+<p>Loaded as: <code>appsettings.json</code> → environment-specific → host defaults → optional gitignored <code>appsettings.Local.json</code>. Full tables: <a href="../SETTINGS/"><code>SETTINGS.md</code></a>.</p>
+<table>
+<thead>
+<tr>
+<th>Section</th>
+<th>Owns</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>Provider</code></td>
+<td>Upstream chat base URL, key, optional model (null → client <code>model</code>), timeout</td>
+</tr>
+<tr>
+<td><code>Compression</code></td>
+<td>Optional separate Compression endpoint/model for ToolSchema mapper; Inline wrap-up prompts</td>
+</tr>
+<tr>
+<td><code>ContextPolicy</code></td>
+<td>Soft limit, Inline cooldown / retain tip knobs</td>
+</tr>
+<tr>
+<td><code>ToolSchema</code></td>
+<td>Virtual Tools mode, mapper retries, <code>ExcludeFromModelTools</code>, file-cache / distill caps</td>
+</tr>
+<tr>
+<td><code>Proxy</code></td>
+<td>Pass-through; strip reasoning</td>
+</tr>
+<tr>
+<td><code>Metrics</code></td>
+<td>Token ledger capture (default enabled)</td>
+</tr>
+<tr>
+<td><code>McpTelemetry</code></td>
+<td>control-api MCP row limits and query timeout (default 100 / max 1000 / 5s)</td>
+</tr>
+<tr>
+<td><code>BenchOrchestration</code></td>
+<td>control-api local benchmark harness spawn paths, ports, lock file, <code>AllowSpawn</code></td>
+</tr>
+<tr>
+<td><code>Auth</code></td>
+<td>Optional required API key</td>
+</tr>
+<tr>
+<td><code>AllowedHosts</code> / <code>Cors</code></td>
+<td>control-api host filtering (loopback default) and optional CORS origins (empty = deny browser CORS)</td>
+</tr>
+<tr>
+<td><code>Trace</code></td>
+<td>Console payload categories / request audit files</td>
+</tr>
+<tr>
+<td><code>Comprexy:TokenEstimateCache</code></td>
+<td>In-memory tiktoken estimate cache TTL / size</td>
+</tr>
+<tr>
+<td><code>ConnectionStrings:Comprexy</code></td>
+<td>SQLite path (hosts rewrite to shared <code>data/comprexy.db</code> under the repo by default)</td>
+</tr>
+</tbody>
+</table>
+<h2 id="boundaries-and-constraints">Boundaries and constraints<a class="headerlink" href="#boundaries-and-constraints" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Supported chat roles on the compressed path: <code>system</code>, <code>user</code>, <code>assistant</code>, <code>tool</code>.</li>
+<li>Process-local exclusive conversation gate — multi-instance deploys do not share in-memory coordination.</li>
+<li>Fingerprint identity without <code>X-Comprexy-Conversation-Id</code> can collide across sessions that share the same opening text.</li>
+<li>After working memory exists, the first-turn system prompt is reused for rebuilds.</li>
+<li>Public docs stay operator/contributor-facing; design notes and adversarial writeups stay out of the public tree (e.g. gitignored <code>internal/</code>).</li>
+</ul>
+<h2 id="where-to-change-what">Where to change what<a class="headerlink" href="#where-to-change-what" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>If you are changing…</th>
+<th>Start here</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>HTTP contract, status codes, streaming (chat)</td>
+<td><code>apps/proxy</code> <code>Endpoints/*</code>, mappers, streaming</td>
+</tr>
+<tr>
+<td>Metrics query HTTP</td>
+<td><code>apps/control-api</code> <code>Endpoints/MetricsEndpoints.cs</code></td>
+</tr>
+<tr>
+<td>Benchmark orchestration / presentation HTTP</td>
+<td><code>apps/control-api</code> <code>Endpoints/BenchmarkEndpoints.cs</code>, <code>Benchmarking/BenchRunOrchestrator.cs</code></td>
+</tr>
+<tr>
+<td>Metrics dashboard UI</td>
+<td><code>apps/dashboard</code> (Next.js; consumes control-api REST)</td>
+</tr>
+<tr>
+<td>Telemetry MCP tools/resources</td>
+<td><code>apps/control-api</code> <code>Mcp/</code> (<code>ConversationTools</code>, <code>ConversationRetrievalTools</code>, <code>ConversationResources</code>, <code>ConversationRetrievalResources</code>)</td>
+</tr>
+<tr>
+<td>Shared API-key middleware</td>
+<td><code>Infrastructure/Hosting/ApiKeyAuthMiddleware</code></td>
+</tr>
+<tr>
+<td>Turn prepare/complete, soft budget, Inline wrap-up, Virtual Tools rewrite</td>
+<td><code>ProxyChatCompletionService</code> (façade), <code>ChatTurnPreparer</code>, <code>ChatTurnCompleter</code>, <code>InlineWrapUpRunner</code>, <code>ToolSchemaOrchestrator</code>, <code>ToolIr*</code> helpers</td>
+</tr>
+<tr>
+<td>Client rules detect / consolidate / inject</td>
+<td><code>SystemRulesDetector</code>, <code>TranscriptRulesDetector</code>, <code>RulesConsolidator</code>, <code>RulesInjector</code>, <code>WorkingMemoryRulesSection</code></td>
+</tr>
+<tr>
+<td>Fold / WM versions / Inline prompts</td>
+<td><code>InlineWrapUpRunner</code>, <code>CompressionPromptFactory</code>, <code>RecentContextSelector</code></td>
+</tr>
+<tr>
+<td>Token metrics / conversation proof totals</td>
+<td><code>ConversationTurnMetric</code>, <code>ConversationMetricsSummary</code>, <code>ConversationMetricsRecorder</code>, <code>IConversationMetricsQueryService</code>, control-api REST + MCP</td>
+</tr>
+<tr>
+<td>Conversation message / WM retrieval (MCP RAG)</td>
+<td><code>IConversationRetrievalQueryService</code>, <code>ConversationMessage</code> / <code>WorkingMemory</code> repos, control-api retrieval MCP tools</td>
+</tr>
+<tr>
+<td>Outgoing message assembly</td>
+<td><code>ICacheAlignmentService</code> (wrap-up-ready Prefix when enabled), <code>OutgoingContextMaterializer</code>, <code>ContextBuilder</code>, <code>RecentContextSelector</code></td>
+</tr>
+<tr>
+<td>Identity / fingerprint</td>
+<td><code>ConversationIdentityResolver</code></td>
+</tr>
+<tr>
+<td>Schema / keys / indexes</td>
+<td><code>EntityBase</code>, EF configs under <code>Infrastructure/Persistence</code> (migrations via <code>dotnet ef</code> only)</td>
+</tr>
+<tr>
+<td>Upstream HTTP / SSE parse</td>
+<td><code>OpenAiCompatibleChatCompletionClient</code>, streaming helpers</td>
+</tr>
+<tr>
+<td>Benchmark arms, prompts, evidence reports</td>
+<td><code>tests/Comprexy.Bench</code> (<code>Hosting/</code>, <code>Running/</code>, <code>Reporting/</code>), <code>tests/Comprexy.Bench.Conversations</code></td>
+</tr>
+</tbody>
+</table>
+<p>When behavior or config defaults change, update <a href="../SETTINGS/"><code>SETTINGS.md</code></a> (and this document if the structural map drifts).</p>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+  <script>var tabs=__md_get("__tabs");if(Array.isArray(tabs))e:for(var set of document.querySelectorAll(".tabbed-set")){var labels=set.querySelector(".tabbed-labels");for(var tab of tabs)for(var label of labels.getElementsByTagName("label"))if(label.innerText.trim()===tab){var input=document.getElementById(label.htmlFor);input.checked=!0;continue e}}</script>
+
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+    <div class="md-copyright__highlight">
+      Copyright &copy; Comprexy OSS contributors &mdash; Apache License 2.0
+    </div>
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+        
+<div class="md-social">
+  
+    
+    
+    
+    
+    <a href="https://github.com/norielmallari/comprexy" target="_blank" rel="noopener" title="GitHub" class="md-social__link">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+    </a>
+  
+    
+    
+    
+    
+    <a href="https://www.apache.org/licenses/LICENSE-2.0" target="_blank" rel="noopener" title="Apache License 2.0" class="md-social__link">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M6 2a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8l-6-6zm0 2h7v5h5v11H6zm2 8v2h8v-2zm0 4v2h5v-2z"/></svg>
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": ["navigation.instant", "navigation.instant.prefetch", "navigation.tracking", "navigation.tabs", "navigation.sections", "navigation.path", "navigation.top", "search.suggest", "search.highlight", "search.share", "content.code.copy", "content.code.annotate", "content.tabs.link", "content.tooltips", "toc.follow"], "search": "../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../assets/javascripts/bundle.d7400e89.min.js"></script>
+      
+    
+  </body>
+</html>
