@@ -26,6 +26,11 @@ internal static class BenchPaths
 
     public static string RunsRoot => Path.Combine(RepoRoot, "reports", "bench");
 
+    /// <summary>Shared with control-api dashboard orchestration (<c>BenchOrchestration:LockFileName</c>).</summary>
+    public const string ActiveRunLockFileName = ".active-run.lock";
+
+    public static string ActiveRunLockPath => Path.Combine(RunsRoot, ActiveRunLockFileName);
+
     public static string EvidenceDirectory => Path.Combine(RepoRoot, "docs", "evidence");
 
     public static string RunDirectory(string runId) => Path.Combine(RunsRoot, runId);

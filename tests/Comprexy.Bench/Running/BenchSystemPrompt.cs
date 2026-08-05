@@ -5,8 +5,8 @@ namespace Comprexy.Bench.Running;
 /// followed by the script's scenario text.
 /// </summary>
 /// <remarks>
-/// A real coding client spends on the order of 15–18k tokens on system prompt plus tool schemas
-/// before the first user turn (target here ≈17k cl100k_base: ~10.5k composed system + ~6.5k tools),
+/// A real coding client spends on the order of 25–27k tokens on system prompt plus tool schemas
+/// before the first user turn (target here ≈26k cl100k_base: ~10.5k composed system + ~15–16k tools),
 /// and that fixed floor is what drives a session into compaction. A one-sentence bench instruction
 /// measures a workload Comprexy will never see, so the preamble and tool descriptions are
 /// deliberately sized into that band. The preamble lives in <c>agent-preamble.md</c> next to the

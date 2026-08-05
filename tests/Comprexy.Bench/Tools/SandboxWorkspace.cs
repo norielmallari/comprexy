@@ -23,6 +23,17 @@ internal sealed class SandboxWorkspace
         BaseCommit = baseCommit;
     }
 
+    /// <summary>
+    /// Empty directory workspace for schema probes and unit tests. Not a git clone — do not use
+    /// for conversation runs that need a real repository tree.
+    /// </summary>
+    public static SandboxWorkspace CreateTransient(string root)
+    {
+        var full = Path.GetFullPath(root);
+        Directory.CreateDirectory(full);
+        return new SandboxWorkspace(full, baseCommit: "transient");
+    }
+
     public string Root { get; }
 
     /// <summary>The pinned commit the workspace started from; the diff is taken against it.</summary>

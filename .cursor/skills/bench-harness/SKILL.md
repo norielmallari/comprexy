@@ -11,7 +11,9 @@ description: >-
 
 `tests/Comprexy.Bench` replays frozen prompt lists through a MAF coding agent twice — `maf-compact` (client compaction, `ToolSchema:Off`) then `comprexy` (Virtual Tools + soft budget) — against spawned proxy/control-api hosts and `data/comprexy-bench.db`.
 
-Operator docs: `docs/contributing.md` (Benchmark harness), `docs/SETTINGS.md` (`BenchOrchestration`).
+Default client catalog (`SandboxToolCatalog`, version `ide-band-v1`) is IDE-comparable: ~15–16k cl100k tokens on compact OpenAI `tools[]` (CI band 14_500–16_500), including denylist stubs matching stock `ExcludeFromModelTools` and a non-denylisted `Task` stub. New manifests stamp `Harness.ClientToolCatalogVersion` (optional `ClientToolCatalogTokens`). Lean evidence `docs/evidence/65f1b1b.md` used the prior 6-tool catalog and is not catalog-comparable.
+
+Operator docs: `docs/contributing.md` (Benchmark harness), `docs/SETTINGS.md` (`BenchOrchestration`, `ToolSchema:ExcludeFromModelTools`).
 
 ## Commands
 
@@ -79,7 +81,7 @@ Paired token headlines require **completed** on both arms. Survivals are reporte
 | `reports/bench/<runId>/summary.md` | `bench report` |
 | `docs/evidence/<id>.md` | `bench publish --confirm` only |
 
-Runs are gitignored. Concurrent CLI + dashboard writers under `reports/bench/` are unsupported. Dashboard orchestration uses an active-run lock; CLI bypasses that lock but must not race the dashboard.
+Runs are gitignored. Concurrent CLI + dashboard writers under `reports/bench/` are blocked by the shared `.active-run.lock` (CLI acquires it on `bench run`; dashboard orchestrator holds it and passes `--under-orchestrator-lock` to the child). Spawn also refuses when ports `18129` / `18130` / `18131` (or overrides) are already bound. Stale locks whose recorded pid is dead are reclaimed.
 
 ## Agent policy pointers
 

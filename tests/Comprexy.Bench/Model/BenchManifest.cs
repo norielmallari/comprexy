@@ -68,7 +68,9 @@ internal sealed record BenchHarnessSettings(
     int ConversationTimeoutMs,
     int ShellTimeoutMs,
     int? Seed,
-    double Temperature);
+    double Temperature,
+    string? ClientToolCatalogVersion = null,
+    int? ClientToolCatalogTokens = null);
 
 internal sealed record BenchArmManifest(
     string Name,

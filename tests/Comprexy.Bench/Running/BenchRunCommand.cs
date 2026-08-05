@@ -1,10 +1,12 @@
 using System.Diagnostics;
 using System.Reflection;
 using System.Text.Json;
+using Comprexy.Application.Benchmarking;
 using Comprexy.Application.Models.Benchmarking;
 using Comprexy.Bench.Cli;
 using Comprexy.Bench.Hosting;
 using Comprexy.Bench.Model;
+using Comprexy.Bench.Tools;
 using Microsoft.Agents.AI;
 
 namespace Comprexy.Bench.Running;
@@ -27,6 +29,10 @@ internal static class BenchRunCommand
                 "so give --run-id a distinct label rather than overwriting an earlier run's artifacts.");
         }
 
+        await using var runLock = await AcquireOrVerifyActiveRunLockAsync(options);
+
+        BenchPortPreflight.EnsurePortsFree(options);
+
         Directory.CreateDirectory(options.RunDirectory);
         Directory.CreateDirectory(Path.GetDirectoryName(options.DatabasePath)!);
 
@@ -34,6 +40,10 @@ internal static class BenchRunCommand
         Console.Error.WriteLine($"  database    {options.DatabasePath}");
         Console.Error.WriteLine($"  run output  {options.RunDirectory}");
         Console.Error.WriteLine($"  arms        {string.Join(", ", arms.Select(a => a.Name))}");
+        Console.Error.WriteLine(
+            options.UnderOrchestratorLock
+                ? $"  active lock  {BenchPaths.ActiveRunLockPath} (orchestrator-held)"
+                : $"  active lock  {BenchPaths.ActiveRunLockPath}");
 
         var scripts = ConversationScript.LoadAll(options.Conversations);
         Console.Error.WriteLine(
@@ -175,7 +185,8 @@ internal static class BenchRunCommand
                 options.ConversationTimeoutSeconds * 1000,
                 options.ShellTimeoutSeconds * 1000,
                 options.Seed,
-                0d),
+                0d,
+                ClientToolCatalogVersion: SandboxToolCatalog.CatalogVersion),
             CostRates = ResolveCostRates(options),
             Arms = armManifests
         };
@@ -235,4 +246,35 @@ internal static class BenchRunCommand
             .GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion
         ?? typeof(AIAgent).Assembly.GetName().Version?.ToString()
         ?? "unknown";
+
+    private static ValueTask<IAsyncDisposable> AcquireOrVerifyActiveRunLockAsync(BenchOptions options)
+    {
+        var lockPath = BenchPaths.ActiveRunLockPath;
+        if (options.UnderOrchestratorLock)
+        {
+            BenchRunLock.EnsureHeldByOrchestrator(lockPath, options.RunId);
+            return ValueTask.FromResult<IAsyncDisposable>(NoopAsyncDisposable.Instance);
+        }
+
+        var runLock = new BenchRunLock();
+        if (!runLock.TryAcquire(lockPath, options.RunId, out var existing))
+        {
+            runLock.Release();
+            var holder = existing is null
+                ? "another process"
+                : $"run '{existing.RunId}' (pid {existing.Pid}, started {existing.StartedAt:u})";
+            throw new InvalidOperationException(
+                $"Another bench run is active ({holder}). Wait for it to finish. " +
+                $"Lock file: {lockPath}");
+        }
+
+        return ValueTask.FromResult<IAsyncDisposable>(runLock);
+    }
+
+    private sealed class NoopAsyncDisposable : IAsyncDisposable
+    {
+        public static readonly NoopAsyncDisposable Instance = new();
+
+        public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+    }
 }

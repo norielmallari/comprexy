@@ -94,5 +94,11 @@ internal sealed record BenchOptions
     /// <summary>When true, <see cref="RunId"/> is used verbatim (orchestrator-started runs).</summary>
     public bool ExactRunId { get; init; }
 
+    /// <summary>
+    /// When true, skip acquiring <c>.active-run.lock</c> because control-api already holds it for
+    /// this <see cref="RunId"/> (dashboard-spawned runs only).
+    /// </summary>
+    public bool UnderOrchestratorLock { get; init; }
+
     public string RunDirectory => BenchPaths.RunDirectory(RunId);
 }

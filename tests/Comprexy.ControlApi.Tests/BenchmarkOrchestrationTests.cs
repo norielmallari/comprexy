@@ -320,6 +320,7 @@ public sealed class BenchmarkOrchestrationTests
         .index;
     Assert.Equal("1200", factory.ProcessRunner.LastRunArguments[timeoutIndex + 1]);
     Assert.Contains("--continue-past-baseline-failure", factory.ProcessRunner.LastRunArguments);
+    Assert.Contains("--under-orchestrator-lock", factory.ProcessRunner.LastRunArguments);
   }
 
   [Fact]

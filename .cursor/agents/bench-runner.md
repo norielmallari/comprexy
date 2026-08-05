@@ -21,8 +21,8 @@ Confirm before the first script:
 1. **Run folder** under `.cursor/agent-state/<run-folder>/` (create if missing)
 2. **Repo root** is the Comprexy workspace; harness entry is `./comprexy.sh bench`
 3. Provider / Local config is usable for a real upstream (harness needs a model)
-4. No concurrent dashboard bench writer under `reports/bench/` (CLI + dashboard concurrent writes are unsupported)
-5. Ports `18129` / `18130` / `18131` are free unless the brief says `--no-spawn`
+4. No other active bench writer: `reports/bench/.active-run.lock` absent (or stale dead pid); harness will refuse a second `bench run`
+5. Ports `18129` / `18130` / `18131` are free unless the brief says `--no-spawn` (harness also preflights)
 
 Do **not** hard-stop the whole queue because one script failed — see **Continue on error**.
 

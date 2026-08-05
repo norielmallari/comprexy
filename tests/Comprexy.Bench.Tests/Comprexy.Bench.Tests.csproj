@@ -1,0 +1,31 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <IsPackable>false</IsPackable>
+    <RootNamespace>Comprexy.Bench.Tests</RootNamespace>
+    <AssemblyName>Comprexy.Bench.Tests</AssemblyName>
+    <!-- MAF marks the compaction API as evaluation-only; the harness depends on it deliberately. -->
+    <NoWarn>$(NoWarn);MAAI001</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="coverlet.collector" Version="6.0.4" />
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />
+    <PackageReference Include="xunit" Version="2.9.3" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="3.1.4" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Using Include="Xunit" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Comprexy.Bench\Comprexy.Bench.csproj" />
+    <ProjectReference Include="..\..\src\Comprexy.Application\Comprexy.Application.csproj" />
+    <ProjectReference Include="..\..\src\Comprexy.Infrastructure\Comprexy.Infrastructure.csproj" />
+  </ItemGroup>
+
+</Project>

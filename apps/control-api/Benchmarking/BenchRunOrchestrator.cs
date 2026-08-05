@@ -1,3 +1,4 @@
+using Comprexy.Application.Benchmarking;
 using Comprexy.Application.Models.Benchmarking;
 using Comprexy.ControlApi.Configuration;
 using Comprexy.ControlApi.Contracts.Benchmark;
@@ -278,7 +279,7 @@ public sealed class BenchRunOrchestrator : IBenchRunOrchestrator
 
             if (cancellationToken.IsCancellationRequested)
             {
-                await SetTerminalAsync(
+                await SetTerminalAndReleaseAsync(
                     statusPath,
                     runId,
                     BenchOuterPhases.Cancelled,
@@ -289,7 +290,7 @@ public sealed class BenchRunOrchestrator : IBenchRunOrchestrator
 
             if (runResult.ExitCode != 0)
             {
-                await SetTerminalAsync(
+                await SetTerminalAndReleaseAsync(
                     statusPath,
                     runId,
                     BenchOuterPhases.Failed,
@@ -304,7 +305,7 @@ public sealed class BenchRunOrchestrator : IBenchRunOrchestrator
 
             if (reportResult.ExitCode != 0)
             {
-                await SetTerminalAsync(
+                await SetTerminalAndReleaseAsync(
                     statusPath,
                     runId,
                     BenchOuterPhases.CompletedWithReportError,
@@ -313,11 +314,16 @@ public sealed class BenchRunOrchestrator : IBenchRunOrchestrator
                 return;
             }
 
-            await SetTerminalAsync(statusPath, runId, BenchOuterPhases.Completed, lastError: null, cancellationToken);
+            await SetTerminalAndReleaseAsync(
+                statusPath,
+                runId,
+                BenchOuterPhases.Completed,
+                lastError: null,
+                cancellationToken);
         }
         catch (OperationCanceledException)
         {
-            await SetTerminalAsync(
+            await SetTerminalAndReleaseAsync(
                 statusPath,
                 runId,
                 BenchOuterPhases.Cancelled,
@@ -327,7 +333,7 @@ public sealed class BenchRunOrchestrator : IBenchRunOrchestrator
         catch (Exception ex)
         {
             _logger.LogError(ex, "Bench run {RunId} failed in orchestrator job.", runId);
-            await SetTerminalAsync(
+            await SetTerminalAndReleaseAsync(
                 statusPath,
                 runId,
                 BenchOuterPhases.Failed,
@@ -336,16 +342,34 @@ public sealed class BenchRunOrchestrator : IBenchRunOrchestrator
         }
         finally
         {
-            lock (_gate)
-            {
-                _lock?.Release();
-                _lock = null;
-                _runCts?.Dispose();
-                _runCts = null;
-                _activeRunId = null;
-                _runTask = null;
-            }
+            ReleaseActiveRun();
         }
+    }
+
+    private void ReleaseActiveRun()
+    {
+        lock (_gate)
+        {
+            _lock?.Release();
+            _lock = null;
+            _runCts?.Dispose();
+            _runCts = null;
+            _activeRunId = null;
+            _runTask = null;
+        }
+    }
+
+    private async Task SetTerminalAndReleaseAsync(
+        string statusPath,
+        string runId,
+        string phase,
+        string? lastError,
+        CancellationToken cancellationToken)
+    {
+        // Drop the file lock before publishing terminal status so observers never see
+        // "completed" while .active-run.lock still exists.
+        ReleaseActiveRun();
+        await SetTerminalAsync(statusPath, runId, phase, lastError, cancellationToken);
     }
 
     private async Task SetPhaseAsync(
@@ -460,6 +484,11 @@ public sealed class BenchRunOrchestrator : IBenchRunOrchestrator
         if (exactRunId)
         {
             args.Add("--exact-run-id");
+            if (string.Equals(command, "run", StringComparison.Ordinal))
+            {
+                // Orchestrator already holds reports/bench/.active-run.lock for this runId.
+                args.Add("--under-orchestrator-lock");
+            }
         }
 
         foreach (var conversation in conversations)

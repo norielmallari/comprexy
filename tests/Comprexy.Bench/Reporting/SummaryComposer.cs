@@ -43,6 +43,11 @@ internal static class SummaryComposer
             $"Model: `{metrics.Model ?? "resolved by the proxy"}`. Comprexy commit `{Short(metrics.ComprexyCommit)}`{(metrics.RepositoryDirty ? " (working tree dirty)" : string.Empty)}.");
         builder.AppendLine();
         builder.AppendLine(
+            metrics.Harness.ClientToolCatalogVersion is { Length: > 0 } catalogVersion
+                ? $"Client tool catalog version: `{catalogVersion}`{(metrics.Harness.ClientToolCatalogTokens is int catalogTokens ? $" (~{Format(catalogTokens)} cl100k tokens on compact OpenAI `tools[]`)" : string.Empty)}."
+                : "Client tool catalog version: unknown (manifest predates catalog provenance, or version was not stamped).");
+        builder.AppendLine();
+        builder.AppendLine(
             "Token figures use control-api Metrics:PromptTokenBasis=ProviderActual: per-turn SoftBudget prompt tokens prefer upstream usage.prompt_tokens when present (tiktoken IrFull/Prepared estimates otherwise; NativeRaw is scaled for the virtual-tools channel); completion stays usage.completion_tokens. \"Sent\" is what each arm's proxy forwarded upstream under that basis; the treatment arm is additionally charged its compression overhead. Proxy turn timing covers prepare, upstream, and persist for a turn — it is not the full agent loop, which includes local tool execution.");
         builder.AppendLine();
 

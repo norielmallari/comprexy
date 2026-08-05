@@ -35,7 +35,7 @@ internal sealed class MafConversationRunner(BenchOptions options)
         var conversationKey = Guid.NewGuid();
         var workspace = await SandboxWorkspace.CreateAsync(
             options.RunDirectory, arm.Name, script.Name, workspaceCommit, cancellationToken);
-        var tools = new SandboxTools(workspace, TimeSpan.FromSeconds(options.ShellTimeoutSeconds)).CreateTools();
+        var tools = SandboxToolCatalog.CreateTools(workspace, TimeSpan.FromSeconds(options.ShellTimeoutSeconds));
 
         var compaction = arm.UsesClientCompaction
             ? new CompactionObserver(

@@ -14,7 +14,11 @@ internal sealed class SandboxTools(SandboxWorkspace workspace, TimeSpan shellTim
     private const int MaxReadCharacters = 60_000;
     private const int MaxShellOutputCharacters = 20_000;
 
-    public IList<AITool> CreateTools() =>
+    /// <summary>
+    /// Workspace-backed file and shell backends only. Full default catalog composition lives in
+    /// <see cref="SandboxToolCatalog.CreateTools"/>.
+    /// </summary>
+    public IList<AITool> CreateBackendTools() =>
     [
         AIFunctionFactory.Create(ReadFile),
         AIFunctionFactory.Create(WriteFile),
@@ -71,6 +75,17 @@ internal sealed class SandboxTools(SandboxWorkspace workspace, TimeSpan shellTim
           many turns, re-read files your answer depends on rather than trusting earlier turns.
         - Prefer several parallel read_file calls over a shell pipeline that concatenates files: each
           result stays bounded and line-numbered.
+
+        IDE-class read discipline (schema weight for Off-arm catalog parity):
+        - Orient with list_directory or search_files when the path is uncertain; guessing paths burns
+          turns on not-found errors.
+        - For large files, read the header and the suspected hotspot first, then widen. Do not assume
+          a truncated 60k-character window contained the only relevant definition.
+        - When citing code to the user, strip the `N|` prefixes. When feeding text to edit_file,
+          strip them as well — they are not file bytes.
+        - Re-read after every successful write or edit you will build on. Compaction and long
+          sessions make stale memory the default failure mode.
+        - Parallelize independent reads; serialize when one file's contents choose the next path.
         """)]
     private string ReadFile(
         [Description("""
@@ -170,6 +185,26 @@ internal sealed class SandboxTools(SandboxWorkspace workspace, TimeSpan shellTim
           note with a shorter paraphrase unless asked to condense.
         - Put enough path, method, and condition detail into the file that a later turn can audit
           claims without re-deriving them from memory.
+
+        IDE-class write discipline (schema weight for Off-arm catalog parity):
+        - Before overwriting an existing file, you must have read it in this session or have strong
+          evidence it does not exist (a not-found from read_file). Blind overwrites destroy work the
+          user did not ask you to discard.
+        - Prefer edit_file for surgical changes. Reach for write_file when creating a new path, when
+          regenerating a generated artifact end-to-end, or when the user explicitly asked for a full
+          rewrite.
+        - Match project conventions exactly: indentation width, final newline, import grouping,
+          licence headers, and whether the tree uses CRLF or LF. Do not "clean up" unrelated style
+          while writing.
+        - Never embed read_file line-number prefixes or markdown fences in the written bytes.
+        - For multi-file creates, write the dependency order the compiler needs (types before
+          consumers) and verify each write's confirmation path matches what you intended.
+        - Keep secrets out of committed paths. Prefer environment configuration over hard-coding
+          tokens, and do not invent `.env` files the user did not request.
+        - After writing non-trivial code, re-read or run the narrowest available check. A successful
+          write acknowledges storage, not correctness.
+        - When extending scratch notes, preserve earlier evidence sections unless the user asked to
+          replace them; append with clear headings so later turns can cite path anchors.
         """)]
     private string WriteFile(
         [Description("""
@@ -244,6 +279,25 @@ internal sealed class SandboxTools(SandboxWorkspace workspace, TimeSpan shellTim
           land on an earlier duplicate section of a growing file.
         - After editing session notes, a quick read_file of the changed region confirms the append
           landed where you intended before you build the next answer on it.
+
+        IDE-class edit discipline (schema weight for Off-arm catalog parity):
+        - Always copy old_string from a fresh read_file of the current bytes. Memory of an earlier
+          turn, or of a similar file, is the leading cause of `old_string not found`.
+        - Expand context until the first ordinal match is the only sensible target. If two identical
+          fragments exist, include a unique preceding or following line.
+        - Preserve surrounding indentation and brace style. Do not reflow an entire function when
+          changing one expression unless the user asked for a rewrite.
+        - For deletions, pass empty new_string with enough anchor context that you do not remove an
+          unintended duplicate later in the file.
+        - For insertions, keep an existing anchor line in both old_string and new_string so the
+          insert position is explicit.
+        - Do not use edit_file to apply mechanical formatters across untouched regions; unrelated
+          whitespace churn hides the real diff.
+        - If an edit fails, read again before inventing a second guess. Retrying the same stale
+          old_string will fail the same way.
+        - After a successful edit that affects public API surface, search for callers before you
+          claim the change is complete.
+        - Paths must already exist. Creating a file requires write_file; edit_file will not create.
         """)]
     private string EditFile(
         [Description("""
@@ -323,6 +377,14 @@ internal sealed class SandboxTools(SandboxWorkspace workspace, TimeSpan shellTim
           present. Do not assume an earlier listing still matches the tree.
         - When exploring an unfamiliar area, one recursive listing of a focused subtree beats many
           shallow guesses across the repository.
+
+        IDE-class listing discipline (schema weight for Off-arm catalog parity):
+        - Start shallow at `.` or a known package root, then recurse into the one subtree that
+          matters. Recursing from the repo root in a large tree hits the 500-entry cap quickly.
+        - A 500-entry result is a soft warning that the listing is incomplete — narrow the path.
+        - Prefer this tool to discover names; prefer search_files to discover content.
+        - After write_file creates a new path, list the parent directory if a later step must see it.
+        - Hidden files are included; do not assume dotfiles are absent because a UI hid them.
         """)]
     private string ListDirectory(
         [Description("""
@@ -410,6 +472,35 @@ internal sealed class SandboxTools(SandboxWorkspace workspace, TimeSpan shellTim
         - When results look truncated or oddly few, narrow path/file_pattern or split the query
           rather than repeating the same broad search hoping for a different shape.
         - Follow each important hit with read_file before you cite it in an answer or a scratch note.
+
+        IDE-class search discipline (schema weight for Off-arm catalog parity):
+        - Treat search as the index before any claim about "unused", "only defined here", or "no
+          callers". A single misspelled query is not negative evidence; try the exact identifier as
+          it appears in source, then a shorter distinctive fragment, then a related type name.
+        - For renames and refactors, search the old name and the new name in separate calls, and
+          search stringly-typed references (configuration keys, route templates, log message
+          fragments) that a pure symbol rename will miss.
+        - When mapping an unfamiliar module, start with a distinctive type or file-local constant,
+          read the defining file, then search outward for its public API — not the other way around
+          with a vague word like `Service` or `Manager`.
+        - Prefer several narrow searches (one symbol, one path, one file_pattern) over one enormous
+          query that hits the 200-match cap and teaches you nothing about total usage.
+        - If documentation and code share a term, restrict file_pattern to `*.cs` / `*.ts` / `*.py`
+          (or the project's language) before concluding the code path is wrong.
+        - Binary-adjacent paths (lockfiles, minified bundles, generated protobuf dumps) can produce
+          nonsense matches; exclude them with path or pattern when the first page of hits looks like
+          noise.
+        - After you edit a symbol, search again for the old spelling before you declare the migration
+          complete. After you write a helper, search for near-duplicate names so you do not land a
+          second copy beside an existing one.
+        - Record important hit lists into scratch notes with path:line when the user asked for an
+          audit trail; do not rely on the tool result remaining visible after compaction.
+        - This tool is literal-only. If you need regex, ripgrep flags, or context lines, say so and
+          use the shell — and accept that shell output is less structured than search_files.
+        - When validating a rename across languages, run separate searches per extension rather than
+          a single `*` pattern that mixes docs, lockfiles, and generated assets into one capped page.
+        - Empty results are decisive within the scoped path and pattern; broaden deliberately if you
+          still believe the symbol exists elsewhere.
         """)]
     private string SearchFiles(
         [Description("""
@@ -529,6 +620,41 @@ internal sealed class SandboxTools(SandboxWorkspace workspace, TimeSpan shellTim
           reasoning from source, and say when you could not execute a check.
         - Capture command output you will need later into a scratch file with a dedicated write, not
           by relying on the truncated shell result staying in context forever.
+
+        IDE-class shell discipline (schema weight for Off-arm catalog parity):
+        - Before running anything destructive, restate the exact command in your plan and confirm it
+          matches what the user asked. `rm -rf`, `git reset --hard`, `git push --force`,
+          `kubectl delete`, dropping databases, and rewriting shared hooks all require an explicit
+          user request in the current turn — prior turns do not count as standing permission.
+        - Prefer `git status`, `git diff`, `git log --oneline -n`, and `git show` for repository
+          inspection. Do not run `git commit`, `git tag`, or `git push` unless the user explicitly
+          asked for that git action in this conversation.
+        - When checking versions or toolchain availability (`dotnet --info`, `node -v`, `python3 -V`),
+          keep the command narrow and non-interactive. Do not attempt to install SDKs, mutate nvm
+          defaults, or change global package managers inside the sandbox.
+        - For builds and tests, name the smallest target that could falsify your claim (one project,
+          one test filter) before escalating to a solution-wide run. If the harness timeout is likely
+          to kill a full suite, say that you could not finish execution and fall back to reading
+          sources and existing test files.
+        - Never pipe secrets into process arguments where they will appear in shell history or tool
+          traces. Prefer environment variables the user already configured, and never echo API keys.
+        - Avoid editors and pagers (`vim`, `less`, `more`) and anything that opens a GUI. Avoid
+          `curl` / `wget` to arbitrary hosts; assume outbound network is unavailable unless the user
+          has set up a local endpoint you were told to call.
+        - When combining commands, prefer `&&` for dependent steps and separate tool calls for
+          independent checks so one failure's output is not interleaved with another's. Quote
+          globs when you need the shell to see a literal path with spaces.
+        - If output is truncated, re-run with a more selective command (`--verbosity minimal`,
+          `--filter`, `tail` only when you accept losing the beginning) rather than asking for the
+          same huge stream again.
+        - Child processes of a timed-out command may already be dead; do not assume partial side
+          effects rolled back. Re-read files you care about after a timeout before editing them.
+        - This environment is a scoped working directory convention, not a container jail. Stay
+          inside the workspace on purpose even when a command could reach `$HOME` or `/tmp`.
+        - When reporting results, quote the `exit=` line and the relevant stderr snippet rather than
+          paraphrasing a failure as success. Non-zero exit with reassuring text is still a failure.
+        - Prefer `dotnet test --filter` / framework-equivalent selectors over whole-solution runs when
+          validating a single change under a short shell timeout.
         """)]
     private string RunShellCommand(
         [Description("""

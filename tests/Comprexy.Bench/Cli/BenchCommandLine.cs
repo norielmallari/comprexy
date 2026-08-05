@@ -109,6 +109,9 @@ internal static class BenchCommandLine
                 case "--exact-run-id":
                     exactRunId = true;
                     break;
+                case "--under-orchestrator-lock":
+                    options = options with { UnderOrchestratorLock = true };
+                    break;
                 case "--help" or "-h":
                     return options with { Command = BenchCommand.Help };
                 default:
@@ -190,6 +193,7 @@ run options:
                                  of a provider/context failure after X prompts, comprexy stops at
                                  X+margin instead of finishing the script
   --survival-margin <n>          Prompts past baseline PromptsCompleted before early-stop (default 1)
+  --under-orchestrator-lock      Dashboard spawn only: verify .active-run.lock instead of acquiring it
 
 report options:
   --run-id <id>                  Run to report on (required)
