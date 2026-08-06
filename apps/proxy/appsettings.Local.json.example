@@ -1,4 +1,11 @@
 {
+  "Auth": {
+    "RequiredApiKey": null,
+    "DashboardApiKey": null
+  },
+  "OperatorSettings": {
+    "PollInterval": "00:00:02"
+  },
   "Provider": {
     "BaseUrl": "http://localhost:8000/v1",
     "ApiKey": null,

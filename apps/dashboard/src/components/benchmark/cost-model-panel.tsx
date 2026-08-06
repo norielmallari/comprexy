@@ -1,23 +1,25 @@
 /**
- * Cost model panel with presets, local/USD toggle, and disclaimers.
+ * Cost model panel — catalog-backed rates + time-value knobs for benchmark runs.
+ * Model selection lives in the shell CostModelPicker; this panel shows rates and
+ * optional developer/machine $/hr for time-value deltas.
  */
 
 'use client';
 
+import { useEffect } from 'react';
+
+import { COST_DISCLAIMER, LOCAL_COST_DISCLAIMER } from '@/components/cost/format-token-cost';
 import { Button } from '@/components/ui/button';
 import {
-  buildCostRates,
-  COST_DISCLAIMER,
-  COST_RATE_PRESETS,
-  DEFAULT_COST_RATES,
-  LOCAL_COST_DISCLAIMER,
+  catalogModelToBenchmarkRates,
+  DEFAULT_TIME_VALUE_RATES,
 } from '@/lib/benchmark-cost';
-import type { BenchmarkCostRates, BenchmarkModelKind } from '@/types/api';
+import { useCostModels } from '@/lib/queries/use-cost-models';
+import { useDashboardStore } from '@/lib/store/dashboard-store';
+import type { BenchmarkCostRates } from '@/types/api';
 
 interface CostModelPanelProps {
-  modelKind: BenchmarkModelKind;
   rates: BenchmarkCostRates;
-  onModelKindChange: (kind: BenchmarkModelKind) => void;
   onRatesChange: (rates: BenchmarkCostRates) => void;
 }
 
@@ -25,12 +27,10 @@ function RateInput({
   label,
   value,
   onChange,
-  disabled,
 }: {
   label: string;
   value: number;
   onChange: (v: number) => void;
-  disabled?: boolean;
 }) {
   return (
     <label className="flex flex-col gap-1 text-sm">
@@ -40,7 +40,6 @@ function RateInput({
         min={0}
         step={0.01}
         value={value}
-        disabled={disabled}
         onChange={(e) => onChange(parseFloat(e.target.value) || 0)}
         className="rounded border border-border bg-background px-2 py-1 text-sm disabled:opacity-50"
       />
@@ -48,27 +47,33 @@ function RateInput({
   );
 }
 
-export function CostModelPanel({
-  modelKind,
-  rates,
-  onModelKindChange,
-  onRatesChange,
-}: CostModelPanelProps) {
-  const usdDisabled = modelKind === 'local';
+export function CostModelPanel({ rates, onRatesChange }: CostModelPanelProps) {
+  const selectedCostModelKey = useDashboardStore((s) => s.selectedCostModelKey);
+  const { data: models, isLoading } = useCostModels();
+  const selected = models?.find((m) => m.modelKey === selectedCostModelKey);
 
-  const applyPreset = (presetId: string) => {
-    const preset = COST_RATE_PRESETS.find((p) => p.id === presetId);
-    if (preset) {
-      onRatesChange(buildCostRates(preset.rates, modelKind));
-    }
-  };
-
-  const updateRate = (field: keyof BenchmarkCostRates, value: number) => {
-    if (field === 'modelKind') {
+  useEffect(() => {
+    if (!selected) {
       return;
     }
-    onRatesChange({ ...rates, [field]: value });
-  };
+    const next = catalogModelToBenchmarkRates(selected, {
+      developerUsdPerHour: rates.developerUsdPerHour,
+      machineUsdPerHour: rates.machineUsdPerHour,
+    });
+    if (
+      next.inputUsdPer1M !== rates.inputUsdPer1M ||
+      next.outputUsdPer1M !== rates.outputUsdPer1M ||
+      next.compressionInputUsdPer1M !== rates.compressionInputUsdPer1M ||
+      next.compressionOutputUsdPer1M !== rates.compressionOutputUsdPer1M ||
+      next.modelKind !== rates.modelKind
+    ) {
+      onRatesChange(next);
+    }
+    // Sync catalog model → rates; time-value fields are owned by this panel.
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- avoid loop on rates object identity
+  }, [selected, selectedCostModelKey]);
+
+  const isLocal = rates.modelKind === 'local';
 
   return (
     <section
@@ -77,100 +82,60 @@ export function CostModelPanel({
       data-testid="cost-model-panel"
     >
       <h3 className="text-base font-semibold">Cost model</h3>
-
-      <div className="mt-3 flex flex-wrap gap-2">
-        <Button
-          type="button"
-          size="sm"
-          variant={modelKind === 'local' ? 'primary' : 'secondary'}
-          onClick={() => {
-            onModelKindChange('local');
-            onRatesChange({ ...rates, modelKind: 'local' });
-          }}
-        >
-          Local
-        </Button>
-        <Button
-          type="button"
-          size="sm"
-          variant={modelKind === 'usd' ? 'primary' : 'secondary'}
-          onClick={() => {
-            onModelKindChange('usd');
-            onRatesChange(buildCostRates(rates, 'usd'));
-          }}
-        >
-          USD
-        </Button>
-      </div>
-
-      <p className="mt-2 text-xs text-slate-500" data-testid="cost-model-disclaimer">
-        {modelKind === 'local' ? LOCAL_COST_DISCLAIMER : COST_DISCLAIMER}
+      <p className="mt-1 text-sm text-muted-foreground">
+        {isLoading
+          ? 'Loading catalog…'
+          : selected
+            ? `${selected.displayLabel} (shell picker)`
+            : 'Select a model in the top bar'}
       </p>
 
-      {modelKind === 'usd' && (
-        <>
-          <div className="mt-3 flex flex-wrap gap-2">
-            {COST_RATE_PRESETS.map((preset) => (
-              <Button
-                key={preset.id}
-                type="button"
-                size="sm"
-                variant="secondary"
-                onClick={() => applyPreset(preset.id)}
-              >
-                {preset.label}
-              </Button>
-            ))}
-            <Button
-              type="button"
-              size="sm"
-              variant="ghost"
-              onClick={() => onRatesChange(buildCostRates(DEFAULT_COST_RATES, 'usd'))}
-            >
-              Reset defaults
-            </Button>
-          </div>
+      <p className="mt-2 text-xs text-slate-500" data-testid="cost-model-disclaimer">
+        {isLocal ? LOCAL_COST_DISCLAIMER : COST_DISCLAIMER}
+      </p>
 
-          <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-3">
-            <RateInput
-              label="Input $/1M"
-              value={rates.inputUsdPer1M}
-              onChange={(v) => updateRate('inputUsdPer1M', v)}
-              disabled={usdDisabled}
-            />
-            <RateInput
-              label="Output $/1M"
-              value={rates.outputUsdPer1M}
-              onChange={(v) => updateRate('outputUsdPer1M', v)}
-              disabled={usdDisabled}
-            />
-            <RateInput
-              label="Compression input $/1M"
-              value={rates.compressionInputUsdPer1M}
-              onChange={(v) => updateRate('compressionInputUsdPer1M', v)}
-              disabled={usdDisabled}
-            />
-            <RateInput
-              label="Compression output $/1M"
-              value={rates.compressionOutputUsdPer1M}
-              onChange={(v) => updateRate('compressionOutputUsdPer1M', v)}
-              disabled={usdDisabled}
-            />
-            <RateInput
-              label="Developer $/hr"
-              value={rates.developerUsdPerHour}
-              onChange={(v) => updateRate('developerUsdPerHour', v)}
-              disabled={usdDisabled}
-            />
-            <RateInput
-              label="Machine $/hr"
-              value={rates.machineUsdPerHour}
-              onChange={(v) => updateRate('machineUsdPerHour', v)}
-              disabled={usdDisabled}
-            />
+      {!isLocal && selected && (
+        <dl className="mt-3 grid grid-cols-2 gap-2 text-sm sm:grid-cols-2">
+          <div>
+            <dt className="text-slate-500">Input $/1M</dt>
+            <dd className="font-medium">{Number(selected.inputUsdPer1M)}</dd>
           </div>
-        </>
+          <div>
+            <dt className="text-slate-500">Output $/1M</dt>
+            <dd className="font-medium">{Number(selected.outputUsdPer1M)}</dd>
+          </div>
+        </dl>
       )}
+
+      <div className="mt-4 grid grid-cols-2 gap-3">
+        <RateInput
+          label="Developer $/hr"
+          value={rates.developerUsdPerHour}
+          onChange={(v) => onRatesChange({ ...rates, developerUsdPerHour: v })}
+        />
+        <RateInput
+          label="Machine $/hr"
+          value={rates.machineUsdPerHour}
+          onChange={(v) => onRatesChange({ ...rates, machineUsdPerHour: v })}
+        />
+      </div>
+
+      <div className="mt-3">
+        <Button
+          type="button"
+          size="sm"
+          variant="ghost"
+          onClick={() =>
+            onRatesChange({
+              ...rates,
+              developerUsdPerHour: DEFAULT_TIME_VALUE_RATES.developerUsdPerHour,
+              machineUsdPerHour: DEFAULT_TIME_VALUE_RATES.machineUsdPerHour,
+            })
+          }
+        >
+          Reset time-value defaults
+        </Button>
+      </div>
     </section>
   );
 }

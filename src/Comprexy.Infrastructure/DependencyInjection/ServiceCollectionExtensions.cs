@@ -4,12 +4,14 @@ using Comprexy.Application.Services;
 using Comprexy.Infrastructure.Persistence;
 using Comprexy.Infrastructure.Persistence.Repositories;
 using Comprexy.Infrastructure.Providers;
+using Comprexy.Infrastructure.Settings;
 using Comprexy.Infrastructure.Time;
 using Comprexy.Infrastructure.Tokenization;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Options;
 
 namespace Comprexy.Infrastructure.DependencyInjection;
 
@@ -42,6 +44,17 @@ public static class ServiceCollectionExtensions
         // ConversationToolCallMap rows are staged only via IToolIrCallIdMapUnitOfWork (isolated context).
         services.AddSingleton<IToolIrCallIdMapUnitOfWorkFactory, EfToolIrCallIdMapUnitOfWorkFactory>();
         services.AddScoped<IUnitOfWork, EfUnitOfWork>();
+        services.AddScoped<IModelPricingCatalogQuery, ModelPricingCatalogQuery>();
+        services.AddScoped<IOperatorSettingsStore, OperatorSettingsStore>();
+
+        services.AddSingleton<IOperatorSettingsOverlay, OperatorSettingsOverlay>();
+        services.AddSingleton<OperatorSettingsChangeTokenSource>();
+        services.AddHostedService<OperatorSettingsRevisionWatcher>();
+        RegisterOperatorSettingsOverlay<ProxyOptions>(services);
+        RegisterOperatorSettingsOverlay<ContextPolicyOptions>(services);
+        RegisterOperatorSettingsOverlay<CacheAlignmentOptions>(services);
+        RegisterOperatorSettingsOverlay<MetricsOptions>(services);
+        RegisterOperatorSettingsOverlay<ToolSchemaOptions>(services);
 
         services.AddSingleton<IClock, SystemClock>();
         services.AddSingleton<ITokenEstimateCache, TokenEstimateCache>();
@@ -66,6 +79,13 @@ public static class ServiceCollectionExtensions
         });
 
         return services;
+    }
+
+    private static void RegisterOperatorSettingsOverlay<TOptions>(IServiceCollection services)
+        where TOptions : class
+    {
+        services.AddSingleton<IConfigureOptions<TOptions>, OperatorSettingsOverlayConfigureOptions<TOptions>>();
+        services.AddSingleton<IOptionsChangeTokenSource<TOptions>, OperatorSettingsChangeTokenSource<TOptions>>();
     }
 
     private static void ConfigureComprexyDbContext(

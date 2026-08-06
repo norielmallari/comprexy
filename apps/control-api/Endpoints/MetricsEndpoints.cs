@@ -48,6 +48,7 @@ public static class MetricsEndpoints
         PromptTokenBasis? promptTokenBasis,
         [FromServices] PromptTokenBasisContext basisContext,
         IConversationMetricsQueryService metricsQuery,
+        [FromServices] IConversationRepository conversationRepository,
         CancellationToken cancellationToken)
     {
         ApplyBasisOverride(basisContext, promptTokenBasis);
@@ -57,14 +58,26 @@ public static class MetricsEndpoints
             return TypedResults.NotFound();
         }
 
+        var conversation = await conversationRepository.FindByIdAsync(conversationId, cancellationToken);
+        var effectiveSettingsJson = conversation?.EffectiveSettingsJson;
+
         if (basisContext.Resolve() == PromptTokenBasis.Estimated)
         {
-            return TypedResults.Ok(ConversationMetricsMapper.ToSummaryDto(summary));
+            return TypedResults.Ok(
+                ConversationMetricsMapper.ToSummaryDto(
+                    summary,
+                    turns: null,
+                    PromptTokenBasis.Estimated,
+                    effectiveSettingsJson));
         }
 
         var turns = await metricsQuery.ListTurnMetricsAsync(conversationId, cancellationToken);
         return TypedResults.Ok(
-            ConversationMetricsMapper.ToSummaryDto(summary, turns, PromptTokenBasis.ProviderActual));
+            ConversationMetricsMapper.ToSummaryDto(
+                summary,
+                turns,
+                PromptTokenBasis.ProviderActual,
+                effectiveSettingsJson));
     }
 
     private static async Task<IResult> ListTurnMetricsAsync(

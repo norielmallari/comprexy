@@ -68,12 +68,11 @@ public sealed class ConversationMetricsQueryService : IConversationMetricsQueryS
             conversationId,
             cancellationToken);
 
-        // Conversation.SystemPrompt stores BaseSystem (rules stripped). Injected rule overlay tokens
-        // on the live prepare path are not persisted and land in the history/tools residual below.
-        var systemPromptTokens = _tokenEstimator.CountTokens(
-            string.IsNullOrWhiteSpace(conversation?.SystemPrompt)
-                ? ContextBuilder.DefaultSystemPrompt
-                : conversation.SystemPrompt);
+        // Conversation.SystemPrompt stores BaseSystem (rules stripped). When BaseSystem was not
+        // captured, System is 0; injected rule tokens land in the history/tools residual below.
+        var systemPromptTokens = string.IsNullOrWhiteSpace(conversation?.SystemPrompt)
+            ? 0
+            : _tokenEstimator.CountTokens(conversation.SystemPrompt);
 
         var tokensByVersion = workingMemoryVersions.ToDictionary(w => w.Version, w => w.TokenCount);
 

@@ -1,6 +1,7 @@
 using Comprexy.Application.Abstractions;
 using Comprexy.Application.Configuration;
 using Comprexy.Application.Models;
+using Comprexy.Application.Services.Settings;
 using Comprexy.Domain.Entities;
 using Microsoft.Extensions.Options;
 
@@ -11,27 +12,49 @@ public sealed class ConversationMetricsRecorder : IConversationMetricsRecorder
     private readonly IConversationTurnMetricRepository _turnMetricRepository;
     private readonly IConversationMetricsSummaryRepository _summaryRepository;
     private readonly IClock _clock;
-    private readonly MetricsOptions _options;
+    private readonly IEffectiveSettingsAccessor _effectiveSettings;
+    private readonly IOptionsMonitor<MetricsOptions> _options;
 
     public ConversationMetricsRecorder(
         IConversationTurnMetricRepository turnMetricRepository,
         IConversationMetricsSummaryRepository summaryRepository,
         IClock clock,
-        IOptions<MetricsOptions> options)
+        IEffectiveSettingsAccessor effectiveSettings,
+        IOptionsMonitor<MetricsOptions> options)
     {
         _turnMetricRepository = turnMetricRepository;
         _summaryRepository = summaryRepository;
         _clock = clock;
-        _options = options.Value;
+        _effectiveSettings = effectiveSettings;
+        _options = options;
     }
 
-    public bool IsEnabled => _options.Enabled;
+    /// <summary>Test / legacy ctor (internal so MS DI sees only the public primary).</summary>
+    internal ConversationMetricsRecorder(
+        IConversationTurnMetricRepository turnMetricRepository,
+        IConversationMetricsSummaryRepository summaryRepository,
+        IClock clock,
+        IOptions<MetricsOptions> options)
+        : this(
+            turnMetricRepository,
+            summaryRepository,
+            clock,
+            UnsetEffectiveSettingsAccessor.Instance,
+            new FixedOptionsMonitor<MetricsOptions>(options))
+    {
+    }
+
+
+    public bool IsEnabled =>
+        _effectiveSettings.IsSet
+            ? _effectiveSettings.Current.MetricsEnabled
+            : _options.CurrentValue.Enabled;
 
     public async Task RecordSuccessfulTurnAsync(
         SuccessfulTurnMetricInput input,
         CancellationToken cancellationToken)
     {
-        if (!_options.Enabled)
+        if (!IsEnabled)
         {
             return;
         }
@@ -84,7 +107,7 @@ public sealed class ConversationMetricsRecorder : IConversationMetricsRecorder
         int overheadTokens,
         CancellationToken cancellationToken)
     {
-        if (!_options.Enabled || overheadTokens <= 0)
+        if (!IsEnabled || overheadTokens <= 0)
         {
             return;
         }

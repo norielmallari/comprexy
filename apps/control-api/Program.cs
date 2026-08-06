@@ -75,6 +75,8 @@ app.UseMiddleware<ApiKeyAuthMiddleware>();
 app.MapHealthEndpoints();
 app.MapMetricsEndpoints();
 app.MapBenchmarkEndpoints();
+app.MapCostCatalogEndpoints();
+app.MapSettingsEndpoints();
 app.MapMcp("/mcp");
 
 var startupLogger = app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("Comprexy.ControlApi");

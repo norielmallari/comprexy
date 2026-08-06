@@ -87,7 +87,7 @@ Process-local wrap-up-ready message Prefix for provider KV / prompt-cache alignm
 
 ## ToolSchema
 
-Virtual Tools (Tool IR) is a primary Comprexy capability for OpenAI-compatible `tools` / `functions` catalogs. It is enabled by default (`Mode: Virtual`); set `Mode` to `Off` to disable. Ignored when `Proxy:PassThrough` is true. Structural runtime path: [`ARCHITECTURE.md`](ARCHITECTURE.md#tool-schema-virtual-tools).
+Virtual Tools (Tool IR) is a primary Comprexy capability for OpenAI-compatible `tools` / `functions` catalogs. It is enabled by default (`Mode: Virtual`); set `Mode` to `Off` to disable. Ignored when prompt optimizations are skipped (`Proxy:PassThrough` or `Proxy:OptimizationMode=MonitorOnly`). Structural runtime path: [`ARCHITECTURE.md`](ARCHITECTURE.md#tool-schema-virtual-tools).
 
 | Key | Default | Description |
 | --- | --- | --- |
@@ -139,9 +139,13 @@ When `Virtual` is active:
 
 | Key | Default | Description |
 | --- | --- | --- |
-| `RequiredApiKey` | `null` | When set, `/v1/*` and control-api `/mcp` require `Authorization: Bearer {value}` or `X-Api-Key: {value}`. `/health` stays open. |
+| `RequiredApiKey` | `null` | Proxy `/v1/*` and control-api `/mcp` require `Authorization: Bearer {value}` or `X-Api-Key: {value}` when set. `/health` stays open. |
+| `DashboardApiKey` | `null` | Dashboard / browser unlock key for control-api `/v1` when ProtectV1 is true. Never unlocks `/mcp`. |
+| `ProtectV1WithDashboardKey` | `false` (proxy); `true` (control-api stock) | When true on control-api, `/v1` expected-key resolution: non-empty `DashboardApiKey` → require it; else non-empty `RequiredApiKey` → **fallback** require Required (migration for Required-only deployments); else both empty → open. |
 
-When unset, those routes accept any (or no) credential. For non-loopback deployments, set a key and prefer HTTPS.
+**Breaking change (control-api `/v1`):** once `DashboardApiKey` is set, `/v1` is no longer the same key as `/mcp`. Set `Auth:DashboardApiKey` for the dashboard and keep `RequiredApiKey` for MCP/proxy. Until Dashboard is set, `/v1` stays locked by the Required fallback when ProtectV1 is true.
+
+When unset/empty for a given path’s expected key, that path accepts any (or no) credential. For non-loopback deployments, set keys and prefer HTTPS.
 
 Proxy stock `AllowedHosts` is `*` (`apps/proxy/appsettings.json`). control-api secure host defaults (override via environment / `appsettings.Local.json` for remote hostnames):
 
@@ -158,31 +162,51 @@ Server-side MCP clients (Cursor, etc.) do not rely on CORS. Wildcard `AllowedHos
 
 | Key | Default | Description |
 | --- | --- | --- |
-| `PassThrough` | `false` | When true, forwards the original chat body with no context rebuild, compression / working memory, Virtual Tools rewrite, or client rules path. Escape hatch only. |
+| `PassThrough` | `false` | When true, forwards the original chat body with no context rebuild, compression / working memory, Virtual Tools rewrite, or client rules path. Escape hatch — always wins over `OptimizationMode`. No turn metrics. |
+| `OptimizationMode` | `Full` | `Full` = normal prepare. `MonitorOnly` = PassThrough-like wire with prompt mutations, rebuild, compression, and Virtual Tools skipped. It may capture BaseSystem for metrics and record metrics when `Metrics:Enabled`. |
 | `StripReasoningContent` | `false` | When true, strips `reasoning_content` / `reasoning` from outbound chat and compression messages. |
+
+Sticky conversations bind these (and other allowlisted knobs) into `EffectiveSettingsJson` on create; later prepares use the snapshot, not live globals.
+
+---
+
+## OperatorSettings
+
+SQLite-backed mutable allowlist owned by control-api (`GET`/`PUT /v1/comprexy/settings`). Both proxy and control-api poll revision and apply overlay to `IOptionsMonitor` (next request only). Precedence for allowlisted keys: env/cmdline > SQLite overlay > stock appsettings. Secrets, Provider, CORS, Trace, Bench, connection strings stay env/file only.
+
+| Key | Default | Description |
+| --- | --- | --- |
+| `PollInterval` | `00:00:02` | How often hosts poll `OperatorSettings.Revision`. |
+
+PUT requires matching body `revision` (or `If-Match`); mismatch → `409`. Allowlisted sections: `Proxy` (PassThrough, OptimizationMode, StripReasoningContent), `ContextPolicy`, `CacheAlignment` (Enabled, MaxConversations), `Metrics` (Enabled, PromptTokenBasis), prepare-facing `ToolSchema` knobs (`Mode`, `ExcludeFromModelTools`, caps).
+
+Presentation cost catalog (separate): `GET /v1/comprexy/cost-models` returns seeded USD/1M rates (input+output only; not billing).
 
 ---
 
 ## Metrics
 
-Token proof ledger for successful compressed-path turns. Persisted in SQLite (not Trace logs).
+Token proof ledger for successful turns with `MetricsPrepare` set. Persisted in SQLite (not Trace logs). PassThrough never writes turn metrics. MonitorOnly may write when enabled (Raw≈Prepared≈IrFull).
 
 | Key | Default | Description |
 | --- | --- | --- |
 | `Enabled` | `true` | When true, records per-turn raw vs compressed token metrics and folds Inline wrap-up and Tool IR schema-mapping LLM usage into conversation summaries. |
 | `PromptTokenBasis` | `ProviderActual` | Read-side only. `ProviderActual` prefers upstream `usage.prompt_tokens` when present and scales same-turn NativeRaw and IrFull by `actual / prepared-estimate` so SoftBudget (IrFull vs Prepared) and Virtual Tools (NativeRaw vs IrFull) share one tokenizer basis; completion stays `usage.completion_tokens`. SoftBudget net sign matches the estimate IrFull − Prepared gap. The VT channel can be negative. `Estimated` reports stored tiktoken proof. Persistence and SoftBudget eligibility stay estimate-based on prepared size. Override per request with `?promptTokenBasis=Estimated` (or `ProviderActual`) on metrics REST endpoints. |
 
-Operator read API (same `/v1/*` API-key gate as chat):
+Operator read API (same `/v1/*` API-key gate as chat on each host’s auth rules):
 
 | Method | Path | Description |
 | --- | --- | --- |
 | `GET` | `/v1/comprexy/conversations` | List conversation metric summaries |
-| `GET` | `/v1/comprexy/conversations/{conversationId}/metrics` | Conversation rollup |
+| `GET` | `/v1/comprexy/conversations/{conversationId}/metrics` | Conversation rollup (`effectiveSettingsJson` null → UI N/A) |
 | `GET` | `/v1/comprexy/conversations/{conversationId}/metrics/turns` | Per-turn breakdown |
+| `GET` | `/v1/comprexy/settings` | Operator mutable settings + revision |
+| `PUT` | `/v1/comprexy/settings` | Update settings (409 on revision conflict) |
+| `GET` | `/v1/comprexy/cost-models` | Active presentation cost catalog |
 
 Optional query: `promptTokenBasis=Estimated|ProviderActual` (defaults to `Metrics:PromptTokenBasis`). Response DTOs include `promptTokenBasis` showing which basis was applied.
 
-Pass-through turns and failed requests do not write turn metrics. See [`ARCHITECTURE.md`](ARCHITECTURE.md) and the internal metrics plan for formulas.
+Pass-through turns and failed requests do not write turn metrics. SoftBudget and Virtual Tools savings formulas are under Metrics above and in [`ARCHITECTURE.md`](ARCHITECTURE.md) (metrics path + `ConversationTurnMetric`).
 
 ---
 

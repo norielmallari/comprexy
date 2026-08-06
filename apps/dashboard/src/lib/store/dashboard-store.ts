@@ -1,10 +1,29 @@
 /**
  * Zustand store for dashboard client state.
  *
- * Manages conversation selection, theme, and other UI state.
+ * Manages conversation selection, theme, cost model, and other UI state.
  */
 
 import { create } from 'zustand';
+
+import {
+  COST_MODEL_STORAGE_KEY,
+  DEFAULT_COST_MODEL_KEY,
+} from '@/components/cost/format-token-cost';
+
+function readStoredCostModelKey(): string {
+  if (typeof window === 'undefined' || typeof window.sessionStorage === 'undefined') {
+    return DEFAULT_COST_MODEL_KEY;
+  }
+  return window.sessionStorage.getItem(COST_MODEL_STORAGE_KEY) ?? DEFAULT_COST_MODEL_KEY;
+}
+
+function writeStoredCostModelKey(key: string): void {
+  if (typeof window === 'undefined' || typeof window.sessionStorage === 'undefined') {
+    return;
+  }
+  window.sessionStorage.setItem(COST_MODEL_STORAGE_KEY, key);
+}
 
 // ---------------------------------------------------------------------------
 // Store State
@@ -19,6 +38,9 @@ interface DashboardState {
 
   /** Theme: 'light' | 'dark' */
   theme: 'light' | 'dark';
+
+  /** Selected cost catalog model key (shell CostModelPicker) */
+  selectedCostModelKey: string;
 
   /** Selected working memory version filter (null = all) */
   selectedWmVersion: number | null;
@@ -47,6 +69,7 @@ interface DashboardState {
 
   setSelectedConversation: (id: string | null, name?: string | null) => void;
   setTheme: (theme: 'light' | 'dark') => void;
+  setSelectedCostModelKey: (key: string) => void;
   setWmVersionFilter: (version: number | null) => void;
   setOverheadFilter: (overhead: number | null) => void;
   setSavingsFilter: (savings: number | null) => void;
@@ -66,6 +89,7 @@ export const useDashboardStore = create<DashboardState>((set) => ({
   selectedConversationId: null,
   selectedConversationName: null,
   theme: 'light',
+  selectedCostModelKey: DEFAULT_COST_MODEL_KEY,
   selectedWmVersion: null,
   selectedOverhead: null,
   selectedSavings: null,
@@ -82,6 +106,11 @@ export const useDashboardStore = create<DashboardState>((set) => ({
     }),
 
   setTheme: (theme) => set({ theme }),
+
+  setSelectedCostModelKey: (key) => {
+    writeStoredCostModelKey(key);
+    set({ selectedCostModelKey: key });
+  },
 
   setWmVersionFilter: (version) => set({ selectedWmVersion: version }),
 
@@ -107,3 +136,12 @@ export const useDashboardStore = create<DashboardState>((set) => ({
       currentPage: 1,
     }),
 }));
+
+/**
+ * Hydrate selectedCostModelKey from sessionStorage after mount (SSR-safe).
+ * Call once from the dashboard shell.
+ */
+export function hydrateCostModelKeyFromSession(): void {
+  const key = readStoredCostModelKey();
+  useDashboardStore.setState({ selectedCostModelKey: key });
+}

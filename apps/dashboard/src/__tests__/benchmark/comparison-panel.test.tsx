@@ -21,6 +21,23 @@ vi.mock('@/lib/queries/use-turns', () => ({
   useTurnMetrics: vi.fn(),
 }));
 
+vi.mock('@/lib/queries/use-cost-models', () => ({
+  useCostModels: vi.fn(() => ({
+    data: [
+      {
+        modelKey: 'local',
+        displayLabel: 'Local',
+        currencyCode: 'USD',
+        inputUsdPer1M: 0,
+        outputUsdPer1M: 0,
+        sortOrder: 0,
+      },
+    ],
+    isLoading: false,
+    isError: false,
+  })),
+}));
+
 vi.mock('@/lib/api/benchmarks', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/lib/api/benchmarks')>();
   return {

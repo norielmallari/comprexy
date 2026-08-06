@@ -1,13 +1,41 @@
 import { render, screen } from '@testing-library/react';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { ConversationIoCards } from '@/components/metrics/conversation-io-cards';
+import {
+  CATALOG_MODELS,
+  storeSelectorStub,
+} from '@/__tests__/helpers/cost-model-mocks';
 
 vi.mock('@/lib/utils', () => ({
   formatNumber: (n: number) => n.toLocaleString('en-US'),
 }));
 
+vi.mock('@/lib/queries/use-cost-models', () => ({
+  useCostModels: vi.fn(),
+}));
+
+vi.mock('@/lib/store/dashboard-store', () => ({
+  useDashboardStore: vi.fn(),
+}));
+
+import { useCostModels } from '@/lib/queries/use-cost-models';
+import { useDashboardStore } from '@/lib/store/dashboard-store';
+
+const mockUseCostModels = useCostModels as unknown as ReturnType<typeof vi.fn>;
+const mockUseDashboardStore = useDashboardStore as unknown as ReturnType<typeof vi.fn>;
+
 describe('ConversationIoCards', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockUseCostModels.mockReturnValue({
+      data: CATALOG_MODELS,
+      isLoading: false,
+      isError: false,
+    });
+    mockUseDashboardStore.mockImplementation(storeSelectorStub('local'));
+  });
+
   it('renders Raw, Input, and Output regions with formatted values', () => {
     render(
       <ConversationIoCards
@@ -26,6 +54,35 @@ describe('ConversationIoCards', () => {
     expect(
       screen.getByRole('region', { name: 'Output tokens' }),
     ).toHaveTextContent('600');
+  });
+
+  it('hides `$` overlays when Local (zero-rate) is selected', () => {
+    render(
+      <ConversationIoCards
+        totalRawInputTokensEstimated={12000}
+        totalCompressedPromptTokens={8000}
+        totalCompletionTokens={600}
+      />,
+    );
+
+    expect(screen.queryByLabelText(/Estimated cost/)).not.toBeInTheDocument();
+    expect(screen.getByTestId('conversation-io-cards').textContent).not.toMatch(/\$/);
+  });
+
+  it('shows `$` overlays when Sonnet is selected', () => {
+    mockUseDashboardStore.mockImplementation(storeSelectorStub('claude-sonnet-5'));
+
+    render(
+      <ConversationIoCards
+        totalRawInputTokensEstimated={12000}
+        totalCompressedPromptTokens={8000}
+        totalCompletionTokens={600}
+      />,
+    );
+
+    expect(screen.getByLabelText('Estimated cost $0.0360')).toBeInTheDocument();
+    expect(screen.getByLabelText('Estimated cost $0.0240')).toBeInTheDocument();
+    expect(screen.getByLabelText('Estimated cost $0.0090')).toBeInTheDocument();
   });
 
   it('exposes root data-testid conversation-io-cards', () => {

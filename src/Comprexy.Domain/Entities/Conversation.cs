@@ -23,6 +23,12 @@ public class Conversation : EntityBase
     /// </summary>
     public int SyncedMessageCount { get; private set; }
 
+    /// <summary>
+    /// Versioned allowlisted effective-settings JSON bound once on conversation create.
+    /// Null for legacy rows (resolve uses live options; UI shows N/A). Never backfilled.
+    /// </summary>
+    public string? EffectiveSettingsJson { get; private set; }
+
     public DateTimeOffset CreatedAt { get; private set; }
 
     public DateTimeOffset UpdatedAt { get; private set; }
@@ -103,4 +109,20 @@ public class Conversation : EntityBase
     }
 
     public void Touch(DateTimeOffset now) => UpdatedAt = now;
+
+    /// <summary>
+    /// Binds sticky effective settings on first create only. No-op when already set (including
+    /// empty string is treated as set — only null means unbound).
+    /// </summary>
+    public void BindEffectiveSettings(string effectiveSettingsJson, DateTimeOffset now)
+    {
+        if (EffectiveSettingsJson is not null)
+        {
+            return;
+        }
+
+        ArgumentException.ThrowIfNullOrWhiteSpace(effectiveSettingsJson);
+        EffectiveSettingsJson = effectiveSettingsJson;
+        UpdatedAt = now;
+    }
 }

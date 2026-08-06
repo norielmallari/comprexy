@@ -1,13 +1,17 @@
 /**
- * DashboardShell provides the main layout container with TopBar and content area.
+ * DashboardShell provides the main layout container with TopBar, login gate, and content area.
  */
 
 'use client';
 
 import type { ReactNode } from 'react';
+import { useCallback, useEffect, useState } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 
+import { LoginGate } from '@/components/auth/login-gate';
 import { TopBar } from '@/components/layout/top-bar';
 import { Skeleton } from '@/components/ui/skeleton';
+import { hydrateCostModelKeyFromSession } from '@/lib/store/dashboard-store';
 
 interface DashboardShellProps {
   children: ReactNode;
@@ -16,13 +20,34 @@ interface DashboardShellProps {
 /**
  * Main dashboard layout shell.
  *
- * Provides the TopBar and a scrollable content area with consistent padding.
+ * Provides the TopBar, login gate, and a scrollable content area with consistent padding.
  * The content wrapper is a flex column so pages can grow a chart into leftover height.
  */
 export function DashboardShell({ children }: DashboardShellProps) {
+  const [loginOpen, setLoginOpen] = useState(false);
+  const queryClient = useQueryClient();
+
+  useEffect(() => {
+    hydrateCostModelKeyFromSession();
+  }, []);
+
+  const handleAuthenticated = useCallback(() => {
+    void queryClient.invalidateQueries();
+  }, [queryClient]);
+
+  const handleCleared = useCallback(() => {
+    void queryClient.invalidateQueries();
+  }, [queryClient]);
+
   return (
     <div className="flex h-screen w-full flex-col bg-background">
-      <TopBar />
+      <TopBar onRequestLogin={() => setLoginOpen(true)} />
+      <LoginGate
+        open={loginOpen}
+        onOpenChange={setLoginOpen}
+        onAuthenticated={handleAuthenticated}
+        onCleared={handleCleared}
+      />
       <main className="flex min-h-0 flex-1 flex-col overflow-auto p-3">
         <div className="mx-auto flex min-h-0 w-full max-w-[1920px] flex-1 flex-col">
           {children}

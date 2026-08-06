@@ -2,6 +2,7 @@ using Comprexy.Application.Abstractions;
 using Comprexy.Application.Configuration;
 using Comprexy.Application.Models;
 using Comprexy.Application.Services.CacheAlignment;
+using Comprexy.Application.Services.Settings;
 using Comprexy.Domain.Entities;
 using Comprexy.Domain.Enums;
 using Microsoft.Extensions.Logging;
@@ -16,8 +17,9 @@ public sealed class ClientHistorySynchronizer
     private readonly ToolSchemaOrchestrator _toolSchemaOrchestrator;
     private readonly ICacheAlignmentService _cacheAlignment;
     private readonly ITokenEstimator _tokenEstimator;
-    private readonly ProxyOptions _proxyOptions;
-    private readonly CacheAlignmentOptions _cacheAlignmentOptions;
+    private readonly IEffectiveSettingsAccessor _effectiveSettings;
+    private readonly IOptionsMonitor<ProxyOptions> _proxyOptions;
+    private readonly IOptionsMonitor<CacheAlignmentOptions> _cacheAlignmentOptions;
     private readonly ILogger<ClientHistorySynchronizer> _logger;
 
     public ClientHistorySynchronizer(
@@ -26,8 +28,9 @@ public sealed class ClientHistorySynchronizer
         ToolSchemaOrchestrator toolSchemaOrchestrator,
         ICacheAlignmentService cacheAlignment,
         ITokenEstimator tokenEstimator,
-        IOptions<ProxyOptions> proxyOptions,
-        IOptions<CacheAlignmentOptions> cacheAlignmentOptions,
+        IEffectiveSettingsAccessor effectiveSettings,
+        IOptionsMonitor<ProxyOptions> proxyOptions,
+        IOptionsMonitor<CacheAlignmentOptions> cacheAlignmentOptions,
         ILogger<ClientHistorySynchronizer> logger)
     {
         _messageRepository = messageRepository;
@@ -35,10 +38,35 @@ public sealed class ClientHistorySynchronizer
         _toolSchemaOrchestrator = toolSchemaOrchestrator;
         _cacheAlignment = cacheAlignment;
         _tokenEstimator = tokenEstimator;
-        _proxyOptions = proxyOptions.Value;
-        _cacheAlignmentOptions = cacheAlignmentOptions.Value;
+        _effectiveSettings = effectiveSettings;
+        _proxyOptions = proxyOptions;
+        _cacheAlignmentOptions = cacheAlignmentOptions;
         _logger = logger;
     }
+
+    /// <summary>Test / legacy ctor (internal so MS DI sees only the public primary).</summary>
+    internal ClientHistorySynchronizer(
+        IConversationMessageRepository messageRepository,
+        IWorkingMemoryRepository workingMemoryRepository,
+        ToolSchemaOrchestrator toolSchemaOrchestrator,
+        ICacheAlignmentService cacheAlignment,
+        ITokenEstimator tokenEstimator,
+        IOptions<ProxyOptions> proxyOptions,
+        IOptions<CacheAlignmentOptions> cacheAlignmentOptions,
+        ILogger<ClientHistorySynchronizer> logger)
+        : this(
+            messageRepository,
+            workingMemoryRepository,
+            toolSchemaOrchestrator,
+            cacheAlignment,
+            tokenEstimator,
+            UnsetEffectiveSettingsAccessor.Instance,
+            new FixedOptionsMonitor<ProxyOptions>(proxyOptions),
+            new FixedOptionsMonitor<CacheAlignmentOptions>(cacheAlignmentOptions),
+            logger)
+    {
+    }
+
 
     public void EnrichStoredMessagesFromClientHistory(
         List<ConversationMessage> storedMessages,
@@ -93,7 +121,10 @@ public sealed class ClientHistorySynchronizer
         }
 
         // Abandoned open IR→client rounds from the discarded branch must not block healing.
-        if (_toolSchemaOrchestrator.ShouldAttemptActivation(_proxyOptions.PassThrough))
+        var skipsOptimizations = _effectiveSettings.IsSet
+            ? _effectiveSettings.Current.SkipsPromptOptimizations
+            : _proxyOptions.CurrentValue.PassThrough;
+        if (_toolSchemaOrchestrator.ShouldAttemptActivation(skipsOptimizations))
         {
             await _toolSchemaOrchestrator.ClearPendingToolCallMapsAsync(conversation.Id, cancellationToken);
         }
@@ -151,7 +182,7 @@ public sealed class ClientHistorySynchronizer
                 keepNonSystemCount);
         }
 
-        if (_cacheAlignmentOptions.Enabled)
+        if ((_effectiveSettings.IsSet ? _effectiveSettings.Current.CacheAlignmentEnabled : _cacheAlignmentOptions.CurrentValue.Enabled))
         {
             _cacheAlignment.Invalidate(conversation.Id);
         }

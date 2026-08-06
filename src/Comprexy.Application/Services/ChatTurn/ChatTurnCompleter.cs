@@ -1,6 +1,7 @@
 using Comprexy.Application.Abstractions;
 using Comprexy.Application.Configuration;
 using Comprexy.Application.Models;
+using Comprexy.Application.Services.Settings;
 using Comprexy.Domain.Entities;
 using Comprexy.Domain.Enums;
 using Microsoft.Extensions.Logging;
@@ -17,7 +18,8 @@ public sealed class ChatTurnCompleter
     private readonly ChatTurnMessageHelper _messageHelper;
     private readonly ITokenEstimator _tokenEstimator;
     private readonly IClock _clock;
-    private readonly ContextPolicyOptions _policy;
+    private readonly IEffectiveSettingsAccessor _effectiveSettings;
+    private readonly IOptionsMonitor<ContextPolicyOptions> _policy;
     private readonly ILogger<ChatTurnCompleter> _logger;
 
     public ChatTurnCompleter(
@@ -28,7 +30,8 @@ public sealed class ChatTurnCompleter
         ChatTurnMessageHelper messageHelper,
         ITokenEstimator tokenEstimator,
         IClock clock,
-        IOptions<ContextPolicyOptions> policy,
+        IEffectiveSettingsAccessor effectiveSettings,
+        IOptionsMonitor<ContextPolicyOptions> policy,
         ILogger<ChatTurnCompleter> logger)
     {
         _messageRepository = messageRepository;
@@ -38,8 +41,34 @@ public sealed class ChatTurnCompleter
         _messageHelper = messageHelper;
         _tokenEstimator = tokenEstimator;
         _clock = clock;
-        _policy = policy.Value;
+        _effectiveSettings = effectiveSettings;
+        _policy = policy;
         _logger = logger;
+    }
+
+    /// <summary>Test / legacy ctor (internal so MS DI sees only the public primary).</summary>
+    internal ChatTurnCompleter(
+        IConversationMessageRepository messageRepository,
+        ToolSchemaOrchestrator toolSchemaOrchestrator,
+        IConversationMetricsRecorder metricsRecorder,
+        InlineWrapUpRunner inlineWrapUpRunner,
+        ChatTurnMessageHelper messageHelper,
+        ITokenEstimator tokenEstimator,
+        IClock clock,
+        IOptions<ContextPolicyOptions> policy,
+        ILogger<ChatTurnCompleter> logger)
+        : this(
+            messageRepository,
+            toolSchemaOrchestrator,
+            metricsRecorder,
+            inlineWrapUpRunner,
+            messageHelper,
+            tokenEstimator,
+            clock,
+            UnsetEffectiveSettingsAccessor.Instance,
+            new FixedOptionsMonitor<ContextPolicyOptions>(policy),
+            logger)
+    {
     }
 
     public async Task<ProxyChatCompletionResult> CompleteAsync(
@@ -107,7 +136,7 @@ public sealed class ChatTurnCompleter
 
         prepared.Conversation.SetSyncedMessageCount(prepared.IncomingMessageCount + 1, _clock.UtcNow);
 
-        if (!prepared.SkipCompression && prepared.MetricsPrepare is not null)
+        if (prepared.MetricsPrepare is not null)
         {
             var sentPayload = prepared.UpstreamRequest.RewrittenClientRequest
                 ?? prepared.UpstreamRequest.OriginalClientRequest;
@@ -183,7 +212,9 @@ public sealed class ChatTurnCompleter
                 "Post-response Inline wrap-up not eligible for conversation {ConversationId}: estimatedTokens={EstimatedTokens} softLimit={SoftLimitTokens} decision={Decision}.",
                 prepared.Conversation.Id,
                 prepared.EstimatedTokens,
-                _policy.SoftLimitTokens,
+                _effectiveSettings.IsSet
+                    ? _effectiveSettings.Current.SoftLimitTokens
+                    : _policy.CurrentValue.SoftLimitTokens,
                 prepared.Decision);
         }
 

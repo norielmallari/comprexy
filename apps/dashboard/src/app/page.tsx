@@ -15,9 +15,11 @@ import {
   ConversationIoCards,
   HeroCard,
   OverheadCard,
+  VirtualToolsChannelCard,
   WeightedCompressionCard,
   WorkingMemoryCard,
 } from '@/components/metrics';
+import { EffectiveSettingsSnapshot } from '@/components/settings/effective-settings-snapshot';
 import { BarChart } from '@/components/charts';
 import {
   getAverageCompressionRatio,
@@ -88,28 +90,39 @@ function DashboardContent() {
                   />
                 </div>
                 <div
-                  className="grid grid-cols-1 gap-2 sm:grid-cols-3"
+                  className="grid grid-cols-1 gap-2 sm:grid-cols-2"
                   data-testid="metrics-bottom-right"
                 >
                   <BestCompressionCard bestCompressionRatio={bestCompressionRatio} />
-                  <OverheadCard
-                    totalCompressionOverheadTokens={metrics.totalCompressionOverheadTokens}
-                    totalBaselineTokensEstimated={metrics.totalBaselineTokensEstimated}
-                  />
                   <WorkingMemoryCard
                     maxWorkingMemoryVersion={maxWorkingMemoryVersion}
                   />
                 </div>
+                <div
+                  data-testid="metrics-third-left"
+                >
+                  <ConversationIoCards
+                    totalCompressedPromptTokens={metrics.totalCompressedPromptTokens}
+                    totalCompletionTokens={metrics.totalCompletionTokens}
+                    totalRawInputTokensEstimated={metrics.totalRawInputTokensEstimated}
+                  />
+                </div>
+                <div
+                  className="grid grid-cols-1 gap-2 sm:grid-cols-3"
+                  data-testid="metrics-third-right"
+                >
+                  <OverheadCard
+                    totalCompressionOverheadTokens={metrics.totalCompressionOverheadTokens}
+                    totalBaselineTokensEstimated={metrics.totalBaselineTokensEstimated}
+                  />
+                  <EffectiveSettingsSnapshot
+                    effectiveSettingsJson={metrics.effectiveSettingsJson}
+                  />
+                  <VirtualToolsChannelCard
+                    totalVirtualToolsTokensSaved={metrics.totalVirtualToolsTokensSaved}
+                  />
+                </div>
               </div>
-            )}
-
-            {metrics && (
-              <ConversationIoCards
-                totalCompressedPromptTokens={metrics.totalCompressedPromptTokens}
-                totalCompletionTokens={metrics.totalCompletionTokens}
-                totalRawInputTokensEstimated={metrics.totalRawInputTokensEstimated}
-                totalVirtualToolsTokensSaved={metrics.totalVirtualToolsTokensSaved}
-              />
             )}
           </div>
 

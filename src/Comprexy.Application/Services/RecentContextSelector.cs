@@ -24,7 +24,17 @@ public class RecentContextSelector
     public IReadOnlyList<ConversationMessage> Select(
         IReadOnlyList<ConversationMessage> unfoldedExcludingCurrent)
     {
-        var maxMessages = _policy.CompressionRetainMessageCount;
+        return Select(unfoldedExcludingCurrent, _policy.CompressionRetainMessageCount);
+    }
+
+    /// <summary>
+    /// Retain-count overload for sticky effective settings (singleton cannot inject scoped accessor).
+    /// </summary>
+    public IReadOnlyList<ConversationMessage> Select(
+        IReadOnlyList<ConversationMessage> unfoldedExcludingCurrent,
+        int retainMessageCount)
+    {
+        var maxMessages = retainMessageCount;
 
         if (maxMessages <= 0 || unfoldedExcludingCurrent.Count == 0)
         {

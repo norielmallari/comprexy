@@ -56,4 +56,18 @@ public class ContextBudgetEvaluatorTests
 
         Assert.Equal(ContextBudgetDecision.ForwardWithHighPriorityCompression, decision);
     }
+
+    [Fact]
+    public void Evaluate_SoftLimitOverload_IgnoresCtorCapturedLimit()
+    {
+        var evaluator = CreateEvaluator(soft: 50);
+
+        // Tokens between ctor soft (50) and sticky soft (200) — overload must win.
+        Assert.Equal(
+            ContextBudgetDecision.ForwardImmediate,
+            evaluator.Evaluate(100, softLimitTokens: 200));
+        Assert.Equal(
+            ContextBudgetDecision.ForwardWithHighPriorityCompression,
+            evaluator.Evaluate(100, softLimitTokens: 40));
+    }
 }

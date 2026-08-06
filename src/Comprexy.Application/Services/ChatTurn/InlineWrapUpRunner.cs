@@ -2,6 +2,7 @@ using Comprexy.Application.Abstractions;
 using Comprexy.Application.Configuration;
 using Comprexy.Application.Models;
 using Comprexy.Application.Services.CacheAlignment;
+using Comprexy.Application.Services.Settings;
 using Comprexy.Domain.Entities;
 using Comprexy.Domain.Enums;
 using Comprexy.Application.Services.Rules;
@@ -23,7 +24,8 @@ public sealed class InlineWrapUpRunner
     private readonly RecentContextSelector _recentContextSelector;
     private readonly IConversationMetricsRecorder _metricsRecorder;
     private readonly IClock _clock;
-    private readonly CacheAlignmentOptions _cacheAlignmentOptions;
+    private readonly IEffectiveSettingsAccessor _effectiveSettings;
+    private readonly IOptionsMonitor<CacheAlignmentOptions> _cacheAlignmentOptions;
     private readonly ILogger<InlineWrapUpRunner> _logger;
 
     public InlineWrapUpRunner(
@@ -38,7 +40,8 @@ public sealed class InlineWrapUpRunner
         RecentContextSelector recentContextSelector,
         IConversationMetricsRecorder metricsRecorder,
         IClock clock,
-        IOptions<CacheAlignmentOptions> cacheAlignmentOptions,
+        IEffectiveSettingsAccessor effectiveSettings,
+        IOptionsMonitor<CacheAlignmentOptions> cacheAlignmentOptions,
         ILogger<InlineWrapUpRunner> logger)
     {
         _messageRepository = messageRepository;
@@ -52,9 +55,44 @@ public sealed class InlineWrapUpRunner
         _recentContextSelector = recentContextSelector;
         _metricsRecorder = metricsRecorder;
         _clock = clock;
-        _cacheAlignmentOptions = cacheAlignmentOptions.Value;
+        _effectiveSettings = effectiveSettings;
+        _cacheAlignmentOptions = cacheAlignmentOptions;
         _logger = logger;
     }
+
+    /// <summary>Test / legacy ctor (internal so MS DI sees only the public primary).</summary>
+    internal InlineWrapUpRunner(
+        IConversationMessageRepository messageRepository,
+        IWorkingMemoryRepository workingMemoryRepository,
+        ICompressionEventRepository compressionEventRepository,
+        CompressionPromptFactory compressionPromptFactory,
+        IChatCompletionClient chatCompletionClient,
+        ITokenEstimator tokenEstimator,
+        ContextBuilder contextBuilder,
+        ICacheAlignmentService cacheAlignment,
+        RecentContextSelector recentContextSelector,
+        IConversationMetricsRecorder metricsRecorder,
+        IClock clock,
+        IOptions<CacheAlignmentOptions> cacheAlignmentOptions,
+        ILogger<InlineWrapUpRunner> logger)
+        : this(
+            messageRepository,
+            workingMemoryRepository,
+            compressionEventRepository,
+            compressionPromptFactory,
+            chatCompletionClient,
+            tokenEstimator,
+            contextBuilder,
+            cacheAlignment,
+            recentContextSelector,
+            metricsRecorder,
+            clock,
+            new EffectiveSettingsAccessor(),
+            new FixedOptionsMonitor<CacheAlignmentOptions>(cacheAlignmentOptions),
+            logger)
+    {
+    }
+
 
     public async Task RunAsync(
         PreparedRequest prepared,
@@ -119,7 +157,11 @@ public sealed class InlineWrapUpRunner
             foldUniverse = foldUniverse.OrderBy(m => m.Sequence).ToList();
         }
 
-        var keepRecent = _recentContextSelector.Select(foldUniverse).ToList();
+        var keepRecent = (_effectiveSettings.IsSet
+            ? _recentContextSelector.Select(
+                foldUniverse,
+                _effectiveSettings.Current.CompressionRetainMessageCount)
+            : _recentContextSelector.Select(foldUniverse)).ToList();
         var keepIds = keepRecent.Select(m => m.Id).ToHashSet();
         // When later failed edits on path P remain unfolded, pin the last successful mutation
         // group for P so fold does not erase the post-edit tip the next hop needs.
@@ -164,7 +206,7 @@ public sealed class InlineWrapUpRunner
         {
             var wrapUpUser = _compressionPromptFactory.BuildInlineWrapUpUserMessage(prepared.RulesSnapshot);
             IReadOnlyList<ChatMessage> wrapMessages;
-            if (_cacheAlignmentOptions.Enabled && _cacheAlignment.GetSnapshot(prepared.Conversation.Id) is not null)
+            if ((_effectiveSettings.IsSet ? _effectiveSettings.Current.CacheAlignmentEnabled : _cacheAlignmentOptions.CurrentValue.Enabled) && _cacheAlignment.GetSnapshot(prepared.Conversation.Id) is not null)
             {
                 var messagesById = storedMessages.ToDictionary(m => m.Id);
                 messagesById[assistantEntity.Id] = assistantEntity;
@@ -353,7 +395,7 @@ public sealed class InlineWrapUpRunner
             message.MarkFoldedInto(newVersion);
         }
 
-        if (_cacheAlignmentOptions.Enabled)
+        if ((_effectiveSettings.IsSet ? _effectiveSettings.Current.CacheAlignmentEnabled : _cacheAlignmentOptions.CurrentValue.Enabled))
         {
             var retained = foldUniverse
                 .Where(m => keepIds.Contains(m.Id))

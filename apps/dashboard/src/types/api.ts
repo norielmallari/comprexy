@@ -54,6 +54,8 @@ export interface ConversationMetricsSummaryDto {
   compressionEventCount: number;
   createdAt: string;
   updatedAt: string;
+  /** Sticky effective-settings JSON, or null/undefined → UI shows N/A. */
+  effectiveSettingsJson?: string | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -109,6 +111,111 @@ export interface ConversationTurnMetricDto {
   upstreamDurationMs: number | null;
   prepareDurationMs: number | null;
   createdAt: string;
+}
+
+// ---------------------------------------------------------------------------
+// Cost catalog DTOs (control-api /v1/comprexy/cost-models)
+// ---------------------------------------------------------------------------
+
+export interface CostModelDto {
+  modelKey: string;
+  displayLabel: string;
+  currencyCode: string;
+  inputUsdPer1M: number;
+  outputUsdPer1M: number;
+  cachedInputUsdPer1M?: number | null;
+  cachedOutputUsdPer1M?: number | null;
+  sortOrder: number;
+}
+
+// ---------------------------------------------------------------------------
+// Operator settings DTOs (control-api /v1/comprexy/settings)
+// ---------------------------------------------------------------------------
+
+/** Matches OptimizationMode enum (Full = 0, MonitorOnly = 1). */
+export type OptimizationMode = 0 | 1;
+
+/** Matches PromptTokenBasis enum (Estimated = 0, ProviderActual = 1). */
+export type PromptTokenBasis = 0 | 1;
+
+/** Matches ToolSchemaMode enum (Off = 0, Virtual = 1). */
+export type ToolSchemaMode = 0 | 1;
+
+export const OptimizationModeValues = {
+  Full: 0 as OptimizationMode,
+  MonitorOnly: 1 as OptimizationMode,
+} as const;
+
+export const PromptTokenBasisValues = {
+  Estimated: 0 as PromptTokenBasis,
+  ProviderActual: 1 as PromptTokenBasis,
+} as const;
+
+export const ToolSchemaModeValues = {
+  Off: 0 as ToolSchemaMode,
+  Virtual: 1 as ToolSchemaMode,
+} as const;
+
+export interface ProxyMutableDto {
+  passThrough?: boolean | null;
+  optimizationMode?: OptimizationMode | null;
+  stripReasoningContent?: boolean | null;
+}
+
+export interface ContextPolicyMutableDto {
+  softLimitTokens?: number | null;
+  minTurnsBetweenGenerations?: number | null;
+  compressionRetainMessageCount?: number | null;
+  dedupeDuplicateFailedEdits?: boolean | null;
+  tokenizerEncoding?: string | null;
+}
+
+export interface CacheAlignmentMutableDto {
+  enabled?: boolean | null;
+  maxConversations?: number | null;
+}
+
+export interface MetricsMutableDto {
+  enabled?: boolean | null;
+  promptTokenBasis?: PromptTokenBasis | null;
+}
+
+export interface ToolSchemaMutableDto {
+  mode?: ToolSchemaMode | null;
+  excludeFromModelTools?: string[] | null;
+  mappingMaxRetries?: number | null;
+  maxRangeLines?: number | null;
+  maxSearchMatches?: number | null;
+  maxDirListEntries?: number | null;
+  maxShellObservationChars?: number | null;
+  maxPassthroughObservationChars?: number | null;
+  maxSearchPreviewChars?: number | null;
+  maxManifestImports?: number | null;
+  maxManifestSymbols?: number | null;
+  maxManifestImportChars?: number | null;
+  firstReadMaxLines?: number | null;
+  firstReadMaxChars?: number | null;
+  firstReadUnwindowedMaxLines?: number | null;
+  searchSentinelMaxChars?: number | null;
+}
+
+export interface OperatorMutableSettingsDto {
+  proxy?: ProxyMutableDto | null;
+  contextPolicy?: ContextPolicyMutableDto | null;
+  cacheAlignment?: CacheAlignmentMutableDto | null;
+  metrics?: MetricsMutableDto | null;
+  toolSchema?: ToolSchemaMutableDto | null;
+}
+
+export interface OperatorSettingsResponseDto {
+  revision: number;
+  settings: OperatorMutableSettingsDto;
+  updatedAt: string;
+}
+
+export interface OperatorSettingsPutRequestDto {
+  revision: number;
+  settings: OperatorMutableSettingsDto;
 }
 
 // ---------------------------------------------------------------------------
@@ -253,4 +360,6 @@ export interface ApiResponseSingle<T> {
 export interface ApiError {
   message: string;
   statusCode?: number;
+  /** Present on settings 409 conflict responses. */
+  currentRevision?: number;
 }

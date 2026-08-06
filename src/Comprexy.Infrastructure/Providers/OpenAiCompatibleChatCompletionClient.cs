@@ -6,6 +6,7 @@ using Comprexy.Application.Abstractions;
 using Comprexy.Application.Configuration;
 using Comprexy.Application.Models;
 using Comprexy.Application.Services;
+using Comprexy.Application.Services.Settings;
 using Comprexy.Application.Tracing;
 using Comprexy.Domain.Enums;
 using Microsoft.Extensions.Logging;
@@ -26,23 +27,31 @@ public class OpenAiCompatibleChatCompletionClient : IChatCompletionClient
 
     private readonly HttpClient _httpClient;
     private readonly IPayloadTraceLogger _payloadTrace;
-    private readonly ProxyOptions _proxyOptions;
+    private readonly IEffectiveSettingsAccessor _effectiveSettings;
+    private readonly IOptionsMonitor<ProxyOptions> _proxyOptions;
     private readonly CompressionOptions _compressionOptions;
     private readonly ILogger<OpenAiCompatibleChatCompletionClient> _logger;
 
     public OpenAiCompatibleChatCompletionClient(
         HttpClient httpClient,
         IPayloadTraceLogger payloadTrace,
-        IOptions<ProxyOptions> proxyOptions,
+        IEffectiveSettingsAccessor effectiveSettings,
+        IOptionsMonitor<ProxyOptions> proxyOptions,
         IOptions<CompressionOptions> compressionOptions,
         ILogger<OpenAiCompatibleChatCompletionClient> logger)
     {
         _httpClient = httpClient;
         _payloadTrace = payloadTrace;
-        _proxyOptions = proxyOptions.Value;
+        _effectiveSettings = effectiveSettings;
+        _proxyOptions = proxyOptions;
         _compressionOptions = compressionOptions.Value;
         _logger = logger;
     }
+
+    private bool StripReasoningContent =>
+        _effectiveSettings.IsSet
+            ? _effectiveSettings.Current.StripReasoningContent
+            : _proxyOptions.CurrentValue.StripReasoningContent;
 
     public async Task<UpstreamChatResult> CompleteAsync(
         ProviderEndpoint endpoint,
@@ -357,7 +366,7 @@ public class OpenAiCompatibleChatCompletionClient : IChatCompletionClient
         {
             ReasoningContentStripper.StripFromMessagesArray(
                 root["messages"],
-                _proxyOptions.StripReasoningContent);
+                StripReasoningContent);
         }
 
         return root.ToJsonString(SerializerOptions);
@@ -369,7 +378,7 @@ public class OpenAiCompatibleChatCompletionClient : IChatCompletionClient
         {
             var node = JsonNode.Parse(raw.GetRawText())
                 ?? throw new InvalidOperationException("Unable to parse raw wire message.");
-            if (_proxyOptions.StripReasoningContent && node is JsonObject obj)
+            if (StripReasoningContent && node is JsonObject obj)
             {
                 ReasoningContentStripper.StripFromMessageObject(obj);
             }

@@ -1,6 +1,11 @@
 {
   "Auth": {
-    "RequiredApiKey": null
+    "RequiredApiKey": null,
+    "DashboardApiKey": null,
+    "ProtectV1WithDashboardKey": true
+  },
+  "OperatorSettings": {
+    "PollInterval": "00:00:02"
   },
   "Cors": {
     "AllowedOrigins": [

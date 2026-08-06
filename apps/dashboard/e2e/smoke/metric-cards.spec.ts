@@ -97,6 +97,11 @@ test.describe('dashboard metric cards', () => {
     ).toContainText(`v${maxWm}`);
 
     await expect(
+      page.getByTestId('effective-settings-snapshot'),
+    ).toBeVisible();
+    await expect(page.getByTestId('effective-settings-na')).toHaveText('N/A');
+
+    await expect(
       page.getByRole('region', { name: 'Raw input tokens', exact: true }),
     ).toBeVisible();
     await expect(
@@ -153,31 +158,43 @@ test.describe('dashboard metric cards', () => {
     await expect(chart).toHaveAttribute('aria-label', /3 turns/);
   });
 
-  test('lays out the metric groups as a full-width 2x2 grid', async ({
+  test('lays out token I/O and state as the two halves of row three', async ({
     page,
   }) => {
     const topLeft = await page.getByTestId('metrics-top-left').boundingBox();
     const topRight = await page.getByTestId('metrics-top-right').boundingBox();
     const bottomLeft = await page.getByTestId('metrics-bottom-left').boundingBox();
     const bottomRight = await page.getByTestId('metrics-bottom-right').boundingBox();
+    const thirdLeft = await page.getByTestId('metrics-third-left').boundingBox();
+    const thirdRight = await page.getByTestId('metrics-third-right').boundingBox();
 
     expect(topLeft).not.toBeNull();
     expect(topRight).not.toBeNull();
     expect(bottomLeft).not.toBeNull();
     expect(bottomRight).not.toBeNull();
+    expect(thirdLeft).not.toBeNull();
+    expect(thirdRight).not.toBeNull();
 
     expect(topLeft!.x).toBeLessThan(topRight!.x);
     expect(bottomLeft!.x).toBeLessThan(bottomRight!.x);
     expect(bottomLeft!.y).toBeGreaterThan(topLeft!.y);
     expect(bottomRight!.y).toBeGreaterThan(topRight!.y);
+    expect(thirdLeft!.x).toBe(topLeft!.x);
+    expect(thirdLeft!.width).toBe(topLeft!.width);
+    expect(thirdRight!.x).toBe(topRight!.x);
+    expect(thirdRight!.width).toBe(topRight!.width);
+    expect(thirdLeft!.y).toBeGreaterThan(bottomLeft!.y);
+    expect(thirdRight!.y).toBeGreaterThan(bottomRight!.y);
   });
 
-  test('places the I/O strip below the metrics grid', async ({ page }) => {
-    const grid = await page.getByTestId('metrics-grid').boundingBox();
+  test('places the I/O strip inside the third-left half', async ({ page }) => {
+    const thirdLeft = await page.getByTestId('metrics-third-left').boundingBox();
     const ioStrip = await page.getByTestId('conversation-io-cards').boundingBox();
 
-    expect(grid).not.toBeNull();
+    expect(thirdLeft).not.toBeNull();
     expect(ioStrip).not.toBeNull();
-    expect(ioStrip!.y).toBeGreaterThanOrEqual(grid!.y + grid!.height);
+    expect(ioStrip!.x).toBe(thirdLeft!.x);
+    expect(ioStrip!.y).toBe(thirdLeft!.y);
+    expect(ioStrip!.width).toBe(thirdLeft!.width);
   });
 });

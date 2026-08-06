@@ -16,6 +16,7 @@ public class ConversationConfiguration : IEntityTypeConfiguration<Conversation>
 
         builder.Property(c => c.SystemPrompt);
         builder.Property(c => c.SyncedMessageCount).IsRequired();
+        builder.Property(c => c.EffectiveSettingsJson);
         builder.Property(c => c.CreatedAt).IsRequired();
         builder.Property(c => c.UpdatedAt).IsRequired();
     }

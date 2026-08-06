@@ -63,6 +63,23 @@ vi.mock('@/lib/queries/use-turns', () => ({
   useTurnMetrics: vi.fn(),
 }));
 
+vi.mock('@/lib/queries/use-cost-models', () => ({
+  useCostModels: vi.fn(() => ({
+    data: [
+      {
+        modelKey: 'local',
+        displayLabel: 'Local',
+        currencyCode: 'USD',
+        inputUsdPer1M: 0,
+        outputUsdPer1M: 0,
+        sortOrder: 0,
+      },
+    ],
+    isLoading: false,
+    isError: false,
+  })),
+}));
+
 vi.mock('@/components/layout', () => ({
   DashboardShell: ({ children }: { children: React.ReactNode }) => (
     <main>{children}</main>
@@ -207,7 +224,7 @@ describe('Dashboard page metric composition', () => {
     expect(screen.queryByTestId('metrics-grid')).not.toBeInTheDocument();
   });
 
-  it('uses a full-width 2x2 metric grid with the requested grouping', () => {
+  it('uses exactly three metric rows with token I/O on the third-left', () => {
     render(<Home />);
 
     const grid = screen.getByTestId('metrics-grid');
@@ -215,6 +232,8 @@ describe('Dashboard page metric composition', () => {
     const topRight = screen.getByTestId('metrics-top-right');
     const bottomLeft = screen.getByTestId('metrics-bottom-left');
     const bottomRight = screen.getByTestId('metrics-bottom-right');
+    const thirdLeft = screen.getByTestId('metrics-third-left');
+    const thirdRight = screen.getByTestId('metrics-third-right');
 
     expect(grid).toHaveClass('w-full', 'lg:grid-cols-2');
     expect(Array.from(grid.children)).toEqual([
@@ -222,6 +241,8 @@ describe('Dashboard page metric composition', () => {
       topRight,
       bottomLeft,
       bottomRight,
+      thirdLeft,
+      thirdRight,
     ]);
     expect(topLeft).toContainElement(
       screen.getByRole('region', { name: 'Tokens Saved' }),
@@ -242,24 +263,41 @@ describe('Dashboard page metric composition', () => {
       screen.getByRole('region', { name: 'Best Compression' }),
     );
     expect(bottomRight).toContainElement(
-      screen.getByRole('region', { name: 'Overhead' }),
-    );
-    expect(bottomRight).toContainElement(
       screen.getByRole('region', { name: 'Working Memory' }),
     );
+    expect(thirdLeft).toContainElement(
+      screen.getByRole('region', { name: 'Raw input tokens' }),
+    );
+    expect(thirdLeft).toContainElement(
+      screen.getByRole('region', { name: 'Input tokens' }),
+    );
+    expect(thirdLeft).toContainElement(
+      screen.getByRole('region', { name: 'Output tokens' }),
+    );
+    expect(thirdRight).toContainElement(
+      screen.getByRole('region', { name: 'Overhead' }),
+    );
+    expect(thirdRight).toContainElement(
+      screen.getByRole('button', { name: 'Effective settings not available' }),
+    );
+    expect(thirdRight).toContainElement(
+      screen.getByRole('region', { name: 'Virtual Tools channel' }),
+    );
+    expect(bottomRight).toHaveClass('sm:grid-cols-2');
+    expect(thirdRight).toHaveClass('sm:grid-cols-3');
+    expect(screen.queryByTestId('effective-settings-json')).not.toBeInTheDocument();
   });
 
-  it('places the I/O strip as a sibling after the metrics grid', () => {
+  it('places the I/O strip inside the third-left half', () => {
     render(<Home />);
 
     const grid = screen.getByTestId('metrics-grid');
     const ioStrip = screen.getByTestId('conversation-io-cards');
-    const bottomLeft = screen.getByTestId('metrics-bottom-left');
+    const thirdLeft = screen.getByTestId('metrics-third-left');
 
     expect(ioStrip).toBeInTheDocument();
-    expect(bottomLeft).not.toContainElement(ioStrip);
-    expect(grid).not.toContainElement(ioStrip);
-    expect(grid.nextElementSibling).toBe(ioStrip);
+    expect(thirdLeft).toContainElement(ioStrip);
+    expect(grid).toContainElement(ioStrip);
   });
 
   it('renders exactly one region for each honest metric', () => {

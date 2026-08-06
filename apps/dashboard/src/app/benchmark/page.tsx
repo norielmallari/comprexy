@@ -14,11 +14,10 @@ import {
 import { DashboardShell, DashboardSkeleton } from '@/components/layout';
 import { useBenchmarkRun } from '@/lib/api/benchmarks';
 import { DEFAULT_COST_RATES } from '@/lib/benchmark-cost';
-import type { BenchmarkCostRates, BenchmarkModelKind } from '@/types/api';
+import type { BenchmarkCostRates } from '@/types/api';
 
 function BenchmarkContent() {
   const [mode, setMode] = useState<BenchmarkMode>('telemetry');
-  const [modelKind, setModelKind] = useState<BenchmarkModelKind>('local');
   const [rates, setRates] = useState<BenchmarkCostRates>(DEFAULT_COST_RATES);
   const [telemetryConversationId, setTelemetryConversationId] = useState<string | null>(null);
   const [baselineId, setBaselineId] = useState<string | null>(null);
@@ -35,6 +34,8 @@ function BenchmarkContent() {
     setCompareId(compare);
     setMode('comparison');
   }, []);
+
+  const modelKind = rates.modelKind;
 
   return (
     <DashboardShell>
@@ -55,12 +56,7 @@ function BenchmarkContent() {
               }}
               onAutoFillIds={handleAutoFill}
             />
-            <CostModelPanel
-              modelKind={modelKind}
-              rates={rates}
-              onModelKindChange={setModelKind}
-              onRatesChange={setRates}
-            />
+            <CostModelPanel rates={rates} onRatesChange={setRates} />
             <RunStatusPanel run={activeRun} isLoading={runLoading && Boolean(activeRunId)} />
           </div>
 

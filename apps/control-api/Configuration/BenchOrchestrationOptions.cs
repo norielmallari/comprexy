@@ -29,6 +29,6 @@ public sealed class BenchOrchestrationOptions
 
     public int ConversationTimeoutSeconds { get; init; } = 7_200;
 
-    /// <summary>Per-conversation wall-clock cap for smoke-only dashboard runs (see internal/smoke-benchmark.md).</summary>
+    /// <summary>Per-conversation wall-clock cap for smoke-only dashboard runs.</summary>
     public int SmokeConversationTimeoutSeconds { get; init; } = 1_200;
 }

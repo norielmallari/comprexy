@@ -60,12 +60,12 @@ flowchart TB
 ```
 
 - **Chat path:** `POST /v1/chat/completions` → `ProxyChatCompletionService` (rebuild, soft budget, Inline wrap-up).
-- **Metrics path:** `GET /v1/comprexy/conversations*` on **control-api** (`:8130`) → conversation token proof summaries and per-turn breakdown. Proxy emits/persists metrics; it does not serve query routes. SoftBudget headline figures use IrFull vs Prepared when IrFull is present; NativeRaw − IrFull is exposed as the virtual-tools / native-wire channel. The per-turn prepared-prompt split (system / working memory / history + tools) is derived read-side by `ConversationMetricsQueryService` from `Conversation.SystemPrompt` (BaseSystem only) and stored `WorkingMemory.TokenCount`; ephemeral injected rule tokens on the live path are not persisted and appear in the history/tools residual. Nothing extra is persisted per turn for rules, and the three parts sum to `CompressedInputTokensEstimated` so clients render them without re-deriving.
+- **Metrics path:** `GET /v1/comprexy/conversations*` on **control-api** (`:8130`) → conversation token proof summaries and per-turn breakdown. Proxy emits/persists metrics; it does not serve query routes. SoftBudget headline figures use IrFull vs Prepared when IrFull is present; NativeRaw − IrFull is exposed as the virtual-tools / native-wire channel. The per-turn prepared-prompt split (system / working memory / history + tools) is derived read-side by `ConversationMetricsQueryService` from `Conversation.SystemPrompt` (BaseSystem only) and stored `WorkingMemory.TokenCount`; when BaseSystem was not captured, the system segment is `0`. Ephemeral injected rule tokens on the live path are not persisted and appear in the history/tools residual. Nothing extra is persisted per turn for rules, and the three parts sum to `CompressedInputTokensEstimated` so clients render them without re-deriving.
 - **Benchmark path:** operator control-api (`/v1/comprexy/benchmarks/*`) spawns the `Comprexy.Bench` harness CLI, owns outer `status.json` phases and `reports/bench/index.json` for dashboard-started runs, and serves presentation/compare endpoints with separated I/O totals. The harness may write in-run progress fields only (`runPhase`, arm, conversation hints). Bench artifacts stay under `reports/bench/` — not in the product SQLite schema. CLI and dashboard share `reports/bench/.active-run.lock` (stale dead-pid reclaim); spawn fails fast if the fixed bench ports are already bound. Dashboard-spawned CLI runs pass `--under-orchestrator-lock` so they verify rather than re-acquire that lock.
 - **Dashboard path:** optional `apps/dashboard` (`:3000`) browser UI over control-api REST (not the proxy). Enable CORS for the dashboard origin on control-api when needed.
 - **Telemetry MCP path:** Streamable HTTP at `/mcp` on **control-api** — same Application read facades as REST (`IConversationMetricsQueryService` for metrics; `IConversationRetrievalQueryService` for message/WM RAG). Tools are `comprexy_*` and require an explicit `conversationId` (from the proxy meta-tool `comprexy_get_current_conversation_id`, response header `X-Comprexy-Conversation-Id`, or operator tooling). Resources use `comprexy://conversation/{conversationId}/…` templates. Stateless transport; no ambient current-conversation header on MCP. Summary totals, weighted/simple average, peak, and final-turn fields are whole-conversation; median and savings regressions are computed from the bounded `TurnIndex`-ordered sample and are marked via `IsPartialTurnSample` when the conversation exceeds the row cap. Retrieval tools search/window `ConversationMessage` by `Sequence` and expose versioned `WorkingMemory` plus open tool-chain status derived via `ToolCallChainState` (same closed-chain rule as Inline wrap-up; `isAwaitingClientToolResults` marks tip-only in-flight batches). Host filtering defaults to loopback (`AllowedHosts`); CORS denies browser origins unless `Cors:AllowedOrigins` lists them.
 - **Passthrough path:** other `/v1/{**path}` → reverse-proxy to `Provider` unchanged.
-- **Escape hatch:** `Proxy:PassThrough` forwards the original chat body with no rebuild, compression, or turn metrics.
+- **Escape hatch:** `Proxy:PassThrough` forwards the original chat body with no rebuild, compression, BaseSystem capture, or turn metrics. `Proxy:OptimizationMode=MonitorOnly` is PassThrough-like on the wire: it skips prompt mutations, rebuild, compression, and Virtual Tools, but may capture BaseSystem for metrics and record turn metrics when `Metrics:Enabled`.
 
 ## Chat request lifecycle
 
@@ -73,7 +73,7 @@ flowchart TB
 
 1. **Identity** — `ConversationIdentityResolver`: prefer `X-Comprexy-Conversation-Id`; else fingerprint system + first two **plain** user turns (Cursor `<user_query>` extraction / metadata strip; skip Kilo/Cursor tool-echo user turns such as `Called the … tool with the following input:`).
 2. **Gate** — exclusive lease on the conversation key via `ConversationRequestGate` (serializes chat + Inline wrap-up for that key).
-3. **Prepare** — load/create conversation; stage new client messages; load latest working memory + unfolded messages; build outgoing context; optionally rewrite tools via ToolSchema (Virtual Tools); evaluate soft budget; set Inline follow-up eligibility when soft pressure + closed stored chain + cooldown.
+3. **Prepare** — load/create conversation; on create, bind a sticky allowlisted `EffectiveSettingsJson` snapshot from live options; resolve sticky-or-live into request-scoped `IEffectiveSettingsAccessor` **before** Enrich / rewind / rules / VT; capture rules-stripped BaseSystem for Full and MonitorOnly conversations; stage new client messages; load latest working memory + unfolded messages; build outgoing context; optionally rewrite tools via ToolSchema (Virtual Tools); evaluate soft budget; set Inline follow-up eligibility when soft pressure + closed stored chain + cooldown. PassThrough and MonitorOnly early-return with client body (PassThrough never captures BaseSystem or metrics; MonitorOnly may capture BaseSystem and optionally records metrics).
 4. **Upstream** — non-stream `CompleteAsync` or stream with SSE; when ToolSchema Virtual is active, conversation-id meta and local file-cache satisfies stay proxy-internal (streaming clients get live content/reasoning with remapped native `tool_calls` and early `[DONE]` suppressed until the final client-bound turn); model comes from `Provider:Model` when set, otherwise the client's request `model`. On eligible Inline turns, streaming also defers the client tail until the follow-up wrap-up attempt finishes: final `[DONE]` on every eligible turn, plus the whole real `tool_calls` tail on mid-chain turns.
 5. **Complete** — persist assistant (and staged user) turns; if Inline eligible, run a blocking wrap-up and two-phase save (visible transcript, then event ± WM); otherwise persist only.
 
@@ -87,9 +87,13 @@ When Cache Alignment is disabled, `ContextBuilder.Build` assembles roughly:
 
 `BaseSystem + optional pending rule messages + optional working-memory system message + still-unfolded raw messages (+ current tip)`
 
-**Client rules (Cursor / Kilo):** On each non-PassThrough prepare, Application detectors extract rule bodies from the latest client system message and new user/tool transcript slices. `RulesConsolidator` owns the active set (replace semantics per turn), compares against WM `## Rules` (`### rule:<key>` sections), and `RulesInjector` emits synthetic system messages for rules not yet in WM. Synthetic rule messages are materialize-only — never `ConversationMessage` rows. Inline accept deterministically overwrites WM `## Rules` from the consolidator snapshot (inserts the section when missing). `Conversation.SystemPrompt` stores BaseSystem (rules stripped); refresh invalidates Cache Alignment Prefix when BaseSystem text changes.
+**Client rules (Cursor / Kilo):** Full prepares extract rule bodies from the latest client system message and new user/tool transcript slices. `RulesConsolidator` owns the active set (replace semantics per turn), compares against WM `## Rules` (`### rule:<key>` sections), and `RulesInjector` emits synthetic system messages for rules not yet in WM. Synthetic rule messages are materialize-only — never `ConversationMessage` rows. Inline accept deterministically overwrites WM `## Rules` from the consolidator snapshot (inserts the section when missing). `Conversation.SystemPrompt` stores BaseSystem (rules stripped). Any BaseSystem change (Full or MonitorOnly capture) invalidates a leftover Cache Alignment Prefix so unbound live mode flips cannot warm-reuse stale system bytes; MonitorOnly never materializes or stores Prefix (early-return client body). PassThrough does not run detection or capture.
 
-Working memory is omitted until the first successful compression; the rebuild path is otherwise the same. Prefer `RawWireJson` on stored messages when rebuilding wire-faithful turns (tool_calls, multimodal parts). Under Virtual Tools the stored transcript is IR-side (Virtual tool names + distilled observations) — never re-forward the client’s native remapped tool history as the model transcript. `Proxy:PassThrough` is the only full bypass (no rebuild, Virtual, compression, or rules path). Conversation identity for agents that need a UUID is available via the ToolSchema meta-tool `comprexy_get_current_conversation_id` (not injected into the prompt).
+Working memory is omitted until the first successful compression; the rebuild path is otherwise the same. Prefer `RawWireJson` on stored messages when rebuilding wire-faithful turns (tool_calls, multimodal parts). Under Virtual Tools the stored transcript is IR-side (Virtual tool names + distilled observations) — never re-forward the client’s native remapped tool history as the model transcript. `Proxy:PassThrough` always wins (no rebuild, Virtual, compression, rules, BaseSystem capture, or turn metrics). `Proxy:OptimizationMode=MonitorOnly` shares the prompt-mutation skip set, may capture BaseSystem for observability, and may attach metrics. Conversation identity for agents that need a UUID is available via the ToolSchema meta-tool `comprexy_get_current_conversation_id` (not injected into the prompt).
+
+### Sticky effective settings
+
+New conversations capture allowlisted behavior knobs (`Proxy` PassThrough / OptimizationMode / StripReasoningContent, `ContextPolicy`, `CacheAlignment` Enabled/MaxConversations, `Metrics` Enabled/PromptTokenBasis, prepare-facing `ToolSchema` knobs) into `Conversation.EffectiveSettingsJson` on first create. Subsequent prepares deserialize that snapshot into a request-scoped `IEffectiveSettingsAccessor` and must not re-read live `IOptionsMonitor` for those knobs after bind. Legacy null rows resolve from live options for the whole conversation (UI shows N/A). Global SQLite operator settings overlay hot-reloads via `IOptionsMonitor` for unbound / live paths only (next request).
 
 ## Budgets and compression
 
@@ -125,7 +129,7 @@ Message conversational order is `ConversationMessage.Sequence` (unique per conve
 
 | Entity | Role |
 | --- | --- |
-| `Conversation` | Stable key, captured system prompt, `SyncedMessageCount` cursor |
+| `Conversation` | Stable key, captured system prompt, `SyncedMessageCount` cursor, optional sticky `EffectiveSettingsJson` |
 | `ConversationMessage` | Ordered raw turns; optional wire JSON; fold marker |
 | `WorkingMemory` | Immutable versioned markdown snapshot + token count |
 | `CompressionEvent` | Attempt diagnostics (mode, status, WM tokens, compression LLM usage, duration, error) |
@@ -133,6 +137,8 @@ Message conversational order is `ConversationMessage.Sequence` (unique per conve
 | `ConversationMetricsSummary` | Conversation rollup of SoftBudget estimate-based savings (`TotalNetTokensSaved`), `TotalVirtualToolsTokensSaved`, plus compression / Inline wrap-up / Tool IR mapper LLM overhead |
 | `ConversationToolCatalog` | Per-conversation Virtual Tools mapping snapshot (`CatalogHash` + validated `MappingJson`; `ToolIrDisabled` on mapper failure) |
 | `ConversationToolDefinition` | Full client tool definition JSON for passthrough and arg shapes |
+| `ModelPricingEntry` | Seeded presentation USD/1M rates for dashboard cost display (not billing) |
+| `OperatorSettings` | Singleton-row mutable allowlisted operator JSON + optimistic `Revision` (control-api PUT; both hosts poll) |
 | `ConversationToolCallMap` | Durable pending IR↔client `tool_call_id` dual identity for open Virtual Tools rounds (hot cache in process memory) |
 
 ### Unit of Work ownership
@@ -179,7 +185,8 @@ Configuration: [`SETTINGS.md`](SETTINGS.md#toolschema).
 | Tool call wire ids | `ToolCallWireHelper` (assistant `tool_calls` parse, announced-id collection, tool-result id recovery from truncated wire) |
 | Upstream busy / preempt | `IUpstreamActivityGate` (meters non-learner `IChatCompletionClient` calls; idle shape learner waits/preempts here) |
 | Reasoning strip | `ReasoningContentStripper` before chat/compression upstream calls |
-| Auth | `ApiKeyAuthMiddleware` (Infrastructure.Hosting) — optional single `Auth:RequiredApiKey` on `/v1/*` and control-api `/mcp`; `/health` exempt |
+| Auth | `ApiKeyAuthMiddleware` (Infrastructure.Hosting) — path-split keys: proxy `/v1/*` uses `Auth:RequiredApiKey`; control-api `/mcp` always Required; control-api `/v1` when `ProtectV1WithDashboardKey` uses `DashboardApiKey` with Required fallback; `/health` exempt |
+| Operator settings | control-api owns SQLite `OperatorSettings` (revision + allowlisted JSON); both hosts poll and apply overlay to `IOptionsMonitor` |
 | Tracing | `IPayloadTraceLogger`, optional `IRequestTraceFileSession` under `logs/requests/` |
 | Compression prompts | `apps/proxy/Prompts/compression-inline.md` (Inline wrap-up), shared `working-memory-template.md` |
 | Tool schema prompts | (none for Virtual MVP — steer via tool descriptions) |
@@ -209,11 +216,12 @@ Loaded as: `appsettings.json` → environment-specific → host defaults → opt
 | `Compression` | Optional separate Compression endpoint/model for ToolSchema mapper; Inline wrap-up prompts |
 | `ContextPolicy` | Soft limit, Inline cooldown / retain tip knobs |
 | `ToolSchema` | Virtual Tools mode, mapper retries, `ExcludeFromModelTools`, file-cache / distill caps |
-| `Proxy` | Pass-through; strip reasoning |
+| `Proxy` | Pass-through; OptimizationMode (`Full` \| `MonitorOnly`); strip reasoning |
 | `Metrics` | Token ledger capture (default enabled) |
+| `OperatorSettings` | Poll interval for SQLite settings overlay (default 2s) |
 | `McpTelemetry` | control-api MCP row limits and query timeout (default 100 / max 1000 / 5s) |
 | `BenchOrchestration` | control-api local benchmark harness spawn paths, ports, lock file, `AllowSpawn` |
-| `Auth` | Optional required API key |
+| `Auth` | `RequiredApiKey`, `DashboardApiKey`, `ProtectV1WithDashboardKey` (control-api) |
 | `AllowedHosts` / `Cors` | control-api host filtering (loopback default) and optional CORS origins (empty = deny browser CORS) |
 | `Trace` | Console payload categories / request audit files |
 | `Comprexy:TokenEstimateCache` | In-memory tiktoken estimate cache TTL / size |

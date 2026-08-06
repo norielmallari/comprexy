@@ -2,6 +2,7 @@ using Comprexy.Application.Abstractions;
 using Comprexy.Application.Configuration;
 using Comprexy.Application.Models;
 using Comprexy.Application.Services.CacheAlignment;
+using Comprexy.Application.Services.Settings;
 using Comprexy.Domain.Entities;
 using Comprexy.Domain.Enums;
 using Microsoft.Extensions.Logging;
@@ -13,23 +14,44 @@ public sealed class OutgoingContextMaterializer
 {
     private readonly ContextBuilder _contextBuilder;
     private readonly ICacheAlignmentService _cacheAlignment;
-    private readonly ContextPolicyOptions _policy;
-    private readonly CacheAlignmentOptions _cacheAlignmentOptions;
+    private readonly IEffectiveSettingsAccessor _effectiveSettings;
+    private readonly IOptionsMonitor<ContextPolicyOptions> _policy;
+    private readonly IOptionsMonitor<CacheAlignmentOptions> _cacheAlignmentOptions;
     private readonly ILogger<OutgoingContextMaterializer> _logger;
 
     public OutgoingContextMaterializer(
         ContextBuilder contextBuilder,
         ICacheAlignmentService cacheAlignment,
-        IOptions<ContextPolicyOptions> policy,
-        IOptions<CacheAlignmentOptions> cacheAlignmentOptions,
+        IEffectiveSettingsAccessor effectiveSettings,
+        IOptionsMonitor<ContextPolicyOptions> policy,
+        IOptionsMonitor<CacheAlignmentOptions> cacheAlignmentOptions,
         ILogger<OutgoingContextMaterializer> logger)
     {
         _contextBuilder = contextBuilder;
         _cacheAlignment = cacheAlignment;
-        _policy = policy.Value;
-        _cacheAlignmentOptions = cacheAlignmentOptions.Value;
+        _effectiveSettings = effectiveSettings;
+        _policy = policy;
+        _cacheAlignmentOptions = cacheAlignmentOptions;
         _logger = logger;
     }
+
+    /// <summary>Test / legacy ctor (internal so MS DI sees only the public primary).</summary>
+    internal OutgoingContextMaterializer(
+        ContextBuilder contextBuilder,
+        ICacheAlignmentService cacheAlignment,
+        IOptions<ContextPolicyOptions> policy,
+        IOptions<CacheAlignmentOptions> cacheAlignmentOptions,
+        ILogger<OutgoingContextMaterializer> logger)
+        : this(
+            contextBuilder,
+            cacheAlignment,
+            UnsetEffectiveSettingsAccessor.Instance,
+            new FixedOptionsMonitor<ContextPolicyOptions>(policy),
+            new FixedOptionsMonitor<CacheAlignmentOptions>(cacheAlignmentOptions),
+            logger)
+    {
+    }
+
 
     public IReadOnlyList<ChatMessage> MaterializeOutgoingViaCacheAlignment(
         Conversation conversation,
@@ -212,7 +234,10 @@ public sealed class OutgoingContextMaterializer
         IReadOnlyList<ConversationMessage> allMessages,
         int tipSequence)
     {
-        if (!_policy.DedupeDuplicateFailedEdits || recentRaw.Count == 0)
+        var dedupeEnabled = _effectiveSettings.IsSet
+            ? _effectiveSettings.Current.DedupeDuplicateFailedEdits
+            : _policy.CurrentValue.DedupeDuplicateFailedEdits;
+        if (!dedupeEnabled || recentRaw.Count == 0)
         {
             return recentRaw;
         }

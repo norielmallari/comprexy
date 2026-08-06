@@ -544,13 +544,12 @@ public class ConversationMetricsTelemetryTests
     }
 
     [Fact]
-    public async Task ListTurnContextBreakdownsAsync_SegmentsSumToPreparedPrompt()
+    public async Task ListTurnContextBreakdownsAsync_NullSystemPrompt_SystemZeroAndResidualReconciles()
     {
         var id = Guid.NewGuid();
         _conversations
             .Setup(x => x.FindByIdAsync(id, It.IsAny<CancellationToken>()))
             .ReturnsAsync(Conversation.Create("key", DateTimeOffset.UnixEpoch));
-        _tokenEstimator.Setup(x => x.CountTokens(ContextBuilder.DefaultSystemPrompt)).Returns(7);
         _workingMemories
             .Setup(x => x.ListVersionTokenCountsAsync(id, It.IsAny<CancellationToken>()))
             .ReturnsAsync([new WorkingMemoryVersionTokens { Version = 2, TokenCount = 1_200 }]);
@@ -561,11 +560,15 @@ public class ConversationMetricsTelemetryTests
         var breakdown = Assert.Single(
             await CreateService().ListTurnContextBreakdownsAsync(id, CancellationToken.None));
 
+        Assert.Equal(0, breakdown.SystemPromptTokensEstimated);
+        Assert.Equal(1_200, breakdown.WorkingMemoryTokensEstimated);
+        Assert.Equal(11_145, breakdown.HistoryAndToolsTokensEstimated);
         Assert.Equal(
             12_345,
             breakdown.SystemPromptTokensEstimated
                 + breakdown.WorkingMemoryTokensEstimated
                 + breakdown.HistoryAndToolsTokensEstimated);
+        _tokenEstimator.Verify(x => x.CountTokens(It.IsAny<string>()), Times.Never);
     }
 
     private ConversationMetricsQueryService CreateService(

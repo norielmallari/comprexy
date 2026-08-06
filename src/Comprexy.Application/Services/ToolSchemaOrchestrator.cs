@@ -3,6 +3,7 @@ using System.Text.Json.Nodes;
 using Comprexy.Application.Abstractions;
 using Comprexy.Application.Configuration;
 using Comprexy.Application.Models;
+using Comprexy.Application.Services.Settings;
 using Comprexy.Application.Services.ToolIr;
 using Comprexy.Domain.Entities;
 using Comprexy.Domain.Enums;
@@ -90,7 +91,8 @@ public sealed record ToolSchemaLoopResult(
 /// </summary>
 public class ToolSchemaOrchestrator
 {
-    private readonly ToolSchemaOptions _options;
+    private readonly IEffectiveSettingsAccessor _effectiveSettings;
+    private readonly IOptionsMonitor<ToolSchemaOptions> _optionsMonitor;
     private readonly ToolCatalogParser _catalogParser;
     private readonly ToolArgumentValidator _argumentValidator;
     private readonly ToolIrSchemaMapper _schemaMapper;
@@ -105,7 +107,8 @@ public class ToolSchemaOrchestrator
     private readonly ILogger<ToolSchemaOrchestrator> _logger;
 
     public ToolSchemaOrchestrator(
-        IOptions<ToolSchemaOptions> options,
+        IEffectiveSettingsAccessor effectiveSettings,
+        IOptionsMonitor<ToolSchemaOptions> options,
         ToolCatalogParser catalogParser,
         ToolArgumentValidator argumentValidator,
         ToolIrSchemaMapper schemaMapper,
@@ -119,7 +122,8 @@ public class ToolSchemaOrchestrator
         ToolIrResultShapeStore shapeStore,
         ILogger<ToolSchemaOrchestrator> logger)
     {
-        _options = options.Value;
+        _effectiveSettings = effectiveSettings;
+        _optionsMonitor = options;
         _catalogParser = catalogParser;
         _argumentValidator = argumentValidator;
         _schemaMapper = schemaMapper;
@@ -134,8 +138,80 @@ public class ToolSchemaOrchestrator
         _logger = logger;
     }
 
-    public bool ShouldAttemptActivation(bool passThrough) =>
-        _options.Mode == ToolSchemaMode.Virtual && !passThrough;
+    /// <summary>Test / legacy ctor (internal so MS DI sees only the public primary).</summary>
+    internal ToolSchemaOrchestrator(
+        IOptions<ToolSchemaOptions> options,
+        ToolCatalogParser catalogParser,
+        ToolArgumentValidator argumentValidator,
+        ToolIrSchemaMapper schemaMapper,
+        ToolIrPlanner planner,
+        ToolIrResultDistiller distiller,
+        IToolIrCallIdMapService callIdMap,
+        IConversationToolCatalogRepository catalogRepository,
+        IConversationToolDefinitionRepository definitionRepository,
+        IChatCompletionClient chatCompletionClient,
+        IClock clock,
+        ToolIrResultShapeStore shapeStore,
+        ILogger<ToolSchemaOrchestrator> logger)
+        : this(
+            UnsetEffectiveSettingsAccessor.Instance,
+            new FixedOptionsMonitor<ToolSchemaOptions>(options),
+            catalogParser,
+            argumentValidator,
+            schemaMapper,
+            planner,
+            distiller,
+            callIdMap,
+            catalogRepository,
+            definitionRepository,
+            chatCompletionClient,
+            clock,
+            shapeStore,
+            logger)
+    {
+    }
+
+    /// <summary>Allowlisted ToolSchema knobs from sticky effective when set; else live monitor.</summary>
+    private ToolSchemaOptions Options
+    {
+        get
+        {
+            var live = _optionsMonitor.CurrentValue;
+            if (!_effectiveSettings.IsSet)
+            {
+                return live;
+            }
+
+            var e = _effectiveSettings.Current;
+            return new ToolSchemaOptions
+            {
+                Mode = e.ToolSchemaMode,
+                ExcludeFromModelTools = [.. e.ExcludeFromModelTools],
+                MappingMaxRetries = e.MappingMaxRetries,
+                MaxRangeLines = e.MaxRangeLines,
+                MaxSearchMatches = e.MaxSearchMatches,
+                MaxDirListEntries = e.MaxDirListEntries,
+                MaxShellObservationChars = e.MaxShellObservationChars,
+                MaxPassthroughObservationChars = e.MaxPassthroughObservationChars,
+                MaxSearchPreviewChars = e.MaxSearchPreviewChars,
+                MaxManifestImports = e.MaxManifestImports,
+                MaxManifestSymbols = e.MaxManifestSymbols,
+                MaxManifestImportChars = e.MaxManifestImportChars,
+                FirstReadMaxLines = e.FirstReadMaxLines,
+                FirstReadMaxChars = e.FirstReadMaxChars,
+                FirstReadUnwindowedMaxLines = e.FirstReadUnwindowedMaxLines,
+                SearchSentinelMaxChars = e.SearchSentinelMaxChars,
+                FileCacheAbsoluteExpiration = live.FileCacheAbsoluteExpiration,
+                FileCacheSizeLimit = live.FileCacheSizeLimit,
+                CallIdMapPendingAbsoluteExpiration = live.CallIdMapPendingAbsoluteExpiration,
+                CallIdMapMaxConversations = live.CallIdMapMaxConversations,
+                ResultShape = live.ResultShape
+            };
+        }
+    }
+
+    public bool ShouldAttemptActivation(bool skipsPromptOptimizations) =>
+        Options.Mode == ToolSchemaMode.Virtual && !skipsPromptOptimizations;
 
     /// <summary>
     /// Validates inbound client tool results and rewrites Virtual Tools results into IR observations
@@ -447,12 +523,12 @@ public class ToolSchemaOrchestrator
         JsonElement? rawRequest,
         CancellationToken cancellationToken)
     {
-        if (!ShouldAttemptActivation(passThrough: false))
+        if (!ShouldAttemptActivation(skipsPromptOptimizations: false))
         {
             return (new HashSet<string>(StringComparer.Ordinal), CatalogMutated: false, CatalogHash: null, DisableToolIr: false);
         }
 
-        var excluded = _options.GetNormalizedExcludedToolNames();
+        var excluded = Options.GetNormalizedExcludedToolNames();
         var parsed = _catalogParser.TryParse(rawRequest);
         if (parsed is null || parsed.HasMetaToolNameCollision)
         {
@@ -518,7 +594,7 @@ public class ToolSchemaOrchestrator
         JsonElement? rawRequest,
         CancellationToken cancellationToken)
     {
-        if (!ShouldAttemptActivation(passThrough: false))
+        if (!ShouldAttemptActivation(skipsPromptOptimizations: false))
         {
             return new ToolSchemaPrepareOutcome(null, CatalogMutated: false);
         }
@@ -667,7 +743,7 @@ public class ToolSchemaOrchestrator
 
         var replacedClientTools = ToolIrMappingValidator.GetReplacedClientToolNames(mapping)
             .ToHashSet(StringComparer.Ordinal);
-        var excludedFromModel = _options.GetNormalizedExcludedToolNames()
+        var excludedFromModel = Options.GetNormalizedExcludedToolNames()
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
         var boundVirtual = mapping.Bindings
             .Select(b => b.ComprexyTool)
@@ -1227,7 +1303,7 @@ public class ToolSchemaOrchestrator
         {
             if (session.BoundVirtualToolNames.Contains(name))
             {
-                tools.Add(ToolIrVirtualToolDefinitions.ParseWire(name, _options));
+                tools.Add(ToolIrVirtualToolDefinitions.ParseWire(name, Options));
             }
         }
 

@@ -59,6 +59,11 @@ public sealed class ConversationMetricsSummaryDto
     public DateTimeOffset UpdatedAt { get; init; }
 
     public PromptTokenBasis PromptTokenBasis { get; init; }
+
+    /// <summary>
+    /// Sticky effective-settings JSON for this conversation, or null when unbound (UI shows N/A).
+    /// </summary>
+    public string? EffectiveSettingsJson { get; init; }
 }
 
 public sealed class ConversationTurnMetricDto
@@ -175,12 +180,13 @@ public static class ConversationMetricsMapper
     }
 
     public static ConversationMetricsSummaryDto ToSummaryDto(ConversationMetricsSummary summary) =>
-        ToSummaryDto(summary, turns: null, PromptTokenBasis.Estimated);
+        ToSummaryDto(summary, turns: null, PromptTokenBasis.Estimated, effectiveSettingsJson: null);
 
     public static ConversationMetricsSummaryDto ToSummaryDto(
         ConversationMetricsSummary summary,
         IReadOnlyList<ConversationTurnMetric>? turns,
-        PromptTokenBasis basis)
+        PromptTokenBasis basis,
+        string? effectiveSettingsJson = null)
     {
         if (basis == PromptTokenBasis.Estimated || turns is null)
         {
@@ -200,7 +206,8 @@ public static class ConversationMetricsMapper
                 CompressionEventCount = summary.CompressionEventCount,
                 CreatedAt = summary.CreatedAt,
                 UpdatedAt = summary.UpdatedAt,
-                PromptTokenBasis = PromptTokenBasis.Estimated
+                PromptTokenBasis = PromptTokenBasis.Estimated,
+                EffectiveSettingsJson = effectiveSettingsJson
             };
         }
 
@@ -221,7 +228,8 @@ public static class ConversationMetricsMapper
             CompressionEventCount = summary.CompressionEventCount,
             CreatedAt = summary.CreatedAt,
             UpdatedAt = summary.UpdatedAt,
-            PromptTokenBasis = PromptTokenBasis.ProviderActual
+            PromptTokenBasis = PromptTokenBasis.ProviderActual,
+            EffectiveSettingsJson = effectiveSettingsJson
         };
     }
 

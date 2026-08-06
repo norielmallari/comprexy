@@ -28,6 +28,10 @@ public class ComprexyDbContext : DbContext
 
     public DbSet<ConversationToolCallMap> ConversationToolCallMaps => Set<ConversationToolCallMap>();
 
+    public DbSet<ModelPricingEntry> ModelPricingEntries => Set<ModelPricingEntry>();
+
+    public DbSet<OperatorSettings> OperatorSettings => Set<OperatorSettings>();
+
     protected override void ConfigureConventions(ModelConfigurationBuilder configurationBuilder)
     {
         configurationBuilder

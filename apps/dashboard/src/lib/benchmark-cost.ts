@@ -1,14 +1,24 @@
 /**
  * Cost model presets and helpers for the benchmark console.
+ *
+ * Catalog models come from GET /v1/comprexy/cost-models; this module maps them
+ * into BenchmarkCostRates for the existing presentation calculator.
  */
 
-import type { BenchmarkCostRates, BenchmarkModelKind } from '@/types/api';
+import type { BenchmarkCostRates, BenchmarkModelKind, CostModelDto } from '@/types/api';
+import {
+  COST_DISCLAIMER,
+  DEFAULT_COST_MODEL_KEY,
+  isZeroRateModel,
+  LOCAL_COST_DISCLAIMER,
+} from '@/components/cost/format-token-cost';
 
-export const COST_DISCLAIMER =
-  'Rates are operator assumptions for comparison only — not billing or guaranteed savings.';
-
-export const LOCAL_COST_DISCLAIMER =
-  'Local mode shows token and timing totals without USD estimates. Select USD to apply rate presets.';
+export {
+  COST_DISCLAIMER,
+  LOCAL_COST_DISCLAIMER,
+  DEFAULT_COST_MODEL_KEY,
+  isZeroRateModel,
+};
 
 /** Server-side defaults from BenchOrchestrationOptions (control-api appsettings). */
 export const BENCHMARK_TIMEOUT_DEFAULTS = {
@@ -17,48 +27,45 @@ export const BENCHMARK_TIMEOUT_DEFAULTS = {
   smokeConversationTimeoutSeconds: 1200,
 } as const;
 
-export const DEFAULT_COST_RATES: BenchmarkCostRates = {
-  inputUsdPer1M: 3,
-  outputUsdPer1M: 15,
-  compressionInputUsdPer1M: 3,
-  compressionOutputUsdPer1M: 15,
+/** Time-value defaults retained for bench presentation (not from catalog). */
+export const DEFAULT_TIME_VALUE_RATES = {
   developerUsdPerHour: 75,
   machineUsdPerHour: 0.5,
+} as const;
+
+export const DEFAULT_COST_RATES: BenchmarkCostRates = {
+  inputUsdPer1M: 0,
+  outputUsdPer1M: 0,
+  compressionInputUsdPer1M: 0,
+  compressionOutputUsdPer1M: 0,
+  developerUsdPerHour: DEFAULT_TIME_VALUE_RATES.developerUsdPerHour,
+  machineUsdPerHour: DEFAULT_TIME_VALUE_RATES.machineUsdPerHour,
   modelKind: 'local',
 };
 
-export interface CostRatePreset {
-  id: string;
-  label: string;
-  rates: Omit<BenchmarkCostRates, 'modelKind'>;
-}
+/**
+ * Map a catalog cost model into BenchmarkCostRates.
+ * Local / zero rates → modelKind `local` (tokens only, no USD in server calc).
+ */
+export function catalogModelToBenchmarkRates(
+  model: CostModelDto,
+  timeValue: Pick<BenchmarkCostRates, 'developerUsdPerHour' | 'machineUsdPerHour'> = DEFAULT_TIME_VALUE_RATES,
+): BenchmarkCostRates {
+  const input = Number(model.inputUsdPer1M);
+  const output = Number(model.outputUsdPer1M);
+  const local = isZeroRateModel(model);
+  const modelKind: BenchmarkModelKind = local ? 'local' : 'usd';
 
-export const COST_RATE_PRESETS: CostRatePreset[] = [
-  {
-    id: 'frontier-default',
-    label: 'Frontier default ($3 / $15 per 1M)',
-    rates: {
-      inputUsdPer1M: 3,
-      outputUsdPer1M: 15,
-      compressionInputUsdPer1M: 3,
-      compressionOutputUsdPer1M: 15,
-      developerUsdPerHour: 75,
-      machineUsdPerHour: 0.5,
-    },
-  },
-  {
-    id: 'local-small',
-    label: 'Local small ($0.50 / $2 per 1M)',
-    rates: {
-      inputUsdPer1M: 0.5,
-      outputUsdPer1M: 2,
-      compressionInputUsdPer1M: 0.5,
-      compressionOutputUsdPer1M: 2,
-      developerUsdPerHour: 50,
-      machineUsdPerHour: 0.25,
-    },
-  },
-];
+  return {
+    inputUsdPer1M: input,
+    outputUsdPer1M: output,
+    compressionInputUsdPer1M: input,
+    compressionOutputUsdPer1M: output,
+    developerUsdPerHour: timeValue.developerUsdPerHour,
+    machineUsdPerHour: timeValue.machineUsdPerHour,
+    modelKind,
+  };
+}
 
 export function buildCostRates(
   base: Omit<BenchmarkCostRates, 'modelKind'>,

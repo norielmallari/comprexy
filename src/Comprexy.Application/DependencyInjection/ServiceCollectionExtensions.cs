@@ -4,6 +4,7 @@ using Comprexy.Application.Services;
 using Comprexy.Application.Services.CacheAlignment;
 using Comprexy.Application.Services.ChatTurn;
 using Comprexy.Application.Services.Rules;
+using Comprexy.Application.Services.Settings;
 using Comprexy.Application.Services.ToolIr;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -29,6 +30,9 @@ public static class ServiceCollectionExtensions
         services.AddOptions<MetricsOptions>()
             .Bind(configuration.GetSection(MetricsOptions.SectionName));
 
+        services.AddOptions<OperatorSettingsOptions>()
+            .Bind(configuration.GetSection(OperatorSettingsOptions.SectionName));
+
         services.AddSingleton<IEvidenceMarkdownService, EvidenceMarkdownService>();
         services.AddSingleton<IRegressionDetector, RegressionDetector>();
         services.AddSingleton<IBenchmarkTotalsCalculator, BenchmarkTotalsCalculator>();
@@ -36,6 +40,18 @@ public static class ServiceCollectionExtensions
         services.AddScoped<PromptTokenBasisContext>();
         services.AddScoped<IConversationMetricsQueryService, ConversationMetricsQueryService>();
         services.AddScoped<IConversationRetrievalQueryService, ConversationRetrievalQueryService>();
+        services.AddScoped<IEffectiveSettingsAccessor, EffectiveSettingsAccessor>();
+
+        // Allowlisted options for SQLite overlay / typed HttpClient on both hosts.
+        // Full proxy services (chat prepare path) remain gated by enableProxyServices.
+        services.AddOptions<ContextPolicyOptions>()
+            .Bind(configuration.GetSection(ContextPolicyOptions.SectionName));
+        services.AddOptions<ProxyOptions>()
+            .Bind(configuration.GetSection(ProxyOptions.SectionName));
+        services.AddOptions<ToolSchemaOptions>()
+            .Bind(configuration.GetSection(ToolSchemaOptions.SectionName));
+        services.AddOptions<CacheAlignmentOptions>()
+            .Bind(configuration.GetSection(CacheAlignmentOptions.SectionName));
 
         // Required by Infrastructure's IChatCompletionClient decorator even when proxy services are off.
         services.TryAddSingleton(TimeProvider.System);
@@ -54,23 +70,11 @@ public static class ServiceCollectionExtensions
         services.AddOptions<CompressionOptions>()
             .Bind(configuration.GetSection(CompressionOptions.SectionName));
 
-        services.AddOptions<ContextPolicyOptions>()
-            .Bind(configuration.GetSection(ContextPolicyOptions.SectionName));
-
-        services.AddOptions<ProxyOptions>()
-            .Bind(configuration.GetSection(ProxyOptions.SectionName));
-
         services.AddOptions<TraceOptions>()
             .Bind(configuration.GetSection(TraceOptions.SectionName));
 
         services.AddOptions<TokenEstimateCacheOptions>()
             .Bind(configuration.GetSection(TokenEstimateCacheOptions.SectionName));
-
-        services.AddOptions<ToolSchemaOptions>()
-            .Bind(configuration.GetSection(ToolSchemaOptions.SectionName));
-
-        services.AddOptions<CacheAlignmentOptions>()
-            .Bind(configuration.GetSection(CacheAlignmentOptions.SectionName));
 
         services.AddSingleton<IRequestTraceFileSession, RequestTraceFileSession>();
         services.AddSingleton<IPayloadTraceLogger, PayloadTraceLogger>();

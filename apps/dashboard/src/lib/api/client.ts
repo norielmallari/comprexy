@@ -2,10 +2,14 @@
  * Base API client with fetch wrapper.
  *
  * Provides a centralized fetch function with error handling,
- * base URL configuration, and response type normalization.
+ * base URL configuration, dashboard API key injection, and response type normalization.
  */
 
 import { API_BASE_URL } from '@/lib/constants';
+import {
+  applyDashboardApiKeyHeaders,
+  notifyAuthRequired,
+} from '@/lib/auth/dashboard-api-key';
 import { ApiError } from '@/types/api';
 
 /**
@@ -17,6 +21,18 @@ interface FetchOptions extends RequestInit {
 }
 
 /**
+ * True when the request targets `/health` (never send dashboard API key).
+ */
+function isHealthPath(url: string): boolean {
+  try {
+    const parsed = new URL(url, API_BASE_URL);
+    return parsed.pathname === '/health' || parsed.pathname.endsWith('/health');
+  } catch {
+    return url.includes('/health');
+  }
+}
+
+/**
  * Parse a JSON response body with error handling.
  *
  * @param response - Fetch response object
@@ -25,24 +41,56 @@ interface FetchOptions extends RequestInit {
  */
 async function parseJson<T>(response: Response): Promise<T> {
   if (!response.ok) {
+    if (response.status === 401) {
+      notifyAuthRequired();
+    }
+
     const errorBody = await response.json().catch(() => ({}));
     const message =
-      typeof errorBody.message === 'string'
-        ? errorBody.message
-        : `HTTP ${response.status} ${response.statusText}`;
+      typeof errorBody === 'object' &&
+      errorBody !== null &&
+      'message' in errorBody &&
+      typeof (errorBody as { message: unknown }).message === 'string'
+        ? (errorBody as { message: string }).message
+        : typeof errorBody === 'object' &&
+            errorBody !== null &&
+            'error' in errorBody &&
+            typeof (errorBody as { error: unknown }).error === 'string'
+          ? (errorBody as { error: string }).error
+          : `HTTP ${response.status} ${response.statusText}`;
+
+    const conflictRevision =
+      typeof errorBody === 'object' &&
+      errorBody !== null &&
+      'currentRevision' in errorBody &&
+      typeof (errorBody as { currentRevision: unknown }).currentRevision === 'number'
+        ? (errorBody as { currentRevision: number }).currentRevision
+        : undefined;
 
     throw {
       message,
       statusCode: response.status,
-      ...(typeof errorBody === 'object' && errorBody !== null ? errorBody : {}),
+      ...(conflictRevision !== undefined ? { currentRevision: conflictRevision } : {}),
     } satisfies ApiError;
   }
 
-  return response.json();
+  // Empty body (204)
+  if (response.status === 204) {
+    return undefined as T;
+  }
+
+  const text = await response.text();
+  if (!text) {
+    return undefined as T;
+  }
+
+  return JSON.parse(text) as T;
 }
 
 /**
  * Make an authenticated API request.
+ *
+ * Injects the dashboard API key (Bearer + X-Api-Key) except for `/health`.
  *
  * @param url - The URL to fetch
  * @param options - Fetch options including headers, method, body, etc.
@@ -65,7 +113,15 @@ export async function apiFetch<T>(
 
   // Default headers
   const headers = new Headers(fetchOptions.headers);
-  headers.set('Content-Type', 'application/json');
+  if (!headers.has('Content-Type') && fetchOptions.body !== undefined) {
+    headers.set('Content-Type', 'application/json');
+  } else if (!headers.has('Content-Type')) {
+    headers.set('Content-Type', 'application/json');
+  }
+
+  if (!isHealthPath(urlObj.pathname)) {
+    applyDashboardApiKeyHeaders(headers);
+  }
 
   const response = await fetch(urlObj.toString(), {
     ...fetchOptions,
@@ -87,6 +143,23 @@ export async function apiGet<T>(
   params?: Record<string, string>,
 ): Promise<T> {
   return apiFetch<T>(url, { method: 'GET', params });
+}
+
+/**
+ * Make a PUT request with a JSON body.
+ *
+ * @param url - The URL to PUT to
+ * @param body - JSON-serializable body
+ * @returns Promise resolving to the parsed JSON data
+ */
+export async function apiPut<T>(
+  url: string,
+  body: unknown,
+): Promise<T> {
+  return apiFetch<T>(url, {
+    method: 'PUT',
+    body: JSON.stringify(body),
+  });
 }
 
 /**

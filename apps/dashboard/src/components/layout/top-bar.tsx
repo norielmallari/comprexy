@@ -1,5 +1,6 @@
 /**
- * Top bar with navigation, conversation selector (metrics only), theme toggle, and status.
+ * Top bar with navigation, conversation selector (metrics only), cost picker,
+ * theme toggle, API key control, and status.
  */
 
 'use client';
@@ -8,6 +9,7 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useEffect, useState } from 'react';
 
+import { CostModelPicker } from '@/components/cost/cost-model-picker';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Select } from '@/components/ui/select';
@@ -15,6 +17,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { useTheme } from '@/hooks/use-theme';
 import { useConversations } from '@/lib/queries/use-conversations';
 import { useConversationUrl } from '@/hooks/use-conversation-url';
+import { getDashboardApiKey } from '@/lib/auth/dashboard-api-key';
 import { truncateConversationId, cn, encodeConversationId } from '@/lib/utils';
 import { API_BASE_URL } from '@/lib/constants';
 
@@ -33,15 +36,25 @@ function useIsClient() {
   return isClient;
 }
 
-export function TopBar() {
+interface TopBarProps {
+  onRequestLogin?: () => void;
+}
+
+export function TopBar({ onRequestLogin }: TopBarProps) {
   const pathname = usePathname();
-  const isBenchmarkPage = pathname?.startsWith('/benchmark');
-  const pageTitle = isBenchmarkPage ? 'Comprexy Benchmark' : 'Comprexy Metrics';
+  const isBenchmarkPage = pathname?.startsWith('/benchmark') ?? false;
+  const isSettingsPage = pathname?.startsWith('/settings') ?? false;
+  const pageTitle = isBenchmarkPage
+    ? 'Comprexy Benchmark'
+    : isSettingsPage
+      ? 'Comprexy Settings'
+      : 'Comprexy Metrics';
 
   const { theme, toggleTheme } = useTheme();
   const { data: conversations, isLoading: conversationsLoading } = useConversations();
   const { conversationId, effectiveConversationId, navigateToConversation } = useConversationUrl();
   const [apiHealthy, setApiHealthy] = useState<boolean | null>(null);
+  const [hasApiKey, setHasApiKey] = useState(false);
   const isClient = useIsClient();
 
   useEffect(() => {
@@ -49,6 +62,7 @@ export function TopBar() {
       try {
         const controller = new AbortController();
         const timeout = setTimeout(() => controller.abort(), 2000);
+        // /health stays unauthenticated — raw fetch, not apiFetch
         const response = await fetch(`${API_BASE_URL}/health`, { signal: controller.signal });
         clearTimeout(timeout);
         setApiHealthy(response.ok);
@@ -62,6 +76,20 @@ export function TopBar() {
     return () => clearInterval(interval);
   }, []);
 
+  useEffect(() => {
+    if (!isClient) {
+      return;
+    }
+    setHasApiKey(Boolean(getDashboardApiKey()));
+    const onStorage = () => setHasApiKey(Boolean(getDashboardApiKey()));
+    window.addEventListener('storage', onStorage);
+    const interval = setInterval(onStorage, 2000);
+    return () => {
+      window.removeEventListener('storage', onStorage);
+      clearInterval(interval);
+    };
+  }, [isClient]);
+
   const handleConversationChange = (value: string) => {
     if (value === 'none') {
       navigateToConversation(null);
@@ -69,6 +97,8 @@ export function TopBar() {
       navigateToConversation(value);
     }
   };
+
+  const showConversationSelector = !isBenchmarkPage && !isSettingsPage;
 
   return (
     <header className="flex h-16 shrink-0 items-center justify-between border-b border-border bg-card px-6">
@@ -80,7 +110,7 @@ export function TopBar() {
             href={buildNavHref('/', effectiveConversationId)}
             className={cn(
               'rounded-md px-3 py-1.5 text-sm font-medium transition-colors',
-              !isBenchmarkPage
+              !isBenchmarkPage && !isSettingsPage
                 ? 'bg-primary/10 text-foreground'
                 : 'text-muted-foreground hover:text-foreground',
             )}
@@ -100,9 +130,21 @@ export function TopBar() {
           >
             Benchmark
           </Link>
+          <Link
+            href="/settings"
+            className={cn(
+              'rounded-md px-3 py-1.5 text-sm font-medium transition-colors',
+              isSettingsPage
+                ? 'bg-primary/10 text-foreground'
+                : 'text-muted-foreground hover:text-foreground',
+            )}
+            data-testid="nav-settings"
+          >
+            Settings
+          </Link>
         </nav>
 
-        {!isBenchmarkPage && (
+        {showConversationSelector && (
           <>
             <div className="h-6 w-px bg-border" />
 
@@ -130,6 +172,8 @@ export function TopBar() {
       </div>
 
       <div className="flex items-center gap-4">
+        {isClient && <CostModelPicker />}
+
         {isClient && (
           <Tooltip delayDuration={200}>
             <TooltipTrigger asChild>
@@ -165,10 +209,23 @@ export function TopBar() {
           </Tooltip>
         )}
 
-        {!isBenchmarkPage && conversationId && (
+        {showConversationSelector && conversationId && (
           <Badge variant="info" className="font-mono text-xs">
             {truncateConversationId(conversationId)}
           </Badge>
+        )}
+
+        {isClient && (
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            onClick={onRequestLogin}
+            aria-label={hasApiKey ? 'Manage dashboard API key' : 'Enter dashboard API key'}
+            data-testid="api-key-control"
+          >
+            {hasApiKey ? 'API key' : 'Sign in'}
+          </Button>
         )}
 
         {isClient && (

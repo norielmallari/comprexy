@@ -50,6 +50,8 @@ public sealed class ClusterIdSaveChangesInterceptor : SaveChangesInterceptor
         AssignForClrType<ConversationToolCatalog>(context);
         AssignForClrType<ConversationToolDefinition>(context);
         AssignForClrType<ConversationToolCallMap>(context);
+        AssignForClrType<ModelPricingEntry>(context);
+        AssignForClrType<OperatorSettings>(context);
     }
 
     private static void AssignForClrType<TEntity>(DbContext context)

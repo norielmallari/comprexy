@@ -10,8 +10,9 @@
     "lint": "eslint",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "test:e2e": "playwright test",
-    "test:e2e:ui": "playwright test --ui"
+    "test:e2e": "PLAYWRIGHT_CHROMIUM_USE_HEADLESS_SHELL=1 playwright test",
+    "test:e2e:headed": "PW_HEADED=1 playwright test --headed",
+    "test:e2e:ui": "PW_HEADED=1 playwright test --ui"
   },
   "dependencies": {
     "@tanstack/react-query": "^5.66.0",

@@ -40,11 +40,10 @@ test.describe('token counts chart', () => {
     const chart = page.getByTestId('token-counts-by-turn-chart');
     await expect(chart).toBeVisible();
 
-    const box = await chart.boundingBox();
-    expect(box).not.toBeNull();
-
-    // Hover the first of three turn bands.
-    await page.mouse.move(box!.x + box!.width * 0.2, box!.y + box!.height * 0.7);
+    // Wait for Recharts bars, then hover the first turn's solid segment.
+    const solidBars = chart.locator('g.recharts-bar path:not([stroke-dasharray])');
+    await expect(solidBars.first()).toBeVisible();
+    await solidBars.first().hover({ force: true });
 
     const tooltip = page.getByTestId('chart-tooltip');
     await expect(tooltip).toBeVisible();

@@ -17,6 +17,23 @@ vi.mock('@/hooks/use-conversation-url', () => ({
   useConversationUrl: vi.fn(),
 }));
 
+vi.mock('@/lib/queries/use-cost-models', () => ({
+  useCostModels: vi.fn(() => ({
+    data: [
+      {
+        modelKey: 'local',
+        displayLabel: 'Local',
+        currencyCode: 'USD',
+        inputUsdPer1M: 0,
+        outputUsdPer1M: 0,
+        sortOrder: 0,
+      },
+    ],
+    isLoading: false,
+    isError: false,
+  })),
+}));
+
 import { usePathname } from 'next/navigation';
 
 vi.mock('next/navigation', () => ({
@@ -144,7 +161,8 @@ describe('TopBar', () => {
 
     render(<TopBar />);
 
-    const select = screen.getByRole('combobox');
+    const conversationLabel = screen.getByText('Conversation:');
+    const select = conversationLabel.parentElement!.querySelector('select')!;
     fireEvent.change(select, { target: { value: 'conv-001' } });
 
     expect(navigateMock).toHaveBeenCalledWith('conv-001');
@@ -166,7 +184,8 @@ describe('TopBar', () => {
 
     render(<TopBar />);
 
-    const select = screen.getByRole('combobox');
+    const conversationLabel = screen.getByText('Conversation:');
+    const select = conversationLabel.parentElement!.querySelector('select')!;
     fireEvent.change(select, { target: { value: 'none' } });
 
     expect(navigateMock).toHaveBeenCalledWith(null);
@@ -191,7 +210,8 @@ describe('TopBar', () => {
     mockUseConversations.mockReturnValue({ data: undefined, isLoading: true } as any);
 
     render(<TopBar />);
-    const select = screen.getByRole('combobox');
+    const conversationLabel = screen.getByText('Conversation:');
+    const select = conversationLabel.parentElement!.querySelector('select')!;
     expect(select).toBeDisabled();
   });
 
@@ -248,7 +268,7 @@ describe('TopBar', () => {
     mockUsePathname.mockReturnValue('/benchmark');
     render(<TopBar />);
     expect(screen.queryByText('Conversation:')).not.toBeInTheDocument();
-    expect(screen.queryByRole('combobox')).not.toBeInTheDocument();
+    expect(screen.getByRole('combobox', { name: 'Cost model' })).toBeInTheDocument();
   });
 
   it('highlights Benchmark nav link on /benchmark', () => {
@@ -263,6 +283,32 @@ describe('TopBar', () => {
     render(<TopBar />);
     const metricsLink = screen.getByTestId('nav-metrics');
     expect(metricsLink.className).toMatch(/bg-primary/);
+  });
+
+  it('renders Settings nav link', () => {
+    render(<TopBar />);
+    expect(screen.getByTestId('nav-settings')).toHaveAttribute('href', '/settings');
+    expect(screen.getByRole('link', { name: 'Settings' })).toBeInTheDocument();
+  });
+
+  it('highlights Settings nav link on /settings', () => {
+    mockUsePathname.mockReturnValue('/settings');
+    render(<TopBar />);
+    expect(screen.getByText('Comprexy Settings')).toBeInTheDocument();
+    expect(screen.getByTestId('nav-settings').className).toMatch(/bg-primary/);
+  });
+
+  it('renders cost model picker in the shell top bar', () => {
+    render(<TopBar />);
+    expect(screen.getByTestId('cost-model-picker')).toBeInTheDocument();
+    expect(screen.getByRole('combobox', { name: 'Cost model' })).toBeInTheDocument();
+  });
+
+  it('renders API key control', () => {
+    render(<TopBar />);
+    expect(
+      screen.getByRole('button', { name: /dashboard API key/i }),
+    ).toBeInTheDocument();
   });
 
   it('preserves conversation query param in nav links', () => {
@@ -294,7 +340,10 @@ describe('TopBar', () => {
 
     render(<TopBar />);
 
-    const select = screen.getByRole('combobox') as HTMLSelectElement;
+    const conversationLabel = screen.getByText('Conversation:');
+    const select = conversationLabel.parentElement!.querySelector(
+      'select',
+    ) as HTMLSelectElement;
     expect(select.value).toBe('none');
     expect(screen.getByRole('option', { name: 'Select conversation' })).toBeInTheDocument();
   });

@@ -9,6 +9,7 @@ function resetStore() {
     selectedConversationId: null,
     selectedConversationName: null,
     theme: 'light',
+    selectedCostModelKey: 'local',
     selectedWmVersion: null,
     selectedOverhead: null,
     selectedSavings: null,
@@ -32,6 +33,7 @@ describe('dashboard store', () => {
     expect(state.selectedConversationId).toBeNull();
     expect(state.selectedConversationName).toBeNull();
     expect(state.theme).toBe('light');
+    expect(state.selectedCostModelKey).toBe('local');
     expect(state.selectedWmVersion).toBeNull();
     expect(state.selectedOverhead).toBeNull();
     expect(state.selectedSavings).toBeNull();
@@ -39,6 +41,24 @@ describe('dashboard store', () => {
     expect(state.selectedSortDirection).toBe('desc');
     expect(state.currentPage).toBe(1);
     expect(state.totalPages).toBe(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// setSelectedCostModelKey()
+// ---------------------------------------------------------------------------
+
+describe('setSelectedCostModelKey()', () => {
+  beforeEach(() => {
+    resetStore();
+    sessionStorage.clear();
+  });
+
+  it('updates selectedCostModelKey and persists to sessionStorage', () => {
+    useDashboardStore.getState().setSelectedCostModelKey('claude-sonnet-5');
+
+    expect(useDashboardStore.getState().selectedCostModelKey).toBe('claude-sonnet-5');
+    expect(sessionStorage.getItem('comprexy.selectedCostModelKey')).toBe('claude-sonnet-5');
   });
 });
 

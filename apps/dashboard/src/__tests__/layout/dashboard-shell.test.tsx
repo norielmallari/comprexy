@@ -1,6 +1,13 @@
-import { render, screen } from '@testing-library/react';
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+
 import { DashboardShell, DashboardSkeleton } from '@/components/layout/dashboard-shell';
+import {
+  clearDashboardApiKey,
+  setDashboardApiKey,
+} from '@/lib/auth/dashboard-api-key';
+
+const invalidateQueries = vi.fn();
 
 // Mock next/navigation so useConversationUrl doesn't need app router
 vi.mock('next/navigation', () => ({
@@ -11,15 +18,38 @@ vi.mock('next/navigation', () => ({
 
 // Mock react-query so TopBar's useConversations doesn't need a real QueryClient
 vi.mock('@tanstack/react-query', () => ({
-  QueryClientProvider: ({ children }: any) => children,
-  useQuery: vi.fn(() => ({ data: [], isLoading: false })),
-  useQueryClient: vi.fn(),
+  QueryClientProvider: ({ children }: { children: React.ReactNode }) => children,
+  useQuery: vi.fn(() => ({ data: [], isLoading: false, isError: false })),
+  useQueryClient: vi.fn(() => ({ invalidateQueries })),
+}));
+
+vi.mock('@/lib/queries/use-cost-models', () => ({
+  useCostModels: vi.fn(() => ({
+    data: [
+      {
+        modelKey: 'local',
+        displayLabel: 'Local',
+        currencyCode: 'USD',
+        inputUsdPer1M: 0,
+        outputUsdPer1M: 0,
+        sortOrder: 0,
+      },
+    ],
+    isLoading: false,
+    isError: false,
+  })),
 }));
 
 // Mock fetch for TopBar health check
 global.fetch = vi.fn().mockResolvedValue({ ok: true });
 
 describe('DashboardShell', () => {
+  beforeEach(() => {
+    invalidateQueries.mockClear();
+    clearDashboardApiKey();
+    sessionStorage.clear();
+  });
+
   it('renders children', () => {
     render(
       <DashboardShell>
@@ -28,6 +58,47 @@ describe('DashboardShell', () => {
     );
     expect(screen.getByTestId('child-content')).toBeInTheDocument();
     expect(screen.getByText('Hello World')).toBeInTheDocument();
+  });
+
+  it('calls invalidateQueries when LoginGate authenticates', async () => {
+    render(
+      <DashboardShell>
+        <div>Content</div>
+      </DashboardShell>,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Enter dashboard API key' }));
+
+    await waitFor(() => {
+      expect(screen.getByRole('dialog', { name: 'Dashboard API key' })).toBeInTheDocument();
+    });
+
+    fireEvent.change(screen.getByLabelText('API key'), {
+      target: { value: 'synthetic-dashboard-key' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Save key' }));
+
+    expect(invalidateQueries).toHaveBeenCalled();
+  });
+
+  it('calls invalidateQueries when LoginGate clears the key', async () => {
+    setDashboardApiKey('synthetic-dashboard-key');
+
+    render(
+      <DashboardShell>
+        <div>Content</div>
+      </DashboardShell>,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Manage dashboard API key' }));
+
+    await waitFor(() => {
+      expect(screen.getByRole('dialog', { name: 'Dashboard API key' })).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Clear key' }));
+
+    expect(invalidateQueries).toHaveBeenCalled();
   });
 
   it('renders with TopBar (Comprexy Metrics title)', () => {

@@ -6,8 +6,8 @@
 ## Description
 wip: initial implementation of dashboard and tests
 
-## Conversation
-`bd0cfcec-d141-42a8-8495-1b9f528f334f` (Qwen-35B)
+## Model
+Qwen-35B
 
 ## Content
 
@@ -15,7 +15,7 @@ Validated long-context compression across a 125-turn development workflow contin
 
 ### Coverage note
 
-Telemetry for this conversation id covers only the parent agent session proxied through Comprexy. Spawned subagents (Task / cloud runners and similar) are separate conversations or outbound paths and are **not** included in the turn totals, baselines, or savings below. Actual tokens generated for the full workflow — parent plus subagents — are therefore higher than these figures.
+Telemetry for this session covers only the parent agent session proxied through Comprexy. Spawned subagents (Task / cloud runners and similar) are separate conversations or outbound paths and are **not** included in the turn totals, baselines, or savings below. Actual tokens generated for the full workflow — parent plus subagents — are therefore higher than these figures.
 
 ### Validity note
 
@@ -43,7 +43,7 @@ This represents:
 
 ### Dashboard snapshot
 
-![Comprexy Metrics dashboard for conversation bd0cfcec — 4,994,700 tokens saved, 48.2% weighted compression, WM v3; token counts by turn with baseline ghost bars through turn 125](5ca87ca.png)
+![Comprexy Metrics dashboard — 4,994,700 tokens saved, 48.2% weighted compression, WM v3; token counts by turn with baseline ghost bars through turn 125](5ca87ca.png)
 
 The chart shows the three working-memory folds as sharp drops in sent-equivalent height (around turns 22, 50, and 99), with baseline ghost outlines continuing to climb.
 

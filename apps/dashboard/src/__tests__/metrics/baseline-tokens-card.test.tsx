@@ -1,13 +1,38 @@
 import { render, screen } from '@testing-library/react';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { BaselineTokensCard } from '@/components/metrics/baseline-tokens-card';
+import { CATALOG_MODELS, storeSelectorStub } from '@/__tests__/helpers/cost-model-mocks';
 
 vi.mock('@/lib/utils', () => ({
   formatNumber: (n: number) => n.toLocaleString('en-US'),
 }));
 
+vi.mock('@/lib/queries/use-cost-models', () => ({
+  useCostModels: vi.fn(),
+}));
+
+vi.mock('@/lib/store/dashboard-store', () => ({
+  useDashboardStore: vi.fn(),
+}));
+
+import { useCostModels } from '@/lib/queries/use-cost-models';
+import { useDashboardStore } from '@/lib/store/dashboard-store';
+
+const mockUseCostModels = useCostModels as unknown as ReturnType<typeof vi.fn>;
+const mockUseDashboardStore = useDashboardStore as unknown as ReturnType<typeof vi.fn>;
+
 describe('BaselineTokensCard', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockUseCostModels.mockReturnValue({
+      data: CATALOG_MODELS,
+      isLoading: false,
+      isError: false,
+    });
+    mockUseDashboardStore.mockImplementation(storeSelectorStub('local'));
+  });
+
   it('renders formatted baseline token value', () => {
     render(<BaselineTokensCard totalBaselineTokensEstimated={12600} />);
     expect(screen.getByText('12,600')).toBeInTheDocument();

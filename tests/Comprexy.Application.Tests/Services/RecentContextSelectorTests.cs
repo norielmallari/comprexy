@@ -102,6 +102,21 @@ public class RecentContextSelectorTests
         Assert.Equal(MessageRole.User, selected[0].Role);
     }
 
+    [Fact]
+    public void Select_RetainOverload_IgnoresCtorCapturedRetain()
+    {
+        var selector = CreateSelector(recentMessageCount: 50);
+        var conversationId = Guid.NewGuid();
+        var messages = Enumerable.Range(0, 5)
+            .Select(i => ConversationMessage.Create(conversationId, i, MessageRole.User, $"m{i}", 10, DateTimeOffset.UtcNow))
+            .ToList();
+
+        var selected = selector.Select(messages, retainMessageCount: 1);
+
+        Assert.Single(selected);
+        Assert.Equal(4, selected[0].Sequence);
+    }
+
     private static RecentContextSelector CreateSelector(int recentMessageCount) =>
         new(Options.Create(new ContextPolicyOptions
         {

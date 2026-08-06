@@ -5,6 +5,7 @@ using Comprexy.Application.Mapping;
 using Comprexy.Application.Models;
 using Comprexy.Application.Services.CacheAlignment;
 using Comprexy.Application.Services.Rules;
+using Comprexy.Application.Services.Settings;
 using Comprexy.Application.Tracing;
 using Comprexy.Domain.Entities;
 using Comprexy.Domain.Enums;
@@ -35,15 +36,83 @@ public sealed class ChatTurnPreparer
     private readonly IRulesInjector _rulesInjector;
     private readonly ProviderEndpointResolver _endpointResolver;
     private readonly IConversationMetricsRecorder _metricsRecorder;
+    private readonly IEffectiveSettingsAccessor _effectiveSettings;
     private readonly IClock _clock;
-    private readonly ContextPolicyOptions _policy;
-    private readonly ProxyOptions _proxyOptions;
-    private readonly CacheAlignmentOptions _cacheAlignmentOptions;
+    private readonly IOptionsMonitor<ProxyOptions> _proxyOptions;
+    private readonly IOptionsMonitor<ContextPolicyOptions> _contextPolicyOptions;
+    private readonly IOptionsMonitor<CacheAlignmentOptions> _cacheAlignmentOptions;
+    private readonly IOptionsMonitor<MetricsOptions> _metricsOptions;
+    private readonly IOptionsMonitor<ToolSchemaOptions> _toolSchemaOptions;
     private readonly IPayloadTraceLogger _payloadTrace;
     private readonly IRequestTraceFileSession _requestTraceFiles;
     private readonly ILogger<ChatTurnPreparer> _logger;
 
     public ChatTurnPreparer(
+        IConversationRepository conversationRepository,
+        IConversationMessageRepository messageRepository,
+        IWorkingMemoryRepository workingMemoryRepository,
+        ICompressionEventRepository compressionEventRepository,
+        ITokenEstimator tokenEstimator,
+        ContextBuilder contextBuilder,
+        ICacheAlignmentService cacheAlignment,
+        ContextBudgetEvaluator budgetEvaluator,
+        CompressionPromptFactory compressionPromptFactory,
+        ToolSchemaOrchestrator toolSchemaOrchestrator,
+        ClientHistorySynchronizer historySynchronizer,
+        OutgoingContextMaterializer contextMaterializer,
+        IrFullPromptEstimator irFullPromptEstimator,
+        ChatTurnMessageHelper messageHelper,
+        ISystemRulesDetector systemRulesDetector,
+        ITranscriptRulesDetector transcriptRulesDetector,
+        IRulesConsolidator rulesConsolidator,
+        IRulesInjector rulesInjector,
+        ProviderEndpointResolver endpointResolver,
+        IConversationMetricsRecorder metricsRecorder,
+        IEffectiveSettingsAccessor effectiveSettings,
+        IClock clock,
+        IOptionsMonitor<ContextPolicyOptions> contextPolicyOptions,
+        IOptionsMonitor<ProxyOptions> proxyOptions,
+        IOptionsMonitor<CacheAlignmentOptions> cacheAlignmentOptions,
+        IOptionsMonitor<MetricsOptions> metricsOptions,
+        IOptionsMonitor<ToolSchemaOptions> toolSchemaOptions,
+        IPayloadTraceLogger payloadTrace,
+        IRequestTraceFileSession requestTraceFiles,
+        ILogger<ChatTurnPreparer> logger)
+    {
+        _conversationRepository = conversationRepository;
+        _messageRepository = messageRepository;
+        _workingMemoryRepository = workingMemoryRepository;
+        _compressionEventRepository = compressionEventRepository;
+        _tokenEstimator = tokenEstimator;
+        _contextBuilder = contextBuilder;
+        _cacheAlignment = cacheAlignment;
+        _budgetEvaluator = budgetEvaluator;
+        _compressionPromptFactory = compressionPromptFactory;
+        _toolSchemaOrchestrator = toolSchemaOrchestrator;
+        _historySynchronizer = historySynchronizer;
+        _contextMaterializer = contextMaterializer;
+        _irFullPromptEstimator = irFullPromptEstimator;
+        _messageHelper = messageHelper;
+        _systemRulesDetector = systemRulesDetector;
+        _transcriptRulesDetector = transcriptRulesDetector;
+        _rulesConsolidator = rulesConsolidator;
+        _rulesInjector = rulesInjector;
+        _endpointResolver = endpointResolver;
+        _metricsRecorder = metricsRecorder;
+        _effectiveSettings = effectiveSettings;
+        _clock = clock;
+        _contextPolicyOptions = contextPolicyOptions;
+        _proxyOptions = proxyOptions;
+        _cacheAlignmentOptions = cacheAlignmentOptions;
+        _metricsOptions = metricsOptions;
+        _toolSchemaOptions = toolSchemaOptions;
+        _payloadTrace = payloadTrace;
+        _requestTraceFiles = requestTraceFiles;
+        _logger = logger;
+    }
+
+    /// <summary>Test / legacy ctor (internal so MS DI sees only the public primary).</summary>
+    internal ChatTurnPreparer(
         IConversationRepository conversationRepository,
         IConversationMessageRepository messageRepository,
         IWorkingMemoryRepository workingMemoryRepository,
@@ -71,35 +140,40 @@ public sealed class ChatTurnPreparer
         IPayloadTraceLogger payloadTrace,
         IRequestTraceFileSession requestTraceFiles,
         ILogger<ChatTurnPreparer> logger)
+        : this(
+            conversationRepository,
+            messageRepository,
+            workingMemoryRepository,
+            compressionEventRepository,
+            tokenEstimator,
+            contextBuilder,
+            cacheAlignment,
+            budgetEvaluator,
+            compressionPromptFactory,
+            toolSchemaOrchestrator,
+            historySynchronizer,
+            contextMaterializer,
+            irFullPromptEstimator,
+            messageHelper,
+            systemRulesDetector,
+            transcriptRulesDetector,
+            rulesConsolidator,
+            rulesInjector,
+            endpointResolver,
+            metricsRecorder,
+            new EffectiveSettingsAccessor(),
+            clock,
+            new FixedOptionsMonitor<ContextPolicyOptions>(policy),
+            new FixedOptionsMonitor<ProxyOptions>(proxyOptions),
+            new FixedOptionsMonitor<CacheAlignmentOptions>(cacheAlignmentOptions),
+            new FixedOptionsMonitor<MetricsOptions>(new MetricsOptions()),
+            new FixedOptionsMonitor<ToolSchemaOptions>(new ToolSchemaOptions()),
+            payloadTrace,
+            requestTraceFiles,
+            logger)
     {
-        _conversationRepository = conversationRepository;
-        _messageRepository = messageRepository;
-        _workingMemoryRepository = workingMemoryRepository;
-        _compressionEventRepository = compressionEventRepository;
-        _tokenEstimator = tokenEstimator;
-        _contextBuilder = contextBuilder;
-        _cacheAlignment = cacheAlignment;
-        _budgetEvaluator = budgetEvaluator;
-        _compressionPromptFactory = compressionPromptFactory;
-        _toolSchemaOrchestrator = toolSchemaOrchestrator;
-        _historySynchronizer = historySynchronizer;
-        _contextMaterializer = contextMaterializer;
-        _irFullPromptEstimator = irFullPromptEstimator;
-        _messageHelper = messageHelper;
-        _systemRulesDetector = systemRulesDetector;
-        _transcriptRulesDetector = transcriptRulesDetector;
-        _rulesConsolidator = rulesConsolidator;
-        _rulesInjector = rulesInjector;
-        _endpointResolver = endpointResolver;
-        _metricsRecorder = metricsRecorder;
-        _clock = clock;
-        _policy = policy.Value;
-        _proxyOptions = proxyOptions.Value;
-        _cacheAlignmentOptions = cacheAlignmentOptions.Value;
-        _payloadTrace = payloadTrace;
-        _requestTraceFiles = requestTraceFiles;
-        _logger = logger;
     }
+
 
     public async Task<PreparedRequest> PrepareAsync(
         IncomingChatRequest request,
@@ -109,17 +183,39 @@ public sealed class ChatTurnPreparer
     {
         var now = _clock.UtcNow;
         var conversation = await _conversationRepository.FindByKeyAsync(conversationKey, cancellationToken);
-
+        bool createdNew;
         List<ConversationMessage> storedMessages;
         if (conversation is null)
         {
+            createdNew = true;
             conversation = Conversation.Create(conversationKey, now);
             _conversationRepository.Add(conversation);
             storedMessages = [];
+            var capture = EffectiveSettingsSerializer.CaptureFrom(
+                _proxyOptions,
+                _contextPolicyOptions,
+                _cacheAlignmentOptions,
+                _metricsOptions,
+                _toolSchemaOptions);
+            conversation.BindEffectiveSettings(EffectiveSettingsSerializer.Serialize(capture), now);
         }
         else
         {
+            createdNew = false;
             storedMessages = await _messageRepository.GetByConversationIdAsync(conversation.Id, cancellationToken);
+        }
+
+        var effective = EffectiveSettingsResolver.Resolve(
+            conversation.EffectiveSettingsJson,
+            _proxyOptions,
+            _contextPolicyOptions,
+            _cacheAlignmentOptions,
+            _metricsOptions,
+            _toolSchemaOptions);
+        _effectiveSettings.Set(effective);
+
+        if (!createdNew)
+        {
             _historySynchronizer.EnrichStoredMessagesFromClientHistory(storedMessages, request.Messages);
         }
 
@@ -154,16 +250,16 @@ public sealed class ChatTurnPreparer
 
         IReadOnlyList<RuleBlock> systemRules = Array.Empty<RuleBlock>();
         IReadOnlyList<RuleBlock> transcriptRules = Array.Empty<RuleBlock>();
-        if (!_proxyOptions.PassThrough)
+        if (effective.CapturesBaseSystemForObservability)
         {
             var systemDetection = _systemRulesDetector.Detect(systemMessage?.Content);
             var hadBaseSystem = conversation.SystemPrompt is not null;
             if (conversation.SetBaseSystem(systemDetection.BaseSystem))
             {
-                if (_cacheAlignmentOptions.Enabled)
-                {
-                    _cacheAlignment.Invalidate(conversation.Id);
-                }
+                // Unconditional: unbound conversations resolve mode live, so a Prefix frozen under
+                // Full can outlive a MonitorOnly BaseSystem change, and a Prefix stored while Cache
+                // Alignment was enabled can outlive the flag. Invalidate no-ops when no entry exists.
+                _cacheAlignment.Invalidate(conversation.Id);
 
                 if (hadBaseSystem)
                 {
@@ -173,8 +269,11 @@ public sealed class ChatTurnPreparer
                 }
             }
 
-            systemRules = systemDetection.Rules;
-            transcriptRules = _transcriptRulesDetector.Detect(nonSystemNewMessages);
+            if (!effective.SkipsPromptOptimizations)
+            {
+                systemRules = systemDetection.Rules;
+                transcriptRules = _transcriptRulesDetector.Detect(nonSystemNewMessages);
+            }
         }
 
         var nextSequence = storedMessages.Count == 0
@@ -182,7 +281,7 @@ public sealed class ChatTurnPreparer
             : storedMessages.Max(m => m.Sequence) + 1;
         var newlyPersisted = new List<ConversationMessage>();
         var virtualToolsInboundApplied = false;
-        if (_toolSchemaOrchestrator.ShouldAttemptActivation(_proxyOptions.PassThrough))
+        if (_toolSchemaOrchestrator.ShouldAttemptActivation(effective.SkipsPromptOptimizations))
         {
             var historyForValidation = storedMessages
                 .Concat(newlyPersisted)
@@ -202,7 +301,8 @@ public sealed class ChatTurnPreparer
                 ApplyCacheAlignmentCatalogMutation(
                     conversation.Id,
                     inboundCatalogHash,
-                    inboundDisableToolIr);
+                    inboundDisableToolIr,
+                    effective.CacheAlignmentEnabled);
             }
 
             // Rewrite Virtual Tools inbound results before persist so DB/model see IR observations.
@@ -258,7 +358,7 @@ public sealed class ChatTurnPreparer
 
         var endpoint = _endpointResolver.ResolveUpstream();
 
-        if (_proxyOptions.PassThrough)
+        if (effective.PassThrough)
         {
             var passThroughTokens = _tokenEstimator.CountPromptTokens(request.Messages, request.RawRequest);
             _logger.LogDebug(
@@ -268,6 +368,7 @@ public sealed class ChatTurnPreparer
                 conversation.Id,
                 passThroughTokens,
                 ContextBudgetDecision.ForwardImmediate,
+                softLimitTokens: effective.SoftLimitTokens,
                 passThrough: true);
 
             return new PreparedRequest(
@@ -290,8 +391,54 @@ public sealed class ChatTurnPreparer
                 MetricsPrepare: null);
         }
 
+        if (effective.OptimizationMode == OptimizationMode.MonitorOnly)
+        {
+            var monitorTokens = _tokenEstimator.CountPromptTokens(request.Messages, request.RawRequest);
+            _logger.LogDebug(
+                "MonitorOnly mode for conversation {ConversationId}; PassThrough-like wire with optional metrics.",
+                conversation.Id);
+            LogContextBudget(
+                conversation.Id,
+                monitorTokens,
+                ContextBudgetDecision.ForwardImmediate,
+                softLimitTokens: effective.SoftLimitTokens,
+                passThrough: true);
+
+            TurnMetricsPrepareData? monitorMetrics = null;
+            if (effective.MetricsEnabled)
+            {
+                monitorMetrics = new TurnMetricsPrepareData(
+                    RequestStartedAt: now,
+                    RawInputTokensEstimated: monitorTokens,
+                    RequestHash: MetricsPayloadHasher.HashJsonElement(request.RawRequest),
+                    RawMessageCount: request.Messages.Count,
+                    WorkingMemoryVersionUsed: null,
+                    TrimTriggered: false,
+                    IrFullInputTokensEstimated: monitorTokens);
+            }
+
+            return new PreparedRequest(
+                conversation,
+                nextSequence,
+                monitorTokens,
+                ContextBudgetDecision.ForwardImmediate,
+                endpoint,
+                new UpstreamRequest(
+                    request.Messages,
+                    request.Stream,
+                    request.RawRequest,
+                    request.CallOptions,
+                    ReplaceMessages: false),
+                SkipCompression: true,
+                request.Messages.Count,
+                WindowStartSequence: null,
+                WindowEndSequence: null,
+                RecentRawCount: 0,
+                MetricsPrepare: monitorMetrics);
+        }
+
         TurnMetricsPrepareData? metricsPrepare = null;
-        if (_metricsRecorder.IsEnabled)
+        if (effective.MetricsEnabled)
         {
             metricsPrepare = new TurnMetricsPrepareData(
                 RequestStartedAt: now,
@@ -363,7 +510,7 @@ public sealed class ChatTurnPreparer
         // Always rebuild from stored (IR-side) messages. WM is optional — pre-first-compression
         // is the same path with workingMemory == null (never forward client wire history).
         // Folding happens only inside Inline wrap-up on complete.
-        var useCacheAlignment = _cacheAlignmentOptions.Enabled;
+        var useCacheAlignment = effective.CacheAlignmentEnabled;
         var recentRaw = _contextMaterializer.PrepareRecentRawForChatTemplate(
             conversation.Id,
             allMessages
@@ -412,7 +559,7 @@ public sealed class ChatTurnPreparer
         var estimateMessages = toolSchema?.OutgoingMessages ?? outgoing;
         var estimatePayload = toolSchema?.RewrittenClientRequest ?? request.RawRequest;
         var estimatedTokens = _tokenEstimator.CountPromptTokens(estimateMessages, estimatePayload);
-        var decision = _budgetEvaluator.Evaluate(estimatedTokens);
+        var decision = _budgetEvaluator.Evaluate(estimatedTokens, effective.SoftLimitTokens);
         if (metricsPrepare is not null)
         {
             var irFullTokens = _irFullPromptEstimator.Estimate(
@@ -435,6 +582,7 @@ public sealed class ChatTurnPreparer
             conversation.Id,
             estimatedTokens,
             decision,
+            softLimitTokens: effective.SoftLimitTokens,
             windowStartSequence: windowStart,
             windowEndSequence: windowEnd,
             recentRawCount: recentRaw.Count);
@@ -469,7 +617,8 @@ public sealed class ChatTurnPreparer
         Func<CancellationToken, Task> flushChatUnitAsync,
         CancellationToken cancellationToken)
     {
-        if (!_toolSchemaOrchestrator.ShouldAttemptActivation(_proxyOptions.PassThrough))
+        var effective = _effectiveSettings.Current;
+        if (!_toolSchemaOrchestrator.ShouldAttemptActivation(effective.SkipsPromptOptimizations))
         {
             return null;
         }
@@ -490,14 +639,16 @@ public sealed class ChatTurnPreparer
                 ApplyCacheAlignmentCatalogMutation(
                     conversationId,
                     outcome.Result.Session.Mapping.SchemaHash,
-                    disableToolIr: false);
+                    disableToolIr: false,
+                    effective.CacheAlignmentEnabled);
             }
             else
             {
                 ApplyCacheAlignmentCatalogMutation(
                     conversationId,
                     catalogHash: null,
-                    disableToolIr: true);
+                    disableToolIr: true,
+                    effective.CacheAlignmentEnabled);
             }
         }
 
@@ -507,9 +658,10 @@ public sealed class ChatTurnPreparer
     private void ApplyCacheAlignmentCatalogMutation(
         Guid conversationId,
         string? catalogHash,
-        bool disableToolIr)
+        bool disableToolIr,
+        bool cacheAlignmentEnabled)
     {
-        if (!_cacheAlignmentOptions.Enabled)
+        if (!cacheAlignmentEnabled)
         {
             return;
         }
@@ -670,7 +822,11 @@ public sealed class ChatTurnPreparer
             m.Role == MessageRole.Assistant
             && m.CreatedAt > latestSucceeded.CompletedAt);
 
-        if (turnsSince >= _policy.MinTurnsBetweenGenerations)
+        var minTurns = _effectiveSettings.IsSet
+            ? _effectiveSettings.Current.MinTurnsBetweenGenerations
+            : _contextPolicyOptions.CurrentValue.MinTurnsBetweenGenerations;
+
+        if (turnsSince >= minTurns)
         {
             return true;
         }
@@ -679,7 +835,7 @@ public sealed class ChatTurnPreparer
             "Inline follow-up wrap-up skipped for conversation {ConversationId}: cooldown ({TurnsSince}/{MinTurns} assistant turns since last success).",
             conversationId,
             turnsSince,
-            _policy.MinTurnsBetweenGenerations);
+            minTurns);
         return false;
     }
 
@@ -687,6 +843,7 @@ public sealed class ChatTurnPreparer
         Guid conversationId,
         int estimatedTokens,
         ContextBudgetDecision decision,
+        int softLimitTokens,
         bool passThrough = false,
         int? windowStartSequence = null,
         int? windowEndSequence = null,
@@ -700,7 +857,7 @@ public sealed class ChatTurnPreparer
         {
             conversationId,
             estimatedTokens,
-            softLimitTokens = _policy.SoftLimitTokens,
+            softLimitTokens,
             decision = decision.ToString(),
             compressionSkipped = passThrough,
             windowStartSequence,
@@ -712,7 +869,7 @@ public sealed class ChatTurnPreparer
             "Context budget ({Label}): estimatedTokens={EstimatedTokens} softLimit={SoftLimitTokens} decision={Decision} window=[{WindowStart}..{WindowEnd}] recentRawCount={RecentRawCount}",
             label,
             estimatedTokens,
-            _policy.SoftLimitTokens,
+            softLimitTokens,
             decision,
             windowStartSequence?.ToString() ?? "-",
             windowEndSequence?.ToString() ?? "-",
