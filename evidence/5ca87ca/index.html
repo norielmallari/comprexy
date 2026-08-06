@@ -712,10 +712,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#conversation" class="md-nav__link">
+  <a href="#model" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Conversation
+        Model
       
     </span>
   </a>
@@ -1386,10 +1386,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#conversation" class="md-nav__link">
+  <a href="#model" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Conversation
+        Model
       
     </span>
   </a>
@@ -1592,12 +1592,12 @@
 <p><code>5ca87ca09c2d82ab3dbcd56d015c9dcbcf178850</code></p>
 <h2 id="description">Description<a class="headerlink" href="#description" title="Permanent link">&para;</a></h2>
 <p>wip: initial implementation of dashboard and tests</p>
-<h2 id="conversation">Conversation<a class="headerlink" href="#conversation" title="Permanent link">&para;</a></h2>
-<p><code>bd0cfcec-d141-42a8-8495-1b9f528f334f</code> (Qwen-35B)</p>
+<h2 id="model">Model<a class="headerlink" href="#model" title="Permanent link">&para;</a></h2>
+<p>Qwen-35B</p>
 <h2 id="content">Content<a class="headerlink" href="#content" title="Permanent link">&para;</a></h2>
 <p>Validated long-context compression across a 125-turn development workflow continuing the Comprexy Metrics Dashboard under <code>apps/dashboard/</code> (layout spacing, chart height, and bar-chart x-axis label clearance). In this local-LLM setup (Qwen-35B), actual upstream prompts stayed roughly 15–60k after working-memory folds while baselines climbed to 124k by turn 125.</p>
 <h3 id="coverage-note">Coverage note<a class="headerlink" href="#coverage-note" title="Permanent link">&para;</a></h3>
-<p>Telemetry for this conversation id covers only the parent agent session proxied through Comprexy. Spawned subagents (Task / cloud runners and similar) are separate conversations or outbound paths and are <strong>not</strong> included in the turn totals, baselines, or savings below. Actual tokens generated for the full workflow — parent plus subagents — are therefore higher than these figures.</p>
+<p>Telemetry for this session covers only the parent agent session proxied through Comprexy. Spawned subagents (Task / cloud runners and similar) are separate conversations or outbound paths and are <strong>not</strong> included in the turn totals, baselines, or savings below. Actual tokens generated for the full workflow — parent plus subagents — are therefore higher than these figures.</p>
 <h3 id="validity-note">Validity note<a class="headerlink" href="#validity-note" title="Permanent link">&para;</a></h3>
 <p>Turns whose estimated baseline reached <strong>256k tokens or more</strong> are treated as <strong>invalid for final analysis</strong>. No turn in this conversation reached that threshold, so the full run is valid for final proof.</p>
 <table>
@@ -1638,7 +1638,7 @@
 <li>Working memory advanced through version 3 by turn 125</li>
 </ul>
 <h3 id="dashboard-snapshot">Dashboard snapshot<a class="headerlink" href="#dashboard-snapshot" title="Permanent link">&para;</a></h3>
-<p><img alt="Comprexy Metrics dashboard for conversation bd0cfcec — 4,994,700 tokens saved, 48.2% weighted compression, WM v3; token counts by turn with baseline ghost bars through turn 125" src="../5ca87ca.png" /></p>
+<p><img alt="Comprexy Metrics dashboard — 4,994,700 tokens saved, 48.2% weighted compression, WM v3; token counts by turn with baseline ghost bars through turn 125" src="../5ca87ca.png" /></p>
 <p>The chart shows the three working-memory folds as sharp drops in sent-equivalent height (around turns 22, 50, and 99), with baseline ghost outlines continuing to climb.</p>
 <h3 id="final-analysis-turn-125">Final analysis (turn 125)<a class="headerlink" href="#final-analysis-turn-125" title="Permanent link">&para;</a></h3>
 <p>Last turn of the conversation (all turns under the 256k baseline threshold):</p>

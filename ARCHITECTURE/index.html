@@ -975,6 +975,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#sticky-effective-settings" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Sticky effective settings
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -1470,6 +1481,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#sticky-effective-settings" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Sticky effective settings
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -1749,19 +1771,19 @@
   Control --&gt; DB</code></pre>
 <ul>
 <li><strong>Chat path:</strong> <code>POST /v1/chat/completions</code> → <code>ProxyChatCompletionService</code> (rebuild, soft budget, Inline wrap-up).</li>
-<li><strong>Metrics path:</strong> <code>GET /v1/comprexy/conversations*</code> on <strong>control-api</strong> (<code>:8130</code>) → conversation token proof summaries and per-turn breakdown. Proxy emits/persists metrics; it does not serve query routes. SoftBudget headline figures use IrFull vs Prepared when IrFull is present; NativeRaw − IrFull is exposed as the virtual-tools / native-wire channel. The per-turn prepared-prompt split (system / working memory / history + tools) is derived read-side by <code>ConversationMetricsQueryService</code> from <code>Conversation.SystemPrompt</code> (BaseSystem only) and stored <code>WorkingMemory.TokenCount</code>; ephemeral injected rule tokens on the live path are not persisted and appear in the history/tools residual. Nothing extra is persisted per turn for rules, and the three parts sum to <code>CompressedInputTokensEstimated</code> so clients render them without re-deriving.</li>
+<li><strong>Metrics path:</strong> <code>GET /v1/comprexy/conversations*</code> on <strong>control-api</strong> (<code>:8130</code>) → conversation token proof summaries and per-turn breakdown. Proxy emits/persists metrics; it does not serve query routes. SoftBudget headline figures use IrFull vs Prepared when IrFull is present; NativeRaw − IrFull is exposed as the virtual-tools / native-wire channel. The per-turn prepared-prompt split (system / working memory / history + tools) is derived read-side by <code>ConversationMetricsQueryService</code> from <code>Conversation.SystemPrompt</code> (BaseSystem only) and stored <code>WorkingMemory.TokenCount</code>; when BaseSystem was not captured, the system segment is <code>0</code>. Ephemeral injected rule tokens on the live path are not persisted and appear in the history/tools residual. Nothing extra is persisted per turn for rules, and the three parts sum to <code>CompressedInputTokensEstimated</code> so clients render them without re-deriving.</li>
 <li><strong>Benchmark path:</strong> operator control-api (<code>/v1/comprexy/benchmarks/*</code>) spawns the <code>Comprexy.Bench</code> harness CLI, owns outer <code>status.json</code> phases and <code>reports/bench/index.json</code> for dashboard-started runs, and serves presentation/compare endpoints with separated I/O totals. The harness may write in-run progress fields only (<code>runPhase</code>, arm, conversation hints). Bench artifacts stay under <code>reports/bench/</code> — not in the product SQLite schema. CLI and dashboard share <code>reports/bench/.active-run.lock</code> (stale dead-pid reclaim); spawn fails fast if the fixed bench ports are already bound. Dashboard-spawned CLI runs pass <code>--under-orchestrator-lock</code> so they verify rather than re-acquire that lock.</li>
 <li><strong>Dashboard path:</strong> optional <code>apps/dashboard</code> (<code>:3000</code>) browser UI over control-api REST (not the proxy). Enable CORS for the dashboard origin on control-api when needed.</li>
 <li><strong>Telemetry MCP path:</strong> Streamable HTTP at <code>/mcp</code> on <strong>control-api</strong> — same Application read facades as REST (<code>IConversationMetricsQueryService</code> for metrics; <code>IConversationRetrievalQueryService</code> for message/WM RAG). Tools are <code>comprexy_*</code> and require an explicit <code>conversationId</code> (from the proxy meta-tool <code>comprexy_get_current_conversation_id</code>, response header <code>X-Comprexy-Conversation-Id</code>, or operator tooling). Resources use <code>comprexy://conversation/{conversationId}/…</code> templates. Stateless transport; no ambient current-conversation header on MCP. Summary totals, weighted/simple average, peak, and final-turn fields are whole-conversation; median and savings regressions are computed from the bounded <code>TurnIndex</code>-ordered sample and are marked via <code>IsPartialTurnSample</code> when the conversation exceeds the row cap. Retrieval tools search/window <code>ConversationMessage</code> by <code>Sequence</code> and expose versioned <code>WorkingMemory</code> plus open tool-chain status derived via <code>ToolCallChainState</code> (same closed-chain rule as Inline wrap-up; <code>isAwaitingClientToolResults</code> marks tip-only in-flight batches). Host filtering defaults to loopback (<code>AllowedHosts</code>); CORS denies browser origins unless <code>Cors:AllowedOrigins</code> lists them.</li>
 <li><strong>Passthrough path:</strong> other <code>/v1/{**path}</code> → reverse-proxy to <code>Provider</code> unchanged.</li>
-<li><strong>Escape hatch:</strong> <code>Proxy:PassThrough</code> forwards the original chat body with no rebuild, compression, or turn metrics.</li>
+<li><strong>Escape hatch:</strong> <code>Proxy:PassThrough</code> forwards the original chat body with no rebuild, compression, BaseSystem capture, or turn metrics. <code>Proxy:OptimizationMode=MonitorOnly</code> is PassThrough-like on the wire: it skips prompt mutations, rebuild, compression, and Virtual Tools, but may capture BaseSystem for metrics and record turn metrics when <code>Metrics:Enabled</code>.</li>
 </ul>
 <h2 id="chat-request-lifecycle">Chat request lifecycle<a class="headerlink" href="#chat-request-lifecycle" title="Permanent link">&para;</a></h2>
 <p><code>ProxyChatCompletionService</code> owns one turn end to end (exclusive gate lease, chat <code>IUnitOfWork</code> flushes). Prepare/complete logic lives in <code>Services/ChatTurn/</code> collaborators (<code>ChatTurnPreparer</code>, <code>ChatTurnCompleter</code>, <code>InlineWrapUpRunner</code>, <code>OutgoingContextMaterializer</code>, <code>ClientHistorySynchronizer</code>); they stage repository mutations and named early flushes execute only through the façade-owned chat unit flush.</p>
 <ol>
 <li><strong>Identity</strong> — <code>ConversationIdentityResolver</code>: prefer <code>X-Comprexy-Conversation-Id</code>; else fingerprint system + first two <strong>plain</strong> user turns (Cursor <code>&lt;user_query&gt;</code> extraction / metadata strip; skip Kilo/Cursor tool-echo user turns such as <code>Called the … tool with the following input:</code>).</li>
 <li><strong>Gate</strong> — exclusive lease on the conversation key via <code>ConversationRequestGate</code> (serializes chat + Inline wrap-up for that key).</li>
-<li><strong>Prepare</strong> — load/create conversation; stage new client messages; load latest working memory + unfolded messages; build outgoing context; optionally rewrite tools via ToolSchema (Virtual Tools); evaluate soft budget; set Inline follow-up eligibility when soft pressure + closed stored chain + cooldown.</li>
+<li><strong>Prepare</strong> — load/create conversation; on create, bind a sticky allowlisted <code>EffectiveSettingsJson</code> snapshot from live options; resolve sticky-or-live into request-scoped <code>IEffectiveSettingsAccessor</code> <strong>before</strong> Enrich / rewind / rules / VT; capture rules-stripped BaseSystem for Full and MonitorOnly conversations; stage new client messages; load latest working memory + unfolded messages; build outgoing context; optionally rewrite tools via ToolSchema (Virtual Tools); evaluate soft budget; set Inline follow-up eligibility when soft pressure + closed stored chain + cooldown. PassThrough and MonitorOnly early-return with client body (PassThrough never captures BaseSystem or metrics; MonitorOnly may capture BaseSystem and optionally records metrics).</li>
 <li><strong>Upstream</strong> — non-stream <code>CompleteAsync</code> or stream with SSE; when ToolSchema Virtual is active, conversation-id meta and local file-cache satisfies stay proxy-internal (streaming clients get live content/reasoning with remapped native <code>tool_calls</code> and early <code>[DONE]</code> suppressed until the final client-bound turn); model comes from <code>Provider:Model</code> when set, otherwise the client's request <code>model</code>. On eligible Inline turns, streaming also defers the client tail until the follow-up wrap-up attempt finishes: final <code>[DONE]</code> on every eligible turn, plus the whole real <code>tool_calls</code> tail on mid-chain turns.</li>
 <li><strong>Complete</strong> — persist assistant (and staged user) turns; if Inline eligible, run a blocking wrap-up and two-phase save (visible transcript, then event ± WM); otherwise persist only.</li>
 </ol>
@@ -1770,8 +1792,10 @@
 <p>When <code>CacheAlignment:Enabled</code> (default), <code>ICacheAlignmentService</code> owns a process-local <strong>wrap-up-ready message Prefix</strong> per conversation (BaseSystem + optional working-memory system message + closed unfolded raw). Live prepare materializes <code>Prefix[0] ⊕ pendingRuleMessages ⊕ Prefix[1…] ⊕ Suffix</code> verbatim — pending rule messages are ephemeral (not stored in Prefix bytes). No materialize-time omit on the suffix path, so the tip always reaches the model and frozen Prefix bytes are never rewritten mid-conversation. The failed-edit wire omit is applied to the retain window while a cold Prefix is built, which bakes it into those frozen bytes; the omit never sees the tip because the retain window stops before it. Prepare also guards the result: if any projection does not end at the tip, it logs a warning and re-appends the tip. Inline wrap-up appends tip (+ stop-turn visible assistant) via <code>ProjectWrapUp</code> without rewriting Prefix; MidChain-open <code>ProjectWrapUp</code> when rebuilding from stored Prefix alone intentionally omits ephemeral pending (authoritative <code>## Rules</code> overwrite on accept remains mandatory). WM accept calls <code>CommitWorkingMemory</code>; snapshot rewind and Tool IR disable call <code>Invalidate</code>. Tools stay on the wire body, never inside Prefix. <code>GetByConversationIdAsync</code> is unchanged.</p>
 <p>When Cache Alignment is disabled, <code>ContextBuilder.Build</code> assembles roughly:</p>
 <p><code>BaseSystem + optional pending rule messages + optional working-memory system message + still-unfolded raw messages (+ current tip)</code></p>
-<p><strong>Client rules (Cursor / Kilo):</strong> On each non-PassThrough prepare, Application detectors extract rule bodies from the latest client system message and new user/tool transcript slices. <code>RulesConsolidator</code> owns the active set (replace semantics per turn), compares against WM <code>## Rules</code> (<code>### rule:&lt;key&gt;</code> sections), and <code>RulesInjector</code> emits synthetic system messages for rules not yet in WM. Synthetic rule messages are materialize-only — never <code>ConversationMessage</code> rows. Inline accept deterministically overwrites WM <code>## Rules</code> from the consolidator snapshot (inserts the section when missing). <code>Conversation.SystemPrompt</code> stores BaseSystem (rules stripped); refresh invalidates Cache Alignment Prefix when BaseSystem text changes.</p>
-<p>Working memory is omitted until the first successful compression; the rebuild path is otherwise the same. Prefer <code>RawWireJson</code> on stored messages when rebuilding wire-faithful turns (tool_calls, multimodal parts). Under Virtual Tools the stored transcript is IR-side (Virtual tool names + distilled observations) — never re-forward the client’s native remapped tool history as the model transcript. <code>Proxy:PassThrough</code> is the only full bypass (no rebuild, Virtual, compression, or rules path). Conversation identity for agents that need a UUID is available via the ToolSchema meta-tool <code>comprexy_get_current_conversation_id</code> (not injected into the prompt).</p>
+<p><strong>Client rules (Cursor / Kilo):</strong> Full prepares extract rule bodies from the latest client system message and new user/tool transcript slices. <code>RulesConsolidator</code> owns the active set (replace semantics per turn), compares against WM <code>## Rules</code> (<code>### rule:&lt;key&gt;</code> sections), and <code>RulesInjector</code> emits synthetic system messages for rules not yet in WM. Synthetic rule messages are materialize-only — never <code>ConversationMessage</code> rows. Inline accept deterministically overwrites WM <code>## Rules</code> from the consolidator snapshot (inserts the section when missing). <code>Conversation.SystemPrompt</code> stores BaseSystem (rules stripped). Any BaseSystem change (Full or MonitorOnly capture) invalidates a leftover Cache Alignment Prefix so unbound live mode flips cannot warm-reuse stale system bytes; MonitorOnly never materializes or stores Prefix (early-return client body). PassThrough does not run detection or capture.</p>
+<p>Working memory is omitted until the first successful compression; the rebuild path is otherwise the same. Prefer <code>RawWireJson</code> on stored messages when rebuilding wire-faithful turns (tool_calls, multimodal parts). Under Virtual Tools the stored transcript is IR-side (Virtual tool names + distilled observations) — never re-forward the client’s native remapped tool history as the model transcript. <code>Proxy:PassThrough</code> always wins (no rebuild, Virtual, compression, rules, BaseSystem capture, or turn metrics). <code>Proxy:OptimizationMode=MonitorOnly</code> shares the prompt-mutation skip set, may capture BaseSystem for observability, and may attach metrics. Conversation identity for agents that need a UUID is available via the ToolSchema meta-tool <code>comprexy_get_current_conversation_id</code> (not injected into the prompt).</p>
+<h3 id="sticky-effective-settings">Sticky effective settings<a class="headerlink" href="#sticky-effective-settings" title="Permanent link">&para;</a></h3>
+<p>New conversations capture allowlisted behavior knobs (<code>Proxy</code> PassThrough / OptimizationMode / StripReasoningContent, <code>ContextPolicy</code>, <code>CacheAlignment</code> Enabled/MaxConversations, <code>Metrics</code> Enabled/PromptTokenBasis, prepare-facing <code>ToolSchema</code> knobs) into <code>Conversation.EffectiveSettingsJson</code> on first create. Subsequent prepares deserialize that snapshot into a request-scoped <code>IEffectiveSettingsAccessor</code> and must not re-read live <code>IOptionsMonitor</code> for those knobs after bind. Legacy null rows resolve from live options for the whole conversation (UI shows N/A). Global SQLite operator settings overlay hot-reloads via <code>IOptionsMonitor</code> for unbound / live paths only (next request).</p>
 <h2 id="budgets-and-compression">Budgets and compression<a class="headerlink" href="#budgets-and-compression" title="Permanent link">&para;</a></h2>
 <table>
 <thead>
@@ -1820,7 +1844,7 @@
 <tbody>
 <tr>
 <td><code>Conversation</code></td>
-<td>Stable key, captured system prompt, <code>SyncedMessageCount</code> cursor</td>
+<td>Stable key, captured system prompt, <code>SyncedMessageCount</code> cursor, optional sticky <code>EffectiveSettingsJson</code></td>
 </tr>
 <tr>
 <td><code>ConversationMessage</code></td>
@@ -1849,6 +1873,14 @@
 <tr>
 <td><code>ConversationToolDefinition</code></td>
 <td>Full client tool definition JSON for passthrough and arg shapes</td>
+</tr>
+<tr>
+<td><code>ModelPricingEntry</code></td>
+<td>Seeded presentation USD/1M rates for dashboard cost display (not billing)</td>
+</tr>
+<tr>
+<td><code>OperatorSettings</code></td>
+<td>Singleton-row mutable allowlisted operator JSON + optimistic <code>Revision</code> (control-api PUT; both hosts poll)</td>
 </tr>
 <tr>
 <td><code>ConversationToolCallMap</code></td>
@@ -1950,7 +1982,11 @@
 </tr>
 <tr>
 <td>Auth</td>
-<td><code>ApiKeyAuthMiddleware</code> (Infrastructure.Hosting) — optional single <code>Auth:RequiredApiKey</code> on <code>/v1/*</code> and control-api <code>/mcp</code>; <code>/health</code> exempt</td>
+<td><code>ApiKeyAuthMiddleware</code> (Infrastructure.Hosting) — path-split keys: proxy <code>/v1/*</code> uses <code>Auth:RequiredApiKey</code>; control-api <code>/mcp</code> always Required; control-api <code>/v1</code> when <code>ProtectV1WithDashboardKey</code> uses <code>DashboardApiKey</code> with Required fallback; <code>/health</code> exempt</td>
+</tr>
+<tr>
+<td>Operator settings</td>
+<td>control-api owns SQLite <code>OperatorSettings</code> (revision + allowlisted JSON); both hosts poll and apply overlay to <code>IOptionsMonitor</code></td>
 </tr>
 <tr>
 <td>Tracing</td>
@@ -2008,11 +2044,15 @@
 </tr>
 <tr>
 <td><code>Proxy</code></td>
-<td>Pass-through; strip reasoning</td>
+<td>Pass-through; OptimizationMode (<code>Full</code> | <code>MonitorOnly</code>); strip reasoning</td>
 </tr>
 <tr>
 <td><code>Metrics</code></td>
 <td>Token ledger capture (default enabled)</td>
+</tr>
+<tr>
+<td><code>OperatorSettings</code></td>
+<td>Poll interval for SQLite settings overlay (default 2s)</td>
 </tr>
 <tr>
 <td><code>McpTelemetry</code></td>
@@ -2024,7 +2064,7 @@
 </tr>
 <tr>
 <td><code>Auth</code></td>
-<td>Optional required API key</td>
+<td><code>RequiredApiKey</code>, <code>DashboardApiKey</code>, <code>ProtectV1WithDashboardKey</code> (control-api)</td>
 </tr>
 <tr>
 <td><code>AllowedHosts</code> / <code>Cors</code></td>

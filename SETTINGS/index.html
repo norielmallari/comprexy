@@ -1047,6 +1047,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#operatorsettings" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        OperatorSettings
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#metrics" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1496,6 +1507,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#operatorsettings" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        OperatorSettings
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#metrics" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1817,7 +1839,7 @@
 </table>
 <hr />
 <h2 id="toolschema">ToolSchema<a class="headerlink" href="#toolschema" title="Permanent link">&para;</a></h2>
-<p>Virtual Tools (Tool IR) is a primary Comprexy capability for OpenAI-compatible <code>tools</code> / <code>functions</code> catalogs. It is enabled by default (<code>Mode: Virtual</code>); set <code>Mode</code> to <code>Off</code> to disable. Ignored when <code>Proxy:PassThrough</code> is true. Structural runtime path: <a href="../ARCHITECTURE/#tool-schema-virtual-tools"><code>ARCHITECTURE.md</code></a>.</p>
+<p>Virtual Tools (Tool IR) is a primary Comprexy capability for OpenAI-compatible <code>tools</code> / <code>functions</code> catalogs. It is enabled by default (<code>Mode: Virtual</code>); set <code>Mode</code> to <code>Off</code> to disable. Ignored when prompt optimizations are skipped (<code>Proxy:PassThrough</code> or <code>Proxy:OptimizationMode=MonitorOnly</code>). Structural runtime path: <a href="../ARCHITECTURE/#tool-schema-virtual-tools"><code>ARCHITECTURE.md</code></a>.</p>
 <table>
 <thead>
 <tr>
@@ -1998,11 +2020,22 @@
 <tr>
 <td><code>RequiredApiKey</code></td>
 <td><code>null</code></td>
-<td>When set, <code>/v1/*</code> and control-api <code>/mcp</code> require <code>Authorization: Bearer {value}</code> or <code>X-Api-Key: {value}</code>. <code>/health</code> stays open.</td>
+<td>Proxy <code>/v1/*</code> and control-api <code>/mcp</code> require <code>Authorization: Bearer {value}</code> or <code>X-Api-Key: {value}</code> when set. <code>/health</code> stays open.</td>
+</tr>
+<tr>
+<td><code>DashboardApiKey</code></td>
+<td><code>null</code></td>
+<td>Dashboard / browser unlock key for control-api <code>/v1</code> when ProtectV1 is true. Never unlocks <code>/mcp</code>.</td>
+</tr>
+<tr>
+<td><code>ProtectV1WithDashboardKey</code></td>
+<td><code>false</code> (proxy); <code>true</code> (control-api stock)</td>
+<td>When true on control-api, <code>/v1</code> expected-key resolution: non-empty <code>DashboardApiKey</code> → require it; else non-empty <code>RequiredApiKey</code> → <strong>fallback</strong> require Required (migration for Required-only deployments); else both empty → open.</td>
 </tr>
 </tbody>
 </table>
-<p>When unset, those routes accept any (or no) credential. For non-loopback deployments, set a key and prefer HTTPS.</p>
+<p><strong>Breaking change (control-api <code>/v1</code>):</strong> once <code>DashboardApiKey</code> is set, <code>/v1</code> is no longer the same key as <code>/mcp</code>. Set <code>Auth:DashboardApiKey</code> for the dashboard and keep <code>RequiredApiKey</code> for MCP/proxy. Until Dashboard is set, <code>/v1</code> stays locked by the Required fallback when ProtectV1 is true.</p>
+<p>When unset/empty for a given path’s expected key, that path accepts any (or no) credential. For non-loopback deployments, set keys and prefer HTTPS.</p>
 <p>Proxy stock <code>AllowedHosts</code> is <code>*</code> (<code>apps/proxy/appsettings.json</code>). control-api secure host defaults (override via environment / <code>appsettings.Local.json</code> for remote hostnames):</p>
 <table>
 <thead>
@@ -2040,7 +2073,12 @@
 <tr>
 <td><code>PassThrough</code></td>
 <td><code>false</code></td>
-<td>When true, forwards the original chat body with no context rebuild, compression / working memory, Virtual Tools rewrite, or client rules path. Escape hatch only.</td>
+<td>When true, forwards the original chat body with no context rebuild, compression / working memory, Virtual Tools rewrite, or client rules path. Escape hatch — always wins over <code>OptimizationMode</code>. No turn metrics.</td>
+</tr>
+<tr>
+<td><code>OptimizationMode</code></td>
+<td><code>Full</code></td>
+<td><code>Full</code> = normal prepare. <code>MonitorOnly</code> = PassThrough-like wire with prompt mutations, rebuild, compression, and Virtual Tools skipped. It may capture BaseSystem for metrics and record metrics when <code>Metrics:Enabled</code>.</td>
 </tr>
 <tr>
 <td><code>StripReasoningContent</code></td>
@@ -2049,9 +2087,31 @@
 </tr>
 </tbody>
 </table>
+<p>Sticky conversations bind these (and other allowlisted knobs) into <code>EffectiveSettingsJson</code> on create; later prepares use the snapshot, not live globals.</p>
+<hr />
+<h2 id="operatorsettings">OperatorSettings<a class="headerlink" href="#operatorsettings" title="Permanent link">&para;</a></h2>
+<p>SQLite-backed mutable allowlist owned by control-api (<code>GET</code>/<code>PUT /v1/comprexy/settings</code>). Both proxy and control-api poll revision and apply overlay to <code>IOptionsMonitor</code> (next request only). Precedence for allowlisted keys: env/cmdline &gt; SQLite overlay &gt; stock appsettings. Secrets, Provider, CORS, Trace, Bench, connection strings stay env/file only.</p>
+<table>
+<thead>
+<tr>
+<th>Key</th>
+<th>Default</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>PollInterval</code></td>
+<td><code>00:00:02</code></td>
+<td>How often hosts poll <code>OperatorSettings.Revision</code>.</td>
+</tr>
+</tbody>
+</table>
+<p>PUT requires matching body <code>revision</code> (or <code>If-Match</code>); mismatch → <code>409</code>. Allowlisted sections: <code>Proxy</code> (PassThrough, OptimizationMode, StripReasoningContent), <code>ContextPolicy</code>, <code>CacheAlignment</code> (Enabled, MaxConversations), <code>Metrics</code> (Enabled, PromptTokenBasis), prepare-facing <code>ToolSchema</code> knobs (<code>Mode</code>, <code>ExcludeFromModelTools</code>, caps).</p>
+<p>Presentation cost catalog (separate): <code>GET /v1/comprexy/cost-models</code> returns seeded USD/1M rates (input+output only; not billing).</p>
 <hr />
 <h2 id="metrics">Metrics<a class="headerlink" href="#metrics" title="Permanent link">&para;</a></h2>
-<p>Token proof ledger for successful compressed-path turns. Persisted in SQLite (not Trace logs).</p>
+<p>Token proof ledger for successful turns with <code>MetricsPrepare</code> set. Persisted in SQLite (not Trace logs). PassThrough never writes turn metrics. MonitorOnly may write when enabled (Raw≈Prepared≈IrFull).</p>
 <table>
 <thead>
 <tr>
@@ -2073,7 +2133,7 @@
 </tr>
 </tbody>
 </table>
-<p>Operator read API (same <code>/v1/*</code> API-key gate as chat):</p>
+<p>Operator read API (same <code>/v1/*</code> API-key gate as chat on each host’s auth rules):</p>
 <table>
 <thead>
 <tr>
@@ -2091,17 +2151,32 @@
 <tr>
 <td><code>GET</code></td>
 <td><code>/v1/comprexy/conversations/{conversationId}/metrics</code></td>
-<td>Conversation rollup</td>
+<td>Conversation rollup (<code>effectiveSettingsJson</code> null → UI N/A)</td>
 </tr>
 <tr>
 <td><code>GET</code></td>
 <td><code>/v1/comprexy/conversations/{conversationId}/metrics/turns</code></td>
 <td>Per-turn breakdown</td>
 </tr>
+<tr>
+<td><code>GET</code></td>
+<td><code>/v1/comprexy/settings</code></td>
+<td>Operator mutable settings + revision</td>
+</tr>
+<tr>
+<td><code>PUT</code></td>
+<td><code>/v1/comprexy/settings</code></td>
+<td>Update settings (409 on revision conflict)</td>
+</tr>
+<tr>
+<td><code>GET</code></td>
+<td><code>/v1/comprexy/cost-models</code></td>
+<td>Active presentation cost catalog</td>
+</tr>
 </tbody>
 </table>
 <p>Optional query: <code>promptTokenBasis=Estimated|ProviderActual</code> (defaults to <code>Metrics:PromptTokenBasis</code>). Response DTOs include <code>promptTokenBasis</code> showing which basis was applied.</p>
-<p>Pass-through turns and failed requests do not write turn metrics. See <a href="../ARCHITECTURE/"><code>ARCHITECTURE.md</code></a> and the internal metrics plan for formulas.</p>
+<p>Pass-through turns and failed requests do not write turn metrics. SoftBudget and Virtual Tools savings formulas are under Metrics above and in <a href="../ARCHITECTURE/"><code>ARCHITECTURE.md</code></a> (metrics path + <code>ConversationTurnMetric</code>).</p>
 <hr />
 <h2 id="mcptelemetry">McpTelemetry<a class="headerlink" href="#mcptelemetry" title="Permanent link">&para;</a></h2>
 <p>control-api only. Bounds and timeouts for the remote telemetry + retrieval MCP endpoint (<code>/mcp</code>, Streamable HTTP, stateless). REST metrics and MCP share <code>IConversationMetricsQueryService</code>; message/working-memory RAG tools share <code>IConversationRetrievalQueryService</code>. MCP does not open a separate database path.</p>
