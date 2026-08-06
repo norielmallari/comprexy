@@ -11,9 +11,9 @@ Invoke one with the delegation tool your client exposes — `task` in Kilo Code,
 | You have | Delegate to |
 | --- | --- |
 | A requirement, bug, or finding with no approved plan | `plan-orchestrator` |
-| An approved `plan.md` with `track: backend` | `backend-implementation-orchestrator` |
-| An approved `plan.md` with `track: ui` | `ui-implementation-orchestrator` |
-| An approved `plan.md` with `track: mixed` | backend orchestrator first, then the UI orchestrator |
+| An approved `plan-vX.md` with `track: backend` | `backend-implementation-orchestrator` |
+| An approved `plan-vX.md` with `track: ui` | `ui-implementation-orchestrator` |
+| An approved `plan-vX.md` with `track: mixed` | backend orchestrator first, then the UI orchestrator in a separate run folder/slice |
 | Benchmark / harness run (one script at a time) | `bench-runner` |
 
 Orchestrators fan out to their own specialists (`planner`, `plan-reviewer`, `backend-implementer`, `backend-unit-tester`, `backend-code-reviewer`, `ui-implementer`, `ui-unit-tester`, `ui-reviewer`, `ui-simulator`). Do not drive those specialists yourself when an orchestrator owns the stage. Roster and pipeline detail: [`.cursor/README.md`](.cursor/README.md).
@@ -24,7 +24,7 @@ For read-only exploration, use the built-in `explore` agent. For open-ended rese
 
 ## Do
 
-- Pass the run folder (`.cursor/agent-state/<run-folder>/`) so the subagent reads and writes the shared handoff files
+- Pass the run folder and exact approved/current versioned artifact paths so the subagent reads prior files and writes a new `-vX` artifact
 - Write a self-contained brief — the subagent cannot see this conversation
 - Launch independent delegations in parallel; sequence only when one needs another's output
 - Report the subagent's verdict and artifact paths; do not re-paste what it already wrote to disk

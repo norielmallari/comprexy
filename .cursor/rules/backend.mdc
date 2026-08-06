@@ -1,0 +1,80 @@
+---
+description: C# backend style — primary constructors, modern syntax, no legacy DI overloads
+globs: **/*.cs
+alwaysApply: false
+---
+
+# Backend C# style
+
+Target **.NET 10** / current C#. Prefer one clear DI shape per type. Do not keep parallel “legacy” APIs that DI or callers can still bind.
+
+## Primary constructors (required for new / touched types)
+
+Use C# primary constructors for DI and immutable collaborators. Prefer assigning only what must escape the parameter list; avoid duplicating the same fields in a classic ctor body.
+
+```csharp
+// ✅ GOOD
+public sealed class ConversationMetricsRecorder(
+    IConversationTurnMetricRepository turnMetricRepository,
+    IClock clock,
+    IEffectiveSettingsAccessor effectiveSettings,
+    IOptionsMonitor<MetricsOptions> options) : IConversationMetricsRecorder
+{
+    public bool IsEnabled =>
+        effectiveSettings.IsSet
+            ? effectiveSettings.Current.MetricsEnabled
+            : options.CurrentValue.Enabled;
+}
+
+// ❌ BAD — classic ctor + private fields when a primary ctor fits
+public sealed class ConversationMetricsRecorder
+{
+    private readonly IOptionsMonitor<MetricsOptions> _options;
+    public ConversationMetricsRecorder(IOptionsMonitor<MetricsOptions> options) => _options = options;
+}
+```
+
+When editing an existing classic-ctor type, migrate it to a primary constructor in the same change if the touch is non-trivial.
+
+## No legacy implementation surfaces
+
+Do **not** add or keep parallel public constructors, wrappers, or “compat” overloads that duplicate the primary DI shape (e.g. `IOptions<T>` beside `IOptionsMonitor<T>` + accessor). MS DI validates **all public** constructors and fails on ambiguity.
+
+```csharp
+// ❌ BAD — second public ctor DI can also satisfy
+public ConversationMetricsRecorder(..., IEffectiveSettingsAccessor a, IOptionsMonitor<MetricsOptions> m) { }
+public ConversationMetricsRecorder(..., IOptions<MetricsOptions> options) { } // legacy
+
+// ✅ GOOD — single public DI ctor (primary). Test helpers: internal factory / InternalsVisibleTo, or construct with mocks of the real deps
+```
+
+- Prefer updating tests to the primary signature over shipping legacy public overloads
+- `internal` test-only helpers are allowed; they must not be public DI entry points
+- Do not reintroduce `IOptions<T>` capture-at-ctor on hot paths that already use `IOptionsMonitor<T>` / sticky accessors
+
+## Latest C# syntax (prefer on touch)
+
+| Prefer | Avoid |
+| --- | --- |
+| Primary constructors | Classic ctor + boilerplate fields when equivalent |
+| `required` / init where appropriate | Optional mutable public set-only bags without need |
+| Collection expressions `[..]`, `[]` | `new List<T> { }` when a collection expression is enough |
+| Pattern matching / switch expressions | Nested if-else for the same shape |
+| `is null` / `is not null` | `== null` / `!= null` |
+| File-scoped namespaces | Block-scoped namespaces on new files |
+| Target-typed `new()` | Redundant `new TypeName()` when the type is obvious |
+| Raw string literals `"""` for multi-line text | Heavy escaped `"\n"` concatenation |
+
+Generated code (EF migrations, etc.) is exempt. Do not churn untouched files solely for syntax fashion.
+
+## Do
+
+- One public construction path for DI-registered types
+- `IOptionsMonitor<T>` (or sticky accessor) for options that must hot-reload or honor effective settings
+- Match existing layer folder patterns (Application / Domain / Infrastructure / hosts)
+
+## Do not
+
+- Public dual ctors “for tests” or “for migration”
+- Mark dual ctors with `[ActivatorUtilitiesConstructor]` as a substitute for removing ambiguity — prefer a single public shape
+- Capture `IOptions<T>.Value` in a field on types that must see overlay / sticky updates

@@ -12,7 +12,7 @@ Chat-only multi-agent handoffs blow up context and lose structure. This workflow
 2. Passes state through **files** under [`.cursor/agent-state/`](agent-state/README.md), not pasted chat bodies
 3. Relies on Comprexy to bound the **upstream** prompt while the durable transcript and handoff files grow
 
-Orchestrators coordinate; specialists do the work. Fresh subagent instances each loop try (no resume across tries). Max three tries per gate, then human-in-the-loop.
+Orchestrators coordinate; specialists do the work. Fresh subagent instances each loop try (no resume across tries). Max three tries per gate, then human-in-the-loop. Every try writes immutable `-vX` artifacts; prior tries are never overwritten.
 
 ## Pipeline
 
@@ -23,7 +23,7 @@ requirement / finding
 ┌───────────────────────┐
 │  plan-orchestrator    │  loops planner → plan-reviewer (≤3)
 └───────────┬───────────┘
-            │ approved plan.md (track: backend | ui | mixed)
+            │ approved plan-vX.md (track: backend | ui | mixed)
             ▼
      ┌──────┴──────┐
      │             │
@@ -50,7 +50,7 @@ requirement / finding
 | Build (backend) | `backend-implementation-orchestrator` | `backend-implementer`, `backend-unit-tester`, `backend-code-reviewer` |
 | Build (UI) | `ui-implementation-orchestrator` | `ui-implementer`, `ui-unit-tester`, `ui-reviewer`, `ui-simulator` |
 
-Every approved `plan.md` must declare `track: backend | ui | mixed`. Mixed work runs **backend then UI** (separate run folders or sequenced tries).
+Every approved `plan-vX.md` must declare `track: backend | ui | mixed`. Mixed work runs **backend then UI** in separate run folders/slices so independent version sequences cannot collide.
 
 If only a requirement exists, start with **plan-orchestrator**. If an approved plan already exists, start with the implementation orchestrator for that plan’s `track`.
 
@@ -68,7 +68,7 @@ Agent prompts live under [`.cursor/agents/`](agents/).
 | [`planner`](agents/planner.md) | Turns a requirement into an implementable plan (must set `track`) |
 | [`plan-reviewer`](agents/plan-reviewer.md) | Adversarial plan gate — rejects incomplete plans / missing track; quote-verified evidence (E1–E7) |
 | [`backend-implementation-orchestrator`](agents/backend-implementation-orchestrator.md) | Backend implement → test → review until approval or HITL |
-| [`backend-implementer`](agents/backend-implementer.md) | Backend production code; `dotnet build` must pass; no unit tests |
+| [`backend-implementer`](agents/backend-implementer.md) | Backend production code; `dotnet build` plus isolated affected-host `/health` smoke must pass; no unit tests |
 | [`backend-unit-tester`](agents/backend-unit-tester.md) | Backend xUnit from handoff; UI track redirects to `ui-unit-tester` |
 | [`backend-code-reviewer`](agents/backend-code-reviewer.md) | Adversarial backend review (DI/lease); quote-verified, plan-aware severity (E1–E7); read-only |
 | [`ui-implementation-orchestrator`](agents/ui-implementation-orchestrator.md) | UI implement → unit+e2e author → ui-review → ui-sim until approval or HITL |
@@ -92,15 +92,15 @@ Runtime artifacts live under `.cursor/agent-state/<run-folder>/` (gitignored exc
 
 | File | Writer |
 | --- | --- |
-| `plan.md` | planner (`track:` required) |
-| `plan-review.md` | plan-reviewer |
-| `handoff.md` | backend-implementer / ui-implementer → backend-unit-tester or ui-unit-tester |
-| `unit-test-result.md` | backend-unit-tester / ui-unit-tester |
-| `code-review.md` | backend-code-reviewer or ui-reviewer |
-| `ui-sim-result.md` | ui-simulator (UI track; run-only) |
+| `plan-vX.md` | planner (`track:` required) |
+| `plan-review-vX.md` | plan-reviewer |
+| `handoff-vX.md` | backend-implementer / ui-implementer → backend-unit-tester or ui-unit-tester |
+| `unit-test-result-vX.md` | backend-unit-tester / ui-unit-tester |
+| `code-review-vX.md` | backend-code-reviewer or ui-reviewer |
+| `ui-sim-result-vX.md` | ui-simulator (UI track; run-only) |
 | `bench-queue.md` / `bench-run-*.md` / `bench-ledger.md` | bench-runner (ops; not a product track) |
 
-Specialists write the full artifact to disk and keep chat short (paths + summary). Orchestrators and the next specialist **read the files**.
+Specialists write the full artifact to a new versioned path and keep chat short (paths + summary). Matching artifacts from one try share the same suffix (`-v1`, `-v2`, or `-v3`). Existing artifacts are immutable; orchestrators and the next specialist read exact paths rather than an unversioned latest alias.
 
 ## Local LLM fit
 

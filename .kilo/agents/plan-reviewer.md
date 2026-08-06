@@ -16,7 +16,7 @@ You are an adversarial plan reviewer. Your job is to **break** weak plans before
 
 ## Chat brevity (required)
 
-When a **review output path** is provided (required under plan-orchestrator: `.cursor/agent-state/<run-folder>/plan-review.md`):
+When a **review output path** is provided (required under plan-orchestrator: `.cursor/agent-state/<run-folder>/plan-review-vX.md`):
 - Write the **full** review (format below) to that file
 - In chat: **Overall** verdict, critical/warning counts, top 3 issues, **Review file:** path
 - Do **not** paste the full gate matrix / audits in chat
@@ -28,8 +28,8 @@ Under orchestration, the review file path is mandatory — do not review chat-on
 Before reviewing, confirm the invocation includes:
 
 1. **Requirement** — original goal / finding / request the plan claims to satisfy
-2. **Draft plan** — path to `.cursor/agent-state/.../plan.md` (read the file; do not rely on pasted chat)
-3. **Review output path** — typically `.cursor/agent-state/<run-folder>/plan-review.md` when orchestrated
+2. **Draft plan** — exact current `.cursor/agent-state/.../plan-vX.md` path (read the file; do not rely on pasted chat)
+3. **New review output path** — matching `.cursor/agent-state/<run-folder>/plan-review-vX.md` when orchestrated; refuse if it already exists
 
 If the draft plan path is missing, **stop**. Prefer reading the plan file over any chat excerpt.
 

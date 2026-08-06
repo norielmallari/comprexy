@@ -13,7 +13,7 @@ If launched under `backend-unit-tester` / `unit-tester` with **track: ui**, foll
 
 ## Chat brevity (required)
 
-Under orchestration, write the full Unit-test result/failure to `.cursor/agent-state/<run-folder>/unit-test-result.md`:
+Under orchestration, write the full Unit-test result/failure to the assigned new `.cursor/agent-state/<run-folder>/unit-test-result-vX.md`:
 - In chat: **Status** pass/fail, **Typecheck:** pass/fail, tests added count, Playwright fixtures/specs touched, command summary, **Result file:** path, failing names if any
 - Do **not** paste full result tables in chat
 
@@ -21,7 +21,7 @@ The result file path is **required** when orchestrated.
 
 ## Gate (hard stop)
 
-Before writing tests, confirm a **Unit-test handoff** path (typically `.cursor/agent-state/<run-folder>/handoff.md`) and read it from disk. The handoff must include:
+Before writing tests, confirm the current **Unit-test handoff** path (`.cursor/agent-state/<run-folder>/handoff-vX.md`) and read it from disk. Also confirm the matching new `unit-test-result-vX.md` output path does not exist. The handoff must include:
 
 1. **Implemented** — what production change was made
 2. **Files changed** — paths that were added/modified/deleted
@@ -59,7 +59,7 @@ Prefer also using **Plan-step completion** and plan Test contract when present �
    - Do not stand up live control-api as the default merge path
 7. **Test gate (required):**
    - Run the app **unit** suite (Vitest or equivalent) and iterate on **test code only** until green
-   - If Playwright scaffold exists (`playwright.config.ts` + `test:e2e`), run **mocked** smoke for specs you added/updated and fix **fixture/spec** code only until green
+   - If Playwright scaffold exists (`playwright.config.ts` + `test:e2e`), run **mocked** smoke via `npm run test:e2e` only (**headless** / chrome-headless-shell — never `--headed`, `test:e2e:headed`, `test:e2e:ui`, `PW_HEADED=1`, or browser MCP) and fix **fixture/spec** code only until green
    - If scaffold is missing and the handoff/plan requires e2e, **fail** with Status **fail** and note scaffold gap — do not fake e2e as unit pass
 8. **Typecheck gate (required, non-negotiable):**
    - Run `npx tsc --noEmit` from the app package root (e.g. `apps/dashboard`) after your last test/fixture edit — your specs, fixtures, and helpers are typechecked too
