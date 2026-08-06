@@ -2,7 +2,7 @@
 
 Apache-2.0 OpenAI-compatible **Comprehension Proxy** for context management, token observability, and reproducible agent benchmarks across local and frontier workflows.
 
-**Comprexy OSS** sits between your client (Cursor, CLI agents, custom apps) and any OpenAI-compatible upstream — local or frontier. It makes long sessions workable through versioned working memory, soft-budget Inline wrap-up, Virtual Tools that replace heavy IDE tool catalogs with compact IR tools, and client rules management for Cursor/Kilo project rules. Full documentation: [docs site](https://norielmallari.github.io/comprexy/).
+**Comprexy OSS** sits between your client (IDEs, CLI agents, custom apps) and any OpenAI-compatible upstream — local or frontier. It makes long sessions workable through versioned working memory, soft-budget Inline wrap-up, Virtual Tools that replace heavy IDE tool catalogs with compact IR tools, and client rules management for IDE project rules. Full documentation: [docs site](https://norielmallari.github.io/comprexy/).
 
 [Project direction](#project-direction) · [Quick start](#quick-start) · [Documentation](https://norielmallari.github.io/comprexy/) · [License](#license)
 
@@ -103,7 +103,7 @@ On the normal path, when `Provider:Model` is set Comprexy OSS replaces `model` w
 
 - **Observable tokens** — conversation- and turn-level metrics via control-api (dashboard, MCP)
 - **Virtual Tools** — heavy IDE tool catalogs replaced with compact IR tools, remapped to native client calls
-- **Client rules** — Cursor/Kilo attached rules extracted each turn, injected as ephemeral overlays, and folded into working memory on compression
+- **Client rules** — IDE-attached rules extracted each turn, injected as ephemeral overlays, and folded into working memory on compression
 - **Working memory** — versioned compressed context for bounded upstream prompts, folded on soft budget pressure
 - **Benchmark harness** — reproducible compression comparison on real coding workloads
 

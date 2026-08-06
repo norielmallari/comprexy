@@ -22,7 +22,7 @@ This repository is the Apache 2.0–licensed open core of Comprexy OSS. Further 
 - Mid-chain Inline wrap-up path and streaming tail hold for eligible open-chain turns
 - `Metrics:PromptTokenBasis` (`ProviderActual` default) and optional `?promptTokenBasis=` on metrics REST; turn wall-clock duration columns on `ConversationTurnMetric`
 - `Comprexy.Bench` CLI + frozen conversation scripts under `tests/Comprexy.Bench.Conversations`
-- Cursor ↔ Kilo agent/rules mirroring and `task` kept visible for delegation
+- IDE agent/rules mirroring and `task` kept visible for delegation
 - Reviewer evidence gates (E1–E7) in plan/backend/UI reviewer prompts
 
 ## Changed

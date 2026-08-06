@@ -23,7 +23,7 @@ Copy `appsettings.Local.json.example` → `appsettings.Local.json` for machine-l
 
 Send a unique `X-Comprexy-Conversation-Id` header per logical session when multiple clients or tabs might share the same opening prompt.
 
-When omitted, Comprexy fingerprints the system prompt plus the first two **plain** user turns (Cursor `<user_query>` text when present; tool-echo user turns like `Called the … tool with the following input:` are skipped). Templated openings can still collide across sessions. The resolved conversation id is echoed on responses.
+When omitted, Comprexy fingerprints the system prompt plus the first two **plain** user turns (IDE `<user_query>` text when present; tool-echo user turns like `Called the … tool with the following input:` are skipped). Templated openings can still collide across sessions. The resolved conversation id is echoed on responses.
 
 ---
 
@@ -154,7 +154,7 @@ Proxy stock `AllowedHosts` is `*` (`apps/proxy/appsettings.json`). control-api s
 | `AllowedHosts` | `localhost;127.0.0.1` | ASP.NET Core host filtering; rejects other `Host` headers. |
 | `Cors:AllowedOrigins` | `[]` (empty) | When empty, the default CORS policy denies all browser origins. List explicit origins to allow browser clients; do not use `*`. |
 
-Server-side MCP clients (Cursor, etc.) do not rely on CORS. Wildcard `AllowedHosts: "*"` is not the control-api default. The optional metrics dashboard (`apps/dashboard`, `:3000`) is a browser client of control-api REST — Development already allows `http://localhost:3000`; for other hosts, list the origin in `Cors:AllowedOrigins`.
+Server-side MCP clients (IDEs, etc.) do not rely on CORS. Wildcard `AllowedHosts: "*"` is not the control-api default. The optional metrics dashboard (`apps/dashboard`, `:3000`) is a browser client of control-api REST — Development already allows `http://localhost:3000`; for other hosts, list the origin in `Cors:AllowedOrigins`.
 
 ---
 

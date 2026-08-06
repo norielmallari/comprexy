@@ -11,7 +11,7 @@
 
 ## How does conversation identity work?
 
-Comprexy OSS prefers a unique `X-Comprexy-Conversation-Id` header per session. When that header is omitted, identity is derived from the system prompt and the first two **plain** user turns (Cursor `<user_query>` extraction when present; tool-echo user turns are skipped). Sessions that share the same opening text can map to one stored conversation.
+Comprexy OSS prefers a unique `X-Comprexy-Conversation-Id` header per session. When that header is omitted, identity is derived from the system prompt and the first two **plain** user turns (IDE `<user_query>` extraction when present; tool-echo user turns are skipped). Sessions that share the same opening text can map to one stored conversation.
 
 For multi-tab or multi-user setups, send an explicit `X-Comprexy-Conversation-Id` header.
 
@@ -25,7 +25,7 @@ Chat compression supports `system`, `user`, `assistant`, and `tool` roles. Other
 
 ## How does client rules management work?
 
-On each non-PassThrough prepare, Comprexy OSS extracts rule bodies from the latest client system message and from new user/tool transcript slices (Cursor and Kilo wire markers). Rules are consolidated by key with replace semantics, injected as ephemeral system overlays when not yet present in working memory, and written into WM `## Rules` on a successful Inline accept. Synthetic rule messages are not persisted as conversation rows. Comprexy does not re-evaluate `.mdc` globs or `alwaysApply` — it trusts which rules the client already attached. See [Architecture](ARCHITECTURE.md) (Outgoing context / Client rules).
+On each non-PassThrough prepare, Comprexy OSS extracts rule bodies from the latest client system message and from new user/tool transcript slices (known IDE wire markers). Rules are consolidated by key with replace semantics, injected as ephemeral system overlays when not yet present in working memory, and written into WM `## Rules` on a successful Inline accept. Synthetic rule messages are not persisted as conversation rows. Comprexy does not re-evaluate `.mdc` globs or `alwaysApply` — it trusts which rules the client already attached. See [Architecture](ARCHITECTURE.md) (Outgoing context / Client rules).
 
 ## Does working memory persist across restarts?
 
@@ -51,7 +51,7 @@ Soft (`> soft`) above `SoftLimitTokens` triggers a blocking Inline wrap-up on el
 
 - Soft Inline wrap-up and the conversation gate are process-local; they are not shared across multiple API instances.
 - Virtual Tools mapping is best-effort per catalog hash. A catalog with no tool the mapper can bind loses that Virtual tool only.
-- Client rules extraction is best-effort against known Cursor/Kilo wire markers; unrecognized formats are left in BaseSystem or transcript text.
+- Client rules extraction is best-effort against known IDE wire markers; unrecognized formats are left in BaseSystem or transcript text.
 - Incomplete file-body cache entries never local-satisfy; the proxy rematerializes until a complete body is cached.
 - `ExcludeFromModelTools` hides tools from the model only; they remain in the client catalog. Already-persisted transcript turns are not scrubbed.
 

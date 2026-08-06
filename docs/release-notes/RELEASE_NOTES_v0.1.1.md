@@ -33,7 +33,7 @@ This repository is the Apache 2.0–licensed open core of Comprexy OSS. Further 
 - Compression path is Inline wrap-up only
 - `Proxy:StripReasoningContent` defaults to `false`
 - Hard / compression limits are nullable where appropriate
-- Conversation fingerprinting prefers plain user turns (Cursor `<user_query>` when present; tool-echo user turns skipped)
+- Conversation fingerprinting prefers plain user turns (IDE `<user_query>` when present; tool-echo user turns skipped)
 - README and `docs/ARCHITECTURE.md` / `docs/SETTINGS.md` updated for the current surface
 
 ## Fixed

@@ -2,7 +2,7 @@
 
 ## Dogfood validation
 
-Top 3 evidences — end-to-end Cursor workflows on a local LLM (Qwen-35B behind Comprexy OSS):
+Top 3 evidences — end-to-end IDE workflows on a local LLM (Qwen-35B behind Comprexy OSS):
 
 ### 1. Dashboard implementation + tests (125 turns)
 

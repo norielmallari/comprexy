@@ -91,7 +91,7 @@ For each conversation, it tracks estimated baseline token volume, sent-equivalen
 - Persist the durable transcript; treat working memory as a derived, versioned prompt aid.
 - Rebuild outgoing context from stored turns — do not forward an unmanaged client history as the model transcript.
 - When Virtual Tools is on, own the model-facing tool contract: compact IR outbound, native remap to the client, distilled IR observations in the stored transcript.
-- Extract client-attached IDE rules (Cursor / Kilo), inject pending rules as ephemeral system overlays, and fold standing rules into working memory on Inline accept — without re-evaluating client glob engines.
+- Extract client-attached IDE rules, inject pending rules as ephemeral system overlays, and fold standing rules into working memory on Inline accept — without re-evaluating client glob engines.
 - Prefer inspectable, deterministic behavior over opaque truncation — tokens, benches, and evidence before guesswork.
 - Stay OpenAI-compatible for local and frontier upstreams; stay narrow (context compression and tool-surface management, not a gateway or agent framework).
 

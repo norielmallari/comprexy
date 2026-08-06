@@ -34,6 +34,7 @@ Drop-in compatible with everything…
 - Audit-style severity labels and postmortem voice in public docs
 - Overclaims (“drop-in”, “fully compatible”) without a stated supported surface
 - Leaking secrets, local paths, or real request-log contents in examples
+- Naming specific IDE products (Cursor, Kilo, …); prefer “IDE”, “IDEs”, or “IDE clients”. Keep literal identifiers when they are filesystem paths (`.cursor/`), mirrored agent layout, or wire/config tool names
 
 ## Placement
 
