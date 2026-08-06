@@ -10,7 +10,7 @@ Follow current EF Core performance practice: prefer lean queries, explicit loadi
 
 ## SaveChanges / Unit of Work ownership
 
-Before adding or moving `SaveChangesAsync` / `IUnitOfWork` / `DbContext.SaveChanges*` calls, read `docs/ARCHITECTURE.md` § Persistence (Unit of Work ownership) and `internal/plans/uow-boundary.md`.
+Before adding or moving `SaveChangesAsync` / `IUnitOfWork` / `DbContext.SaveChanges*` calls, read `docs/ARCHITECTURE.md` § Persistence (Unit of Work ownership).
 
 ### Who may flush
 

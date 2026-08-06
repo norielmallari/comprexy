@@ -39,6 +39,7 @@ Drop-in compatible with everything…
 
 - Operator/contributor material: `README.md`, `CONTRIBUTING.md`, `docs/`
 - Design notes, private reviews, adversarial writeups, and backlog: keep out of the public tree (e.g. gitignored `internal/`)
+- Marketing strategy / copy banks: gitignored `internal/marketing-plan.md`; marketing site lives in the `comprexy-cloud` repo (`apps/website/`, tone: that repo’s `.cursor/rules/website.mdc`); do not put slogan copy in OSS docs
 - Backlog items (when kept privately): neutral summaries and priorities — not finding dumps
 
 ## TODO Tasks

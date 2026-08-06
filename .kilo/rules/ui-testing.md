@@ -22,7 +22,8 @@ _Scope: `**/*.tsx`, `**/*.jsx`, `**/*.ts`, `**/playwright.config.*`_
 - Mock control-api / BFF by default (`page.route` or fixtures) — live `:8130` is optional, not merge-default
 - Assert structure and accessible outcomes, not pixels
 - Do not delete assertions or add unconditional waits to force green
+- **Headless only** for agent/CI runs: `npm run test:e2e` (forces chrome-headless-shell). Never `--headed`, `test:e2e:headed`, `test:e2e:ui`, `PW_HEADED=1`, or browser/Playwright MCP — those spawn a visible Chromium/Chrome on the operator machine
 
 ## Agents
 
-Orchestrator try loops and Playwright MCP explore/heal runbooks live in `.cursor/agents/` — not in this rule.
+Orchestrator try loops live in `.cursor/agents/` — not in this rule. Agents must not open a headed browser.
