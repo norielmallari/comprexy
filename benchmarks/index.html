@@ -1435,7 +1435,7 @@
 
 <h1 id="benchmarks">Benchmarks<a class="headerlink" href="#benchmarks" title="Permanent link">&para;</a></h1>
 <h2 id="dogfood-validation">Dogfood validation<a class="headerlink" href="#dogfood-validation" title="Permanent link">&para;</a></h2>
-<p>Top 3 evidences — end-to-end Cursor workflows on a local LLM (Qwen-35B behind Comprexy OSS):</p>
+<p>Top 3 evidences — end-to-end IDE workflows on a local LLM (Qwen-35B behind Comprexy OSS):</p>
 <h3 id="1-dashboard-implementation-tests-125-turns">1. Dashboard implementation + tests (125 turns)<a class="headerlink" href="#1-dashboard-implementation-tests-125-turns" title="Permanent link">&para;</a></h3>
 <p>Continued <code>apps/dashboard/</code> (layout, chart polish; commit <code>5ca87ca</code>). About 10.35M baseline tokens → 5.19M sent-equivalent; after ~175k compression overhead, rollup net savings ~4.99M (48.24%). After working-memory folds, actual prompts stayed roughly 15–60k (within the 64k soft limit used in this setup). Final turn ~124k → ~55k estimated tokens (247 raw → 76 sent; WM v3). Parent-session telemetry only (subagents not included).</p>
 <p>Evidence: <a href="../evidence/5ca87ca/">docs/evidence/5ca87ca.md</a> (<a href="../evidence/5ca87ca.png">dashboard snapshot</a>)</p>

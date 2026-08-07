@@ -1679,7 +1679,7 @@
 <p>Copy <code>appsettings.Local.json.example</code> → <code>appsettings.Local.json</code> for machine-local upstream URL, API keys, and audit logging.</p>
 <h2 id="conversation-identity">Conversation identity<a class="headerlink" href="#conversation-identity" title="Permanent link">&para;</a></h2>
 <p>Send a unique <code>X-Comprexy-Conversation-Id</code> header per logical session when multiple clients or tabs might share the same opening prompt.</p>
-<p>When omitted, Comprexy fingerprints the system prompt plus the first two <strong>plain</strong> user turns (Cursor <code>&lt;user_query&gt;</code> text when present; tool-echo user turns like <code>Called the … tool with the following input:</code> are skipped). Templated openings can still collide across sessions. The resolved conversation id is echoed on responses.</p>
+<p>When omitted, Comprexy fingerprints the system prompt plus the first two <strong>plain</strong> user turns (IDE <code>&lt;user_query&gt;</code> text when present; tool-echo user turns like <code>Called the … tool with the following input:</code> are skipped). Templated openings can still collide across sessions. The resolved conversation id is echoed on responses.</p>
 <hr />
 <h2 id="provider">Provider<a class="headerlink" href="#provider" title="Permanent link">&para;</a></h2>
 <p>Upstream OpenAI-compatible chat endpoint.</p>
@@ -2058,7 +2058,7 @@
 </tr>
 </tbody>
 </table>
-<p>Server-side MCP clients (Cursor, etc.) do not rely on CORS. Wildcard <code>AllowedHosts: "*"</code> is not the control-api default. The optional metrics dashboard (<code>apps/dashboard</code>, <code>:3000</code>) is a browser client of control-api REST — Development already allows <code>http://localhost:3000</code>; for other hosts, list the origin in <code>Cors:AllowedOrigins</code>.</p>
+<p>Server-side MCP clients (IDEs, etc.) do not rely on CORS. Wildcard <code>AllowedHosts: "*"</code> is not the control-api default. The optional metrics dashboard (<code>apps/dashboard</code>, <code>:3000</code>) is a browser client of control-api REST — Development already allows <code>http://localhost:3000</code>; for other hosts, list the origin in <code>Cors:AllowedOrigins</code>.</p>
 <hr />
 <h2 id="proxy">Proxy<a class="headerlink" href="#proxy" title="Permanent link">&para;</a></h2>
 <table>

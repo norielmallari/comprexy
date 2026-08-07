@@ -1308,12 +1308,12 @@
 <img alt="License" src="https://img.shields.io/badge/license-Apache%202.0-blue" />
 <img alt="Status" src="https://img.shields.io/badge/status-open%20core-informational" /></p>
 <p>Comprexy OSS is an Apache-2.0 licensed <strong>OpenAI-compatible Comprehension Proxy</strong> for context management, client rules handling, token observability, and reproducible agent benchmarks across local and frontier workflows.</p>
-<p>It sits between your client (Cursor, CLI agents, custom apps) and any OpenAI-compatible upstream — local or frontier — making long sessions workable. Conversation- and turn-level metrics are available via control-api, the optional dashboard, and telemetry MCP; the benchmark harness and published dogfood evidence support comparing compression setups on real coding workloads; and the same signals can inform when a local model is enough versus when to use a frontier endpoint.</p>
+<p>It sits between your client (IDEs, CLI agents, custom apps) and any OpenAI-compatible upstream — local or frontier — making long sessions workable. Conversation- and turn-level metrics are available via control-api, the optional dashboard, and telemetry MCP; the benchmark harness and published dogfood evidence support comparing compression setups on real coding workloads; and the same signals can inform when a local model is enough versus when to use a frontier endpoint.</p>
 <p>Mechanically, it persists completed turns, rebuilds a bounded upstream prompt from versioned working memory plus still-unfolded messages, manages client-attached IDE rules as ephemeral overlays that fold into working memory on compression, and folds older context via Inline wrap-up when soft budget pressure applies — without summarizing on every reply.</p>
 <h2 id="capabilities">Capabilities<a class="headerlink" href="#capabilities" title="Permanent link">&para;</a></h2>
 <ul>
 <li><strong>Virtual Tools</strong> — compact IR tools on the model path; native remap to the client</li>
-<li><strong>Client rules</strong> — extract Cursor/Kilo attached rules each turn; inject pending overlays; fold standing rules into working memory <code>## Rules</code> on Inline accept</li>
+<li><strong>Client rules</strong> — extract IDE-attached rules each turn; inject pending overlays; fold standing rules into working memory <code>## Rules</code> on Inline accept</li>
 <li><strong>Working memory</strong> — versioned compressed context with a tip retain window under soft budget pressure</li>
 <li><strong>Token observability</strong> — control-api metrics, optional dashboard, telemetry MCP</li>
 <li><strong>Benchmark harness</strong> — reproducible two-arm comparisons and published dogfood evidence</li>
