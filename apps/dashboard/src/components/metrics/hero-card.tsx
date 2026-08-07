@@ -45,7 +45,7 @@ export function HeroCard({ tokensSaved }: HeroCardProps) {
         ) : null}
       </p>
       <p className="mt-1 text-xs leading-snug text-slate-500 dark:text-slate-400">
-        SoftBudget net (IR full − prepared)
+        Saved vs full history (full history − prepared)
       </p>
     </div>
   );

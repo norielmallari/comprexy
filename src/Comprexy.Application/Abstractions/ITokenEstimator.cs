@@ -21,4 +21,11 @@ public interface ITokenEstimator
     /// <c>tool_choice</c>, and <c>response_format</c> from <paramref name="requestRoot"/>.
     /// </summary>
     int CountPromptTokens(IEnumerable<ChatMessage> messages, JsonElement? requestRoot = null);
+
+    /// <summary>
+    /// Counts only the <c>tools</c> and <c>functions</c> request properties from
+    /// <paramref name="requestRoot"/> (skips null/undefined). Does not include
+    /// <c>tool_choice</c> or <c>response_format</c>.
+    /// </summary>
+    int CountPromptSideToolsTokens(JsonElement? requestRoot);
 }

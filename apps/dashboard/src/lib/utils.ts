@@ -248,9 +248,11 @@ export function softBudgetBaselineTokens(
 /**
  * Transform turn metrics from the API into chart-ready data points.
  *
- * The stack is the prepared prompt split into system / history+tools / working memory, which the
- * control API derives so the three sum to `compressedInputTokensEstimated`. The ghost bar is the
- * SoftBudget IR-full estimate (no WM fold), falling back to NativeRaw on legacy mixed-axis rows.
+ * The stack is the prepared prompt split into system / virtual tools / client tools /
+ * optional rules / history / working memory, which the control API derives so the named
+ * segments sum to `compressedInputTokensEstimated`. The ghost bar is the SoftBudget IR-full
+ * estimate (no WM fold), falling back to NativeRaw on legacy mixed-axis rows.
+ * `virtualToolsTokensSaved` (VT / native-wire channel) is mapped separately and is not a stack height.
  *
  * @param turns - API turn metrics
  * @returns Chart data points
@@ -262,7 +264,10 @@ export function transformTurnsToChartData(
     turnIndex: turn.turnIndex,
     model: turn.model,
     systemTokens: turn.systemPromptTokensEstimated,
-    historyTokens: turn.historyAndToolsTokensEstimated,
+    virtualToolSchemaTokens: turn.preparedVirtualToolSchemaTokensEstimated,
+    clientToolSchemaTokens: turn.preparedClientToolSchemaTokensEstimated,
+    rulesTokens: turn.preparedRulesTokensEstimated,
+    historyTokens: turn.historyTokensEstimated,
     workingMemoryTokens: turn.workingMemoryTokensEstimated,
     preparedPromptTokens: turn.compressedInputTokensEstimated,
     baselineTokens: softBudgetBaselineTokens(turn),

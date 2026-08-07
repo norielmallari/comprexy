@@ -1,3 +1,5 @@
+using System.Text.Json;
+using Comprexy.Application.Models.Telemetry;
 using Comprexy.Application.Services;
 using Comprexy.ControlApi.Contracts.Metrics;
 using Comprexy.Domain.Entities;
@@ -109,6 +111,65 @@ public class ConversationMetricsMapperTests
         Assert.Null(legacyDto.IrFullInputTokensEstimated);
         Assert.Null(legacyDto.VirtualToolsTokensSaved);
         Assert.True(legacyDto.IsLegacyMixedAxis);
+    }
+
+    [Fact]
+    public void ToTurnDto_SerializesPreparedCatalogSegmentsWithCamelCaseJsonNames()
+    {
+        var turn = CreateTurn(
+            Guid.NewGuid(),
+            turnIndex: 1,
+            raw: 80_000,
+            prepared: 20_000,
+            irFull: 60_000,
+            actualPrompt: 30_000,
+            completion: 1_000);
+        var breakdown = new ConversationTurnContextBreakdown
+        {
+            TurnIndex = 1,
+            SystemPromptTokensEstimated = 100,
+            WorkingMemoryTokensEstimated = 200,
+            PreparedVirtualToolSchemaTokensEstimated = 300,
+            PreparedClientToolSchemaTokensEstimated = 400,
+            PreparedRulesTokensEstimated = 50,
+            HistoryTokensEstimated = 950
+        };
+
+        var dto = ConversationMetricsMapper.ToTurnDto(turn, breakdown, PromptTokenBasis.Estimated);
+        using var document = JsonDocument.Parse(
+            JsonSerializer.Serialize(dto, new JsonSerializerOptions(JsonSerializerDefaults.Web)));
+        var root = document.RootElement;
+
+        Assert.Equal(300, root.GetProperty("preparedVirtualToolSchemaTokensEstimated").GetInt32());
+        Assert.Equal(400, root.GetProperty("preparedClientToolSchemaTokensEstimated").GetInt32());
+        Assert.Equal(50, root.GetProperty("preparedRulesTokensEstimated").GetInt32());
+        Assert.Equal(950, root.GetProperty("historyTokensEstimated").GetInt32());
+        Assert.False(root.TryGetProperty("historyAndToolsTokensEstimated", out _));
+        Assert.NotEqual(
+            dto.VirtualToolsTokensSaved,
+            dto.PreparedVirtualToolSchemaTokensEstimated);
+    }
+
+    [Fact]
+    public void ToTurnDto_NullBreakdown_HistoryFallsBackToCompressedInput_CatalogZero()
+    {
+        var turn = CreateTurn(
+            Guid.NewGuid(),
+            turnIndex: 1,
+            raw: 10_000,
+            prepared: 4_000,
+            irFull: 8_000,
+            actualPrompt: 4_500,
+            completion: 100);
+
+        var dto = ConversationMetricsMapper.ToTurnDto(turn, breakdown: null, PromptTokenBasis.Estimated);
+
+        Assert.Equal(0, dto.SystemPromptTokensEstimated);
+        Assert.Equal(0, dto.WorkingMemoryTokensEstimated);
+        Assert.Equal(0, dto.PreparedVirtualToolSchemaTokensEstimated);
+        Assert.Equal(0, dto.PreparedClientToolSchemaTokensEstimated);
+        Assert.Equal(0, dto.PreparedRulesTokensEstimated);
+        Assert.Equal(4_000, dto.HistoryTokensEstimated);
     }
 
     private static ConversationTurnMetric CreateTurn(

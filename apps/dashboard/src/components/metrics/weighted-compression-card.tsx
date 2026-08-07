@@ -23,7 +23,7 @@ export function WeightedCompressionCard({
       title="Weighted Compression"
       value={displayValue}
       unit="%"
-      description="SoftBudget weighted ratio"
+      description="Weighted vs full history"
     />
   );
 }

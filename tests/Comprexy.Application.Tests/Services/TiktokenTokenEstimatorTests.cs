@@ -65,6 +65,65 @@ public class TiktokenTokenEstimatorTests
     }
 
     [Fact]
+    public void CountPromptSideToolsTokens_IgnoresToolChoice_WhileFullPromptCountIncreases()
+    {
+        var estimator = CreateEstimator();
+        using var toolsOnly = JsonDocument.Parse(
+            """
+            {
+              "messages": [{"role":"user","content":"hi"}],
+              "tools": [
+                {
+                  "type": "function",
+                  "function": {
+                    "name": "lookup",
+                    "description": "Look things up in a very large catalog of items and return matches",
+                    "parameters": {
+                      "type": "object",
+                      "properties": {
+                        "query": { "type": "string", "description": "search query" }
+                      }
+                    }
+                  }
+                }
+              ]
+            }
+            """);
+        using var toolsAndChoice = JsonDocument.Parse(
+            """
+            {
+              "messages": [{"role":"user","content":"hi"}],
+              "tools": [
+                {
+                  "type": "function",
+                  "function": {
+                    "name": "lookup",
+                    "description": "Look things up in a very large catalog of items and return matches",
+                    "parameters": {
+                      "type": "object",
+                      "properties": {
+                        "query": { "type": "string", "description": "search query" }
+                      }
+                    }
+                  }
+                }
+              ],
+              "tool_choice": "auto"
+            }
+            """);
+
+        var message = new ChatMessage(MessageRole.User, "hi");
+        var toolsOnlySide = estimator.CountPromptSideToolsTokens(toolsOnly.RootElement);
+        var toolsAndChoiceSide = estimator.CountPromptSideToolsTokens(toolsAndChoice.RootElement);
+        var toolsOnlyFull = estimator.CountPromptTokens([message], toolsOnly.RootElement);
+        var toolsAndChoiceFull = estimator.CountPromptTokens([message], toolsAndChoice.RootElement);
+
+        Assert.True(toolsOnlySide > 0);
+        Assert.Equal(toolsOnlySide, toolsAndChoiceSide);
+        Assert.True(toolsAndChoiceFull > toolsOnlyFull);
+    }
+
+    [Fact]
     public void CountTokens_UsesCache_OnRepeatedMessage()
     {
         var cache = new CountingTokenEstimateCache();

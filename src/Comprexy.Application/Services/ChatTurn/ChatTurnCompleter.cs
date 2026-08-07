@@ -158,7 +158,13 @@ public sealed class ChatTurnCompleter
                     prepared.MetricsPrepare.RequestHash,
                     MetricsPayloadHasher.HashJsonElement(sentPayload),
                     timing.ToTurnTimings(),
-                    prepared.MetricsPrepare.IrFullInputTokensEstimated),
+                    prepared.MetricsPrepare.IrFullInputTokensEstimated,
+                    PreparedVirtualToolSchemaTokensEstimated:
+                        prepared.MetricsPrepare.PreparedVirtualToolSchemaTokensEstimated,
+                    PreparedClientToolSchemaTokensEstimated:
+                        prepared.MetricsPrepare.PreparedClientToolSchemaTokensEstimated,
+                    PreparedRulesTokensEstimated:
+                        prepared.MetricsPrepare.PreparedRulesTokensEstimated),
                 cancellationToken);
         }
 

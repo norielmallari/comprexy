@@ -80,6 +80,25 @@ public class ConversationTurnMetric : EntityBase
     /// </summary>
     public int? PrepareDurationMs { get; private set; }
 
+    /// <summary>
+    /// Tiktoken estimate of model-facing Virtual IR tool defs plus conversation-id meta,
+    /// captured on the final prepared estimate payload. Zero when VT was off / N/A.
+    /// Distinct from <see cref="VirtualToolsTokensSaved"/> (NativeRaw − IrFull channel).
+    /// </summary>
+    public int PreparedVirtualToolSchemaTokensEstimated { get; private set; }
+
+    /// <summary>
+    /// Tiktoken estimate of client passthrough tool defs on the prepared catalog
+    /// (or tools/functions on the wire when VT rewrite did not run).
+    /// </summary>
+    public int PreparedClientToolSchemaTokensEstimated { get; private set; }
+
+    /// <summary>
+    /// Tiktoken estimate of ephemeral pending rule messages injected at prepare.
+    /// Zero when none were pending.
+    /// </summary>
+    public int PreparedRulesTokensEstimated { get; private set; }
+
     public DateTimeOffset CreatedAt { get; private set; }
 
     private ConversationTurnMetric()
@@ -107,7 +126,10 @@ public class ConversationTurnMetric : EntityBase
         int? upstreamDurationMs,
         int? prepareDurationMs,
         DateTimeOffset createdAt,
-        int? irFullInputTokensEstimated = null)
+        int? irFullInputTokensEstimated = null,
+        int preparedVirtualToolSchemaTokensEstimated = 0,
+        int preparedClientToolSchemaTokensEstimated = 0,
+        int preparedRulesTokensEstimated = 0)
     {
         // SoftBudget: IrFull vs Prepared when IrFull present; legacy null IrFull keeps NativeRaw vs Prepared.
         // ActualPromptTokens is accuracy-only — never enters persisted NetTokensSaved.
@@ -150,6 +172,9 @@ public class ConversationTurnMetric : EntityBase
             DurationMs = durationMs,
             UpstreamDurationMs = upstreamDurationMs,
             PrepareDurationMs = prepareDurationMs,
+            PreparedVirtualToolSchemaTokensEstimated = preparedVirtualToolSchemaTokensEstimated,
+            PreparedClientToolSchemaTokensEstimated = preparedClientToolSchemaTokensEstimated,
+            PreparedRulesTokensEstimated = preparedRulesTokensEstimated,
             CreatedAt = createdAt
         };
     }

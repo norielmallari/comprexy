@@ -9,7 +9,10 @@ const makePoint = (partial: Partial<ChartDataPoint> = {}): ChartDataPoint => ({
   turnIndex: 1,
   model: 'gpt-4',
   systemTokens: 3000,
-  historyTokens: 5000,
+  virtualToolSchemaTokens: 400,
+  clientToolSchemaTokens: 300,
+  rulesTokens: 0,
+  historyTokens: 4300,
   workingMemoryTokens: 2000,
   preparedPromptTokens: 10000,
   baselineTokens: 14000,
@@ -23,11 +26,26 @@ const makePoint = (partial: Partial<ChartDataPoint> = {}): ChartDataPoint => ({
   ...partial,
 });
 
+const stackSum = (row: {
+  system: number;
+  virtualTools: number;
+  clientTools: number;
+  rules: number;
+  history: number;
+  workingMemory: number;
+}): number =>
+  row.system +
+  row.virtualTools +
+  row.clientTools +
+  row.rules +
+  row.history +
+  row.workingMemory;
+
 const mockData: ChartDataPoint[] = [
   makePoint(),
   makePoint({
     turnIndex: 2,
-    historyTokens: 7000,
+    historyTokens: 6300,
     preparedPromptTokens: 12000,
     baselineTokens: 17000,
     netTokensSaved: 5000,
@@ -90,7 +108,7 @@ describe('BarChart', () => {
     const chart = screen.getByTestId('token-counts-by-turn-chart');
     expect(chart).toHaveAttribute('role', 'img');
     expect(chart.getAttribute('aria-label')).toMatch(/2 turns/);
-    expect(chart.getAttribute('aria-label')).toMatch(/SoftBudget IR full/);
+    expect(chart.getAttribute('aria-label')).toMatch(/Full History Est\./);
   });
 
   it('renders empty state when no data', () => {
@@ -116,14 +134,21 @@ describe('BarChart', () => {
     expect(screen.queryByText('Token Counts by Turn')).not.toBeInTheDocument();
   });
 
-  it('stacks only the three prepared-prompt segments on one stackId', () => {
+  it('stacks prepared-prompt catalog and history segments on one stackId', () => {
     render(<BarChart data={mockData} />);
 
-    const segments = ['system', 'history', 'workingMemory'];
+    const segments = [
+      'system',
+      'virtualTools',
+      'clientTools',
+      'history',
+      'workingMemory',
+    ];
     for (const key of segments) {
       expect(screen.getByTestId(`recharts-bar-${key}`)).toHaveAttribute('data-stackid', 'prompt');
     }
 
+    expect(screen.queryByTestId('recharts-bar-rules')).not.toBeInTheDocument();
     // The old chart double-counted the prompt via extra prompt/overhead segments.
     expect(screen.queryByTestId('recharts-bar-prompt')).not.toBeInTheDocument();
     expect(screen.queryByTestId('recharts-bar-overhead')).not.toBeInTheDocument();
@@ -132,9 +157,19 @@ describe('BarChart', () => {
   it('emits segment values that sum to the prepared prompt', () => {
     render(<BarChart data={mockData} />);
 
-    const rows = JSON.parse(screen.getByTestId('recharts-data').textContent || '[]');
+    const rows = JSON.parse(
+      screen.getByTestId('recharts-data').textContent || '[]',
+    ) as Array<{
+      system: number;
+      virtualTools: number;
+      clientTools: number;
+      rules: number;
+      history: number;
+      workingMemory: number;
+      preparedPromptTokens: number;
+    }>;
     for (const row of rows) {
-      expect(row.system + row.history + row.workingMemory).toBe(row.preparedPromptTokens);
+      expect(stackSum(row)).toBe(row.preparedPromptTokens);
     }
   });
 
@@ -145,14 +180,16 @@ describe('BarChart', () => {
           makePoint({
             workingMemoryVersion: null,
             workingMemoryTokens: 0,
-            historyTokens: 7000,
+            historyTokens: 6300,
           }),
         ]}
       />,
     );
 
-    const rows = JSON.parse(screen.getByTestId('recharts-data').textContent || '[]');
-    expect(rows[0].workingMemory).toBe(0);
+    const rows = JSON.parse(
+      screen.getByTestId('recharts-data').textContent || '[]',
+    ) as Array<{ workingMemory: number }>;
+    expect(rows[0]?.workingMemory).toBe(0);
   });
 
   it('renders the ghost bar outside the stack on its own hidden axis', () => {
@@ -194,11 +231,33 @@ describe('BarChart', () => {
     render(<BarChart data={mockData} />);
 
     expect(screen.getByText('System')).toBeInTheDocument();
-    expect(screen.getByText('History + tools')).toBeInTheDocument();
+    expect(screen.getByText('Virtual tools')).toBeInTheDocument();
+    expect(screen.getByText('Client tools')).toBeInTheDocument();
+    expect(screen.getByText('History')).toBeInTheDocument();
     expect(screen.getByText('Compressed WM')).toBeInTheDocument();
-    expect(screen.getByText('SoftBudget (IR full)')).toBeInTheDocument();
+    expect(screen.getByText('Full History Est.')).toBeInTheDocument();
+    expect(screen.queryByText('Rules')).not.toBeInTheDocument();
+    expect(screen.queryByText('History + tools')).not.toBeInTheDocument();
+    expect(screen.queryByText('VT / native-wire')).not.toBeInTheDocument();
     expect(screen.queryByText('Overhead')).not.toBeInTheDocument();
     expect(screen.queryByText('Prompt')).not.toBeInTheDocument();
+  });
+
+  it('includes Rules in the stack and legend when any turn has rulesTokens > 0', () => {
+    render(
+      <BarChart
+        data={[
+          makePoint({
+            rulesTokens: 200,
+            historyTokens: 4100,
+            preparedPromptTokens: 10000,
+          }),
+        ]}
+      />,
+    );
+
+    expect(screen.getByText('Rules')).toBeInTheDocument();
+    expect(screen.getByTestId('recharts-bar-rules')).toHaveAttribute('data-stackid', 'prompt');
   });
 
   it('renders footer note', () => {

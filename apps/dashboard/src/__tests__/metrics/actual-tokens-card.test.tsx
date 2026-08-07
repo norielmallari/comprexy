@@ -51,12 +51,12 @@ describe('ActualTokensCard', () => {
     ).toBeInTheDocument();
   });
 
-  it('describes SoftBudget prepared path without renaming the region', () => {
+  it('describes prepared path without renaming the region', () => {
     render(<ActualTokensCard totalActualTokensEstimated={1000} />);
 
     const region = screen.getByRole('region', { name: 'Actual (combined)' });
     expect(region).toHaveTextContent(
-      'SoftBudget prepared + completion + overhead',
+      'Prepared + completion + overhead',
     );
     expect(
       screen.queryByRole('region', { name: 'Actual Tokens' }),

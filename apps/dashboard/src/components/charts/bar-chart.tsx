@@ -1,9 +1,9 @@
 /**
  * BarChart component — stacked vertical bar chart for SoftBudget compression metrics.
  *
- * Each bar is the prompt actually prepared for a turn, split into system prompt,
- * history + tools, and working memory. A ghost bar behind the stack shows the
- * SoftBudget IR-full estimate (no WM fold) for the same turn.
+ * Each bar is the prompt actually prepared for a turn, split into system, virtual tools,
+ * client tools, optional rules, history, and working memory. A ghost bar behind the stack
+ * shows the SoftBudget IR-full estimate (no WM fold) for the same turn.
  */
 
 'use client';
@@ -24,16 +24,17 @@ import {
   CHART_WIDTH,
   CHART_Y_AXIS_MIN,
   CHART_Y_AXIS_MAX_DEFAULT,
-  WM_COLORS_LIGHT,
-  WM_COLORS_DARK,
-  SYSTEM_SEGMENT_COLOR,
-  HISTORY_SEGMENT_COLOR,
+  getPreparedSegmentColors,
   CHART_SEGMENT_STROKE_LIGHT,
   CHART_SEGMENT_STROKE_DARK,
   CHART_SEGMENT_STROKE_WIDTH,
   GHOST_BAR_STROKE_LIGHT,
   GHOST_BAR_STROKE_DARK,
-  SOFTBUDGET_GHOST_LABEL,
+  FULL_HISTORY_EST_LABEL,
+  VIRTUAL_TOOLS_STACK_LABEL,
+  CLIENT_TOOLS_STACK_LABEL,
+  RULES_STACK_LABEL,
+  HISTORY_STACK_LABEL,
 } from '@/lib/constants';
 import { formatCompactNumber } from '@/lib/utils';
 import { ChartLegend } from './chart-legend';
@@ -66,27 +67,39 @@ function transformChartData(data: ChartDataPoint[]): Record<string, unknown>[] {
   return data.map((point) => ({
     ...point,
     system: point.systemTokens,
+    virtualTools: point.virtualToolSchemaTokens,
+    clientTools: point.clientToolSchemaTokens,
+    rules: point.rulesTokens,
     history: point.historyTokens,
     workingMemory: point.workingMemoryTokens,
     baseline: point.baselineTokens,
   }));
 }
 
-function getWorkingMemoryColor(isDark: boolean): string {
-  return isDark ? WM_COLORS_DARK[3] : WM_COLORS_LIGHT[3];
+function seriesHasRules(data: ChartDataPoint[]): boolean {
+  return data.some((point) => point.rulesTokens > 0);
 }
 
-function getLegendItems(isDark: boolean): ChartLegendItem[] {
-  return [
-    { label: 'System', color: SYSTEM_SEGMENT_COLOR },
-    { label: 'History + tools', color: HISTORY_SEGMENT_COLOR },
-    { label: 'Compressed WM', color: getWorkingMemoryColor(isDark) },
+function getLegendItems(isDark: boolean, includeRules: boolean): ChartLegendItem[] {
+  const colors = getPreparedSegmentColors(isDark);
+  const items: ChartLegendItem[] = [
+    { label: 'System', color: colors.system },
+    { label: VIRTUAL_TOOLS_STACK_LABEL, color: colors.virtualToolSchema },
+    { label: CLIENT_TOOLS_STACK_LABEL, color: colors.clientToolSchema },
+  ];
+  if (includeRules) {
+    items.push({ label: RULES_STACK_LABEL, color: colors.rules });
+  }
+  items.push(
+    { label: HISTORY_STACK_LABEL, color: colors.history },
+    { label: 'Compressed WM', color: colors.workingMemory },
     {
-      label: SOFTBUDGET_GHOST_LABEL,
+      label: FULL_HISTORY_EST_LABEL,
       color: isDark ? GHOST_BAR_STROKE_DARK : GHOST_BAR_STROKE_LIGHT,
       outlined: true,
     },
-  ];
+  );
+  return items;
 }
 
 /**
@@ -120,6 +133,7 @@ export function BarChart({
   });
 
   const chartData = useMemo(() => transformChartData(data), [data]);
+  const includeRules = useMemo(() => seriesHasRules(data), [data]);
 
   // Both series share one y-axis, so the domain must cover the taller of ghost and stack.
   const yMax = useMemo(() => {
@@ -133,7 +147,10 @@ export function BarChart({
     return Math.ceil(maxVal * 1.1);
   }, [data, sharedMaxY]);
 
-  const legendItems = useMemo(() => getLegendItems(isDark), [isDark]);
+  const legendItems = useMemo(
+    () => getLegendItems(isDark, includeRules),
+    [isDark, includeRules],
+  );
   const shellClass = fill
     ? 'flex h-full min-h-0 flex-col gap-2'
     : 'flex flex-col gap-2';
@@ -141,6 +158,8 @@ export function BarChart({
   const fallbackBoxStyle = fill
     ? undefined
     : { width: CHART_WIDTH, height: CHART_HEIGHT };
+  const segmentStroke = isDark ? CHART_SEGMENT_STROKE_DARK : CHART_SEGMENT_STROKE_LIGHT;
+  const segmentColors = getPreparedSegmentColors(isDark);
 
   if (data.length === 0 && !isLoading) {
     return (
@@ -186,7 +205,7 @@ export function BarChart({
 
       <div
         role="img"
-        aria-label={`Prepared prompt tokens per turn across ${data.length} turns, with SoftBudget IR full (no WM fold) as the ghost baseline behind each bar`}
+        aria-label={`Prepared prompt tokens per turn across ${data.length} turns, with Full History Est. (no WM fold) as the ghost baseline behind each bar`}
         data-testid={testId}
         className={fill ? 'min-h-0 flex-1' : undefined}
       >
@@ -237,7 +256,7 @@ export function BarChart({
 
             {/* Declared first so it paints behind the stacked segments. */}
             <Bar
-              name={SOFTBUDGET_GHOST_LABEL}
+              name={FULL_HISTORY_EST_LABEL}
               {...getGhostBarProps({
                 dataKey: 'baseline',
                 xAxisId: GHOST_X_AXIS_ID,
@@ -249,24 +268,50 @@ export function BarChart({
               name="System"
               dataKey="system"
               stackId="prompt"
-              fill={SYSTEM_SEGMENT_COLOR}
-              stroke={isDark ? CHART_SEGMENT_STROKE_DARK : CHART_SEGMENT_STROKE_LIGHT}
+              fill={segmentColors.system}
+              stroke={segmentStroke}
               strokeWidth={CHART_SEGMENT_STROKE_WIDTH}
             />
             <Bar
-              name="History + tools"
+              name={VIRTUAL_TOOLS_STACK_LABEL}
+              dataKey="virtualTools"
+              stackId="prompt"
+              fill={segmentColors.virtualToolSchema}
+              stroke={segmentStroke}
+              strokeWidth={CHART_SEGMENT_STROKE_WIDTH}
+            />
+            <Bar
+              name={CLIENT_TOOLS_STACK_LABEL}
+              dataKey="clientTools"
+              stackId="prompt"
+              fill={segmentColors.clientToolSchema}
+              stroke={segmentStroke}
+              strokeWidth={CHART_SEGMENT_STROKE_WIDTH}
+            />
+            {includeRules && (
+              <Bar
+                name={RULES_STACK_LABEL}
+                dataKey="rules"
+                stackId="prompt"
+                fill={segmentColors.rules}
+                stroke={segmentStroke}
+                strokeWidth={CHART_SEGMENT_STROKE_WIDTH}
+              />
+            )}
+            <Bar
+              name={HISTORY_STACK_LABEL}
               dataKey="history"
               stackId="prompt"
-              fill={HISTORY_SEGMENT_COLOR}
-              stroke={isDark ? CHART_SEGMENT_STROKE_DARK : CHART_SEGMENT_STROKE_LIGHT}
+              fill={segmentColors.history}
+              stroke={segmentStroke}
               strokeWidth={CHART_SEGMENT_STROKE_WIDTH}
             />
             <Bar
               name="Compressed WM"
               dataKey="workingMemory"
               stackId="prompt"
-              fill={getWorkingMemoryColor(isDark)}
-              stroke={isDark ? CHART_SEGMENT_STROKE_DARK : CHART_SEGMENT_STROKE_LIGHT}
+              fill={segmentColors.workingMemory}
+              stroke={segmentStroke}
               strokeWidth={CHART_SEGMENT_STROKE_WIDTH}
               radius={[4, 4, 0, 0]}
             />
@@ -277,7 +322,7 @@ export function BarChart({
       {!compact && (
         <p className="shrink-0 text-xs text-gray-500 dark:text-gray-400">
           Bars show the prompt Comprexy actually prepared for each turn. The dashed ghost behind each
-          bar is SoftBudget IR full (no WM fold). On legacy turns without IrFull, the ghost falls back
+          bar is Full History Est. (no WM fold). On legacy turns without IrFull, the ghost falls back
           to NativeRaw. Compressed WM stays empty until the first working memory version exists.
         </p>
       )}

@@ -69,7 +69,8 @@ public sealed class ConversationMetricsQueryService : IConversationMetricsQueryS
             cancellationToken);
 
         // Conversation.SystemPrompt stores BaseSystem (rules stripped). When BaseSystem was not
-        // captured, System is 0; injected rule tokens land in the history/tools residual below.
+        // captured, System is 0. Catalog/rules segments are persisted at prepare; history residual
+        // soaks array framing, tool_choice/response_format, and any ProviderActual gap.
         var systemPromptTokens = string.IsNullOrWhiteSpace(conversation?.SystemPrompt)
             ? 0
             : _tokenEstimator.CountTokens(conversation.SystemPrompt);
@@ -90,18 +91,29 @@ public sealed class ConversationMetricsQueryService : IConversationMetricsQueryS
                         ? actual
                         : turn.CompressedInputTokensEstimated;
 
-                // Clamp only the residual: system + WM can exceed a tiny prepared prompt when the
-                // captured prompt was re-estimated with a different encoding.
-                var remainder = Math.Max(
+                var virtualCatalog = turn.PreparedVirtualToolSchemaTokensEstimated;
+                var clientCatalog = turn.PreparedClientToolSchemaTokensEstimated;
+                var rulesTokens = turn.PreparedRulesTokensEstimated;
+
+                // Clamp only the residual: named segments stay at prepare/stored estimates.
+                var historyTokens = Math.Max(
                     0,
-                    preparedPromptTokens - systemPromptTokens - workingMemoryTokens);
+                    preparedPromptTokens
+                    - systemPromptTokens
+                    - workingMemoryTokens
+                    - virtualCatalog
+                    - clientCatalog
+                    - rulesTokens);
 
                 return new ConversationTurnContextBreakdown
                 {
                     TurnIndex = turn.TurnIndex,
                     SystemPromptTokensEstimated = systemPromptTokens,
                     WorkingMemoryTokensEstimated = workingMemoryTokens,
-                    HistoryAndToolsTokensEstimated = remainder
+                    PreparedVirtualToolSchemaTokensEstimated = virtualCatalog,
+                    PreparedClientToolSchemaTokensEstimated = clientCatalog,
+                    PreparedRulesTokensEstimated = rulesTokens,
+                    HistoryTokensEstimated = historyTokens
                 };
             })
             .ToList();

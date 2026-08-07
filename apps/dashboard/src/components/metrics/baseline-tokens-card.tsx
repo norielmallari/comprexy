@@ -32,7 +32,7 @@ export function BaselineTokensCard({
           : '—'
       }
       unit="tokens"
-      description="SoftBudget IR full + completion"
+      description="Full History Est. + completion"
       costOverlay={formatTokenCostOverlay(totalBaselineTokensEstimated, model, 'input')}
     />
   );

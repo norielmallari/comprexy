@@ -339,7 +339,10 @@ const makeTurn = (
   compressedInputTokensEstimated: 2000,
   systemPromptTokensEstimated: 300,
   workingMemoryTokensEstimated: 700,
-  historyAndToolsTokensEstimated: 1000,
+  preparedVirtualToolSchemaTokensEstimated: 200,
+  preparedClientToolSchemaTokensEstimated: 100,
+  preparedRulesTokensEstimated: 0,
+  historyTokensEstimated: 700,
   actualPromptTokens: 1000,
   actualCompletionTokens: 500,
   baselineTotalTokensEstimated: 5000,
@@ -372,7 +375,10 @@ describe('transformTurnsToChartData()', () => {
     expect(point.turnIndex).toBe(1);
     expect(point.model).toBe('gpt-4');
     expect(point.systemTokens).toBe(300);
-    expect(point.historyTokens).toBe(1000);
+    expect(point.virtualToolSchemaTokens).toBe(200);
+    expect(point.clientToolSchemaTokens).toBe(100);
+    expect(point.rulesTokens).toBe(0);
+    expect(point.historyTokens).toBe(700);
     expect(point.workingMemoryTokens).toBe(700);
     expect(point.preparedPromptTokens).toBe(2000);
     expect(point.baselineTokens).toBe(4500);
@@ -388,32 +394,77 @@ describe('transformTurnsToChartData()', () => {
   it('stacks segments that sum to the prepared prompt', () => {
     const point = transformTurnsToChartData([makeTurn()])[0];
 
-    expect(point.systemTokens + point.historyTokens + point.workingMemoryTokens).toBe(
-      point.preparedPromptTokens,
-    );
+    expect(
+      point.systemTokens +
+        point.virtualToolSchemaTokens +
+        point.clientToolSchemaTokens +
+        point.rulesTokens +
+        point.historyTokens +
+        point.workingMemoryTokens,
+    ).toBe(point.preparedPromptTokens);
+  });
+
+  it('keeps SoftBudget ghost and VT channel separate from catalog segments', () => {
+    const point = transformTurnsToChartData([
+      makeTurn({
+        preparedVirtualToolSchemaTokensEstimated: 200,
+        virtualToolsTokensSaved: 500,
+        irFullInputTokensEstimated: 4500,
+      }),
+    ])[0];
+
+    expect(point.baselineTokens).toBe(4500);
+    expect(point.virtualToolsTokensSaved).toBe(500);
+    expect(point.virtualToolSchemaTokens).toBe(200);
+    expect(point.virtualToolsTokensSaved).not.toBe(point.virtualToolSchemaTokens);
+  });
+
+  it('maps optional rules into the prepared stack when non-zero', () => {
+    const point = transformTurnsToChartData([
+      makeTurn({
+        preparedRulesTokensEstimated: 50,
+        historyTokensEstimated: 650,
+      }),
+    ])[0];
+
+    expect(point.rulesTokens).toBe(50);
+    expect(
+      point.systemTokens +
+        point.virtualToolSchemaTokens +
+        point.clientToolSchemaTokens +
+        point.rulesTokens +
+        point.historyTokens +
+        point.workingMemoryTokens,
+    ).toBe(point.preparedPromptTokens);
   });
 
   it('leaves the working memory segment empty before the first version exists', () => {
     const turn = makeTurn({
       workingMemoryVersionUsed: null,
       workingMemoryTokensEstimated: 0,
-      historyAndToolsTokensEstimated: 1700,
+      historyTokensEstimated: 1400,
     });
 
     const point = transformTurnsToChartData([turn])[0];
 
     expect(point.workingMemoryVersion).toBeNull();
     expect(point.workingMemoryTokens).toBe(0);
-    expect(point.systemTokens + point.historyTokens).toBe(point.preparedPromptTokens);
+    expect(
+      point.systemTokens +
+        point.virtualToolSchemaTokens +
+        point.clientToolSchemaTokens +
+        point.rulesTokens +
+        point.historyTokens,
+    ).toBe(point.preparedPromptTokens);
   });
 
   it('holds the system segment constant across turns', () => {
     const points = transformTurnsToChartData([
-      makeTurn({ turnIndex: 1, historyAndToolsTokensEstimated: 1000 }),
+      makeTurn({ turnIndex: 1, historyTokensEstimated: 700 }),
       makeTurn({
         turnIndex: 2,
         compressedInputTokensEstimated: 9000,
-        historyAndToolsTokensEstimated: 8000,
+        historyTokensEstimated: 7700,
         actualPromptTokens: 8500,
       }),
     ]);

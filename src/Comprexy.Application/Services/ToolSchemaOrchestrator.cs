@@ -172,6 +172,8 @@ public class ToolSchemaOrchestrator
     }
 
     /// <summary>Allowlisted ToolSchema knobs from sticky effective when set; else live monitor.</summary>
+    internal ToolSchemaOptions EffectiveOptions => Options;
+
     private ToolSchemaOptions Options
     {
         get
@@ -1298,30 +1300,16 @@ public class ToolSchemaOrchestrator
             root = new JsonObject();
         }
 
+        var (virtualAndMeta, clientPassthrough) =
+            PreparedToolCatalogPartition.BuildModelFacingToolDefinitions(session, Options);
         var tools = new JsonArray();
-        foreach (var name in VirtualToolRegistry.VirtualToolNames.OrderBy(n => n, StringComparer.Ordinal))
+        foreach (var wireJson in virtualAndMeta)
         {
-            if (session.BoundVirtualToolNames.Contains(name))
-            {
-                tools.Add(ToolIrVirtualToolDefinitions.ParseWire(name, Options));
-            }
+            tools.Add(JsonNode.Parse(wireJson)!);
         }
 
-        tools.Add(JsonNode.Parse(ToolSchemaConstants.ConversationIdMetaToolWireJson)!);
-
-        foreach (var (toolName, definitionJson) in session.FullDefinitionsByName
-                     .OrderBy(kv => kv.Key, StringComparer.Ordinal))
+        foreach (var definitionJson in clientPassthrough)
         {
-            if (session.IsHiddenFromModelClientTool(toolName))
-            {
-                continue;
-            }
-
-            if (ToolSchemaConstants.IsReservedToolName(toolName))
-            {
-                continue;
-            }
-
             var node = JsonNode.Parse(definitionJson);
             if (node is not null)
             {

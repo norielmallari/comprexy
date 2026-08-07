@@ -533,13 +533,21 @@ public class ConversationMetricsTelemetryTests
             {
                 Assert.Equal(300, first.SystemPromptTokensEstimated);
                 Assert.Equal(0, first.WorkingMemoryTokensEstimated);
-                Assert.Equal(4_700, first.HistoryAndToolsTokensEstimated);
+                Assert.Equal(0, first.PreparedVirtualToolSchemaTokensEstimated);
+                Assert.Equal(0, first.PreparedClientToolSchemaTokensEstimated);
+                Assert.Equal(0, first.PreparedRulesTokensEstimated);
+                Assert.Equal(4_700, first.HistoryTokensEstimated);
+                AssertReconciles(first, preparedBasis: 5_000);
             },
             second =>
             {
                 Assert.Equal(300, second.SystemPromptTokensEstimated);
                 Assert.Equal(800, second.WorkingMemoryTokensEstimated);
-                Assert.Equal(2_900, second.HistoryAndToolsTokensEstimated);
+                Assert.Equal(0, second.PreparedVirtualToolSchemaTokensEstimated);
+                Assert.Equal(0, second.PreparedClientToolSchemaTokensEstimated);
+                Assert.Equal(0, second.PreparedRulesTokensEstimated);
+                Assert.Equal(2_900, second.HistoryTokensEstimated);
+                AssertReconciles(second, preparedBasis: 4_000);
             });
     }
 
@@ -562,13 +570,145 @@ public class ConversationMetricsTelemetryTests
 
         Assert.Equal(0, breakdown.SystemPromptTokensEstimated);
         Assert.Equal(1_200, breakdown.WorkingMemoryTokensEstimated);
-        Assert.Equal(11_145, breakdown.HistoryAndToolsTokensEstimated);
+        Assert.Equal(0, breakdown.PreparedVirtualToolSchemaTokensEstimated);
+        Assert.Equal(0, breakdown.PreparedClientToolSchemaTokensEstimated);
+        Assert.Equal(0, breakdown.PreparedRulesTokensEstimated);
+        Assert.Equal(11_145, breakdown.HistoryTokensEstimated);
+        AssertReconciles(breakdown, preparedBasis: 12_345);
+        _tokenEstimator.Verify(x => x.CountTokens(It.IsAny<string>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task ListTurnContextBreakdownsAsync_NamedCatalogSegments_SubtractFromHistoryResidual()
+    {
+        var id = Guid.NewGuid();
+        var conversation = Conversation.Create("key", DateTimeOffset.UnixEpoch);
+        conversation.CaptureSystemPromptIfAbsent("system prompt");
+        _conversations
+            .Setup(x => x.FindByIdAsync(id, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(conversation);
+        _tokenEstimator.Setup(x => x.CountTokens("system prompt")).Returns(100);
+        _workingMemories
+            .Setup(x => x.ListVersionTokenCountsAsync(id, It.IsAny<CancellationToken>()))
+            .ReturnsAsync([new WorkingMemoryVersionTokens { Version = 1, TokenCount = 200 }]);
+        _turns
+            .Setup(x => x.ListByConversationIdAsync(id, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(
+            [
+                TelemetryTestData.TurnMetric(
+                    id,
+                    1,
+                    compressedInput: 2_000,
+                    workingMemoryVersion: 1,
+                    preparedVirtual: 300,
+                    preparedClient: 400,
+                    preparedRules: 50)
+            ]);
+
+        var breakdown = Assert.Single(
+            await CreateService().ListTurnContextBreakdownsAsync(id, CancellationToken.None));
+
+        Assert.Equal(300, breakdown.PreparedVirtualToolSchemaTokensEstimated);
+        Assert.Equal(400, breakdown.PreparedClientToolSchemaTokensEstimated);
+        Assert.Equal(50, breakdown.PreparedRulesTokensEstimated);
+        Assert.Equal(950, breakdown.HistoryTokensEstimated);
+        AssertReconciles(breakdown, preparedBasis: 2_000);
+    }
+
+    [Fact]
+    public async Task ListTurnContextBreakdownsAsync_ProviderActual_NamedSegmentsUnscaled_ResidualSoaksGap()
+    {
+        var id = Guid.NewGuid();
+        var conversation = Conversation.Create("key", DateTimeOffset.UnixEpoch);
+        conversation.CaptureSystemPromptIfAbsent("system prompt");
+        _conversations
+            .Setup(x => x.FindByIdAsync(id, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(conversation);
+        _tokenEstimator.Setup(x => x.CountTokens("system prompt")).Returns(100);
+        _workingMemories
+            .Setup(x => x.ListVersionTokenCountsAsync(id, It.IsAny<CancellationToken>()))
+            .ReturnsAsync([new WorkingMemoryVersionTokens { Version = 1, TokenCount = 200 }]);
+        _turns
+            .Setup(x => x.ListByConversationIdAsync(id, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(
+            [
+                TelemetryTestData.TurnMetric(
+                    id,
+                    1,
+                    compressedInput: 2_000,
+                    workingMemoryVersion: 1,
+                    actualPrompt: 3_000,
+                    preparedVirtual: 300,
+                    preparedClient: 400,
+                    preparedRules: 50)
+            ]);
+
+        var breakdown = Assert.Single(
+            await CreateService(PromptTokenBasis.ProviderActual)
+                .ListTurnContextBreakdownsAsync(id, CancellationToken.None));
+
+        Assert.Equal(300, breakdown.PreparedVirtualToolSchemaTokensEstimated);
+        Assert.Equal(400, breakdown.PreparedClientToolSchemaTokensEstimated);
+        Assert.Equal(50, breakdown.PreparedRulesTokensEstimated);
+        // 3000 − 100 − 200 − 300 − 400 − 50 = 1950 (soaks Actual−Compressed gap)
+        Assert.Equal(1_950, breakdown.HistoryTokensEstimated);
+        AssertReconciles(breakdown, preparedBasis: 3_000);
+    }
+
+    [Fact]
+    public void Create_VirtualToolsTokensSaved_DiffersFromPreparedVirtualCatalogWhenBothNonZero()
+    {
+        var turn = ConversationTurnMetric.Create(
+            Guid.NewGuid(),
+            turnIndex: 1,
+            requestStartedAt: DateTimeOffset.UnixEpoch,
+            model: "test-model",
+            rawInputTokensEstimated: 80_000,
+            compressedInputTokensEstimated: 20_000,
+            actualPromptTokens: 25_000,
+            actualCompletionTokens: 500,
+            softBudgetExceeded: false,
+            hardBudgetExceeded: false,
+            trimTriggered: false,
+            workingMemoryVersionUsed: 1,
+            rawMessageCount: 10,
+            sentMessageCount: 5,
+            requestHash: "r1",
+            sentPayloadHash: "s1",
+            durationMs: 100,
+            upstreamDurationMs: 70,
+            prepareDurationMs: 20,
+            createdAt: DateTimeOffset.UnixEpoch,
+            irFullInputTokensEstimated: 60_000,
+            preparedVirtualToolSchemaTokensEstimated: 1_200,
+            preparedClientToolSchemaTokensEstimated: 800,
+            preparedRulesTokensEstimated: 40);
+
+        Assert.Equal(20_000, turn.VirtualToolsTokensSaved);
+        Assert.Equal(1_200, turn.PreparedVirtualToolSchemaTokensEstimated);
+        Assert.NotEqual(turn.VirtualToolsTokensSaved, turn.PreparedVirtualToolSchemaTokensEstimated);
+    }
+
+    private static void AssertReconciles(ConversationTurnContextBreakdown breakdown, int preparedBasis)
+    {
         Assert.Equal(
-            12_345,
+            preparedBasis,
             breakdown.SystemPromptTokensEstimated
                 + breakdown.WorkingMemoryTokensEstimated
-                + breakdown.HistoryAndToolsTokensEstimated);
-        _tokenEstimator.Verify(x => x.CountTokens(It.IsAny<string>()), Times.Never);
+                + breakdown.PreparedVirtualToolSchemaTokensEstimated
+                + breakdown.PreparedClientToolSchemaTokensEstimated
+                + breakdown.PreparedRulesTokensEstimated
+                + breakdown.HistoryTokensEstimated);
+        Assert.Equal(
+            Math.Max(
+                0,
+                preparedBasis
+                    - breakdown.SystemPromptTokensEstimated
+                    - breakdown.WorkingMemoryTokensEstimated
+                    - breakdown.PreparedVirtualToolSchemaTokensEstimated
+                    - breakdown.PreparedClientToolSchemaTokensEstimated
+                    - breakdown.PreparedRulesTokensEstimated),
+            breakdown.HistoryTokensEstimated);
     }
 
     private ConversationMetricsQueryService CreateService(
@@ -690,7 +830,10 @@ internal static class TelemetryTestData
         int? rawInput = null,
         int? irFull = null,
         int? actualPrompt = null,
-        int completion = 0) =>
+        int completion = 0,
+        int preparedVirtual = 0,
+        int preparedClient = 0,
+        int preparedRules = 0) =>
         ConversationTurnMetric.Create(
             conversationId,
             turn,
@@ -712,7 +855,10 @@ internal static class TelemetryTestData
             upstreamDurationMs: null,
             prepareDurationMs: null,
             createdAt: DateTimeOffset.UnixEpoch.AddMinutes(turn),
-            irFullInputTokensEstimated: irFull);
+            irFullInputTokensEstimated: irFull,
+            preparedVirtualToolSchemaTokensEstimated: preparedVirtual,
+            preparedClientToolSchemaTokensEstimated: preparedClient,
+            preparedRulesTokensEstimated: preparedRules);
 
     public static ConversationSummaryRollup Rollup(Guid id) =>
         new()

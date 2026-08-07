@@ -10,4 +10,7 @@ public sealed record TurnMetricsPrepareData(
     int RawMessageCount,
     int? WorkingMemoryVersionUsed,
     bool TrimTriggered,
-    int? IrFullInputTokensEstimated = null);
+    int? IrFullInputTokensEstimated = null,
+    int PreparedVirtualToolSchemaTokensEstimated = 0,
+    int PreparedClientToolSchemaTokensEstimated = 0,
+    int PreparedRulesTokensEstimated = 0);

@@ -17,6 +17,9 @@ public class ConversationTurnMetricConfiguration : IEntityTypeConfiguration<Conv
         builder.Property(e => e.RequestStartedAt).IsRequired();
         builder.Property(e => e.CreatedAt).IsRequired();
         builder.Property(e => e.NetTokenSavingsRatio).IsRequired();
+        builder.Property(e => e.PreparedVirtualToolSchemaTokensEstimated).IsRequired().HasDefaultValue(0);
+        builder.Property(e => e.PreparedClientToolSchemaTokensEstimated).IsRequired().HasDefaultValue(0);
+        builder.Property(e => e.PreparedRulesTokensEstimated).IsRequired().HasDefaultValue(0);
 
         builder.HasIndex(e => new { e.ConversationId, e.TurnIndex }).IsUnique();
         builder.HasIndex(e => new { e.ConversationId, e.CreatedAt });

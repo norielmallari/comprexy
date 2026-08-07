@@ -414,7 +414,13 @@ public sealed class ChatTurnPreparer
                     RawMessageCount: request.Messages.Count,
                     WorkingMemoryVersionUsed: null,
                     TrimTriggered: false,
-                    IrFullInputTokensEstimated: monitorTokens);
+                    IrFullInputTokensEstimated: monitorTokens,
+                    PreparedVirtualToolSchemaTokensEstimated: 0,
+                    PreparedClientToolSchemaTokensEstimated:
+                        PreparedToolCatalogPartition.EstimateClientFromRequestRoot(
+                            _tokenEstimator,
+                            request.RawRequest),
+                    PreparedRulesTokensEstimated: 0);
             }
 
             return new PreparedRequest(
@@ -573,7 +579,35 @@ public sealed class ChatTurnPreparer
                     workingMemory,
                     estimatedTokens,
                     estimatePayload));
-            metricsPrepare = metricsPrepare with { IrFullInputTokensEstimated = irFullTokens };
+
+            int preparedVirtual;
+            int preparedClient;
+            if (toolSchema?.Session is { } session)
+            {
+                (preparedVirtual, preparedClient) = PreparedToolCatalogPartition.EstimateFromSession(
+                    _tokenEstimator,
+                    session,
+                    _toolSchemaOrchestrator.EffectiveOptions);
+            }
+            else
+            {
+                preparedVirtual = 0;
+                preparedClient = PreparedToolCatalogPartition.EstimateClientFromRequestRoot(
+                    _tokenEstimator,
+                    estimatePayload);
+            }
+
+            var preparedRules = pendingRuleMessages.Count == 0
+                ? 0
+                : _tokenEstimator.CountTokens(pendingRuleMessages);
+
+            metricsPrepare = metricsPrepare with
+            {
+                IrFullInputTokensEstimated = irFullTokens,
+                PreparedVirtualToolSchemaTokensEstimated = preparedVirtual,
+                PreparedClientToolSchemaTokensEstimated = preparedClient,
+                PreparedRulesTokensEstimated = preparedRules
+            };
         }
 
         var windowStart = recentRaw.Count > 0 ? recentRaw[0].Sequence : (int?)null;

@@ -22,4 +22,7 @@ public sealed record SuccessfulTurnMetricInput(
     string RequestHash,
     string SentPayloadHash,
     TurnTimings Timings,
-    int? IrFullInputTokensEstimated = null);
+    int? IrFullInputTokensEstimated = null,
+    int PreparedVirtualToolSchemaTokensEstimated = 0,
+    int PreparedClientToolSchemaTokensEstimated = 0,
+    int PreparedRulesTokensEstimated = 0);

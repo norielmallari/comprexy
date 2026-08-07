@@ -28,6 +28,12 @@ public class TiktokenTokenEstimator : ITokenEstimator
         "response_format"
     ];
 
+    private static readonly string[] ToolsOnlyPromptSideProperties =
+    [
+        "tools",
+        "functions"
+    ];
+
     private readonly Tokenizer _tokenizer;
     private readonly ITokenEstimateCache _tokenEstimateCache;
 
@@ -56,12 +62,21 @@ public class TiktokenTokenEstimator : ITokenEstimator
     public int CountPromptTokens(IEnumerable<ChatMessage> messages, JsonElement? requestRoot = null)
     {
         var total = CountTokens(messages);
+        return total + CountRequestRootProperties(requestRoot, PromptSideProperties);
+    }
+
+    public int CountPromptSideToolsTokens(JsonElement? requestRoot) =>
+        CountRequestRootProperties(requestRoot, ToolsOnlyPromptSideProperties);
+
+    private int CountRequestRootProperties(JsonElement? requestRoot, string[] propertyNames)
+    {
         if (requestRoot is not { ValueKind: JsonValueKind.Object } root)
         {
-            return total;
+            return 0;
         }
 
-        foreach (var propertyName in PromptSideProperties)
+        var total = 0;
+        foreach (var propertyName in propertyNames)
         {
             if (root.TryGetProperty(propertyName, out var value) &&
                 value.ValueKind is not JsonValueKind.Null and not JsonValueKind.Undefined)

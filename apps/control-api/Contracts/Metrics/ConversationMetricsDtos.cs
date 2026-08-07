@@ -83,14 +83,20 @@ public sealed class ConversationTurnMetricDto
     public int CompressedInputTokensEstimated { get; init; }
 
     /// <summary>
-    /// Prepared-prompt split; the three sum to <see cref="CompressedInputTokensEstimated"/>.
-    /// Derived at query time — the turn row stores no breakdown.
+    /// Prepared-prompt split; named segments plus <see cref="HistoryTokensEstimated"/> sum to
+    /// the prepared basis. Catalog/rules come from the turn row; system/WM are derived at query.
     /// </summary>
     public int SystemPromptTokensEstimated { get; init; }
 
     public int WorkingMemoryTokensEstimated { get; init; }
 
-    public int HistoryAndToolsTokensEstimated { get; init; }
+    public int PreparedVirtualToolSchemaTokensEstimated { get; init; }
+
+    public int PreparedClientToolSchemaTokensEstimated { get; init; }
+
+    public int PreparedRulesTokensEstimated { get; init; }
+
+    public int HistoryTokensEstimated { get; init; }
 
     public int? ActualPromptTokens { get; init; }
 
@@ -251,8 +257,12 @@ public static class ConversationMetricsMapper
             CompressedInputTokensEstimated = compressedInput,
             SystemPromptTokensEstimated = breakdown?.SystemPromptTokensEstimated ?? 0,
             WorkingMemoryTokensEstimated = breakdown?.WorkingMemoryTokensEstimated ?? 0,
-            HistoryAndToolsTokensEstimated =
-                breakdown?.HistoryAndToolsTokensEstimated ?? compressedInput,
+            PreparedVirtualToolSchemaTokensEstimated =
+                breakdown?.PreparedVirtualToolSchemaTokensEstimated ?? 0,
+            PreparedClientToolSchemaTokensEstimated =
+                breakdown?.PreparedClientToolSchemaTokensEstimated ?? 0,
+            PreparedRulesTokensEstimated = breakdown?.PreparedRulesTokensEstimated ?? 0,
+            HistoryTokensEstimated = breakdown?.HistoryTokensEstimated ?? compressedInput,
             ActualPromptTokens = turn.ActualPromptTokens,
             ActualCompletionTokens = turn.ActualCompletionTokens,
             BaselineTotalTokensEstimated = projected.BaselineTotalTokens,

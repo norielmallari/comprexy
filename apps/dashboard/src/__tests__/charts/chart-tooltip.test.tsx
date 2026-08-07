@@ -8,7 +8,10 @@ const mockDataPoint: ChartDataPoint = {
   turnIndex: 1,
   model: 'gpt-4',
   systemTokens: 3000,
-  historyTokens: 5000,
+  virtualToolSchemaTokens: 400,
+  clientToolSchemaTokens: 300,
+  rulesTokens: 0,
+  historyTokens: 4300,
   workingMemoryTokens: 2000,
   preparedPromptTokens: 10000,
   baselineTokens: 10500,
@@ -46,7 +49,9 @@ describe('ChartTooltip', () => {
     render(<ChartTooltip data={mockDataPoint} active={true} />);
 
     expect(screen.getByText('3.0K')).toBeInTheDocument();
-    expect(screen.getByText('5.0K')).toBeInTheDocument();
+    expect(screen.getByText('400.0')).toBeInTheDocument();
+    expect(screen.getByText('300.0')).toBeInTheDocument();
+    expect(screen.getByText('4.3K')).toBeInTheDocument();
     expect(screen.getByText('2.0K')).toBeInTheDocument();
   });
 
@@ -114,19 +119,56 @@ describe('ChartTooltip', () => {
 
     const content = screen.getByTestId('chart-tooltip');
     expect(content).toHaveTextContent('System');
-    expect(content).toHaveTextContent('History + tools');
+    expect(content).toHaveTextContent('Virtual tools (catalog)');
+    expect(content).toHaveTextContent('Client tools (catalog)');
+    expect(content).toHaveTextContent('History');
     expect(content).toHaveTextContent('Compressed WM');
     expect(content).toHaveTextContent('Prepared prompt');
-    expect(content).toHaveTextContent('SoftBudget (IR full)');
-    expect(content).toHaveTextContent('SoftBudget net');
-    expect(content).toHaveTextContent('SoftBudget ratio');
+    expect(content).toHaveTextContent('Full History Est.');
+    expect(content).toHaveTextContent('Saved vs full history');
+    expect(content).toHaveTextContent('Savings vs full history');
     expect(content).toHaveTextContent('VT / native-wire');
-    expect(content).toHaveTextContent('not tools-only');
-    expect(content).toHaveTextContent('may be negative');
+    expect(content).not.toHaveTextContent('not tools-only');
+    expect(content).not.toHaveTextContent('may be negative');
+    expect(content).not.toHaveTextContent('Rules');
+    expect(content).not.toHaveTextContent('History + tools');
     expect(content).not.toHaveTextContent('Overhead');
     expect(content).not.toHaveTextContent('Baseline (ghost)');
     expect(content).not.toHaveTextContent('Net Saved');
     expect(content).not.toHaveTextContent('Savings Ratio');
+  });
+
+  it('shows a Rules row only when rulesTokens is greater than zero', () => {
+    const { rerender } = render(<ChartTooltip data={mockDataPoint} active={true} />);
+    expect(screen.getByTestId('chart-tooltip')).not.toHaveTextContent('Rules');
+
+    rerender(
+      <ChartTooltip
+        data={{ ...mockDataPoint, rulesTokens: 150, historyTokens: 4150 }}
+        active={true}
+      />,
+    );
+    expect(screen.getByTestId('chart-tooltip')).toHaveTextContent('Rules');
+    expect(screen.getByText('150.0')).toBeInTheDocument();
+  });
+
+  it('keeps VT / native-wire as a separate channel from catalog segments', () => {
+    render(
+      <ChartTooltip
+        data={{
+          ...mockDataPoint,
+          virtualToolSchemaTokens: 400,
+          virtualToolsTokensSaved: 900,
+        }}
+        active={true}
+      />,
+    );
+
+    const content = screen.getByTestId('chart-tooltip');
+    expect(content).toHaveTextContent('Virtual tools (catalog)');
+    expect(content).toHaveTextContent('VT / native-wire');
+    expect(screen.getByText('400.0')).toBeInTheDocument();
+    expect(screen.getByText('+900.0')).toBeInTheDocument();
   });
 
   it('hides the VT / native-wire row when virtualToolsTokensSaved is null', () => {

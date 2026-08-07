@@ -8,7 +8,15 @@
 'use client';
 
 import { type ChartDataPoint } from '@/types/chart';
-import { SOFTBUDGET_GHOST_LABEL } from '@/lib/constants';
+import {
+  CLIENT_TOOLS_STACK_LABEL,
+  FULL_HISTORY_EST_LABEL,
+  HISTORY_STACK_LABEL,
+  RULES_STACK_LABEL,
+  SAVED_VS_FULL_HISTORY_LABEL,
+  SAVINGS_VS_FULL_HISTORY_RATIO_LABEL,
+  VIRTUAL_TOOLS_STACK_LABEL,
+} from '@/lib/constants';
 import { formatCompactNumber, formatPercentage } from '@/lib/utils';
 
 export interface ChartTooltipProps {
@@ -59,7 +67,24 @@ export function ChartTooltip({ data, active }: ChartTooltipProps) {
 
         <div className="space-y-1">
           <Row label="System" value={formatCompactNumber(data.systemTokens)} />
-          <Row label="History + tools" value={formatCompactNumber(data.historyTokens)} />
+          <Row
+            label={`${VIRTUAL_TOOLS_STACK_LABEL} (catalog)`}
+            value={formatCompactNumber(data.virtualToolSchemaTokens)}
+          />
+          <Row
+            label={`${CLIENT_TOOLS_STACK_LABEL} (catalog)`}
+            value={formatCompactNumber(data.clientToolSchemaTokens)}
+          />
+          {data.rulesTokens > 0 && (
+            <Row
+              label={RULES_STACK_LABEL}
+              value={formatCompactNumber(data.rulesTokens)}
+            />
+          )}
+          <Row
+            label={HISTORY_STACK_LABEL}
+            value={formatCompactNumber(data.historyTokens)}
+          />
           <Row
             label="Compressed WM"
             value={
@@ -77,7 +102,7 @@ export function ChartTooltip({ data, active }: ChartTooltipProps) {
             className="font-mono font-medium text-gray-700 dark:text-gray-300"
           />
           <Row
-            label={SOFTBUDGET_GHOST_LABEL}
+            label={FULL_HISTORY_EST_LABEL}
             value={formatCompactNumber(data.baselineTokens)}
             className="font-mono font-medium text-gray-500 dark:text-gray-400"
           />
@@ -87,7 +112,7 @@ export function ChartTooltip({ data, active }: ChartTooltipProps) {
             </p>
           )}
           <Row
-            label="SoftBudget net"
+            label={SAVED_VS_FULL_HISTORY_LABEL}
             value={`${data.netTokensSaved >= 0 ? '+' : ''}${formatCompactNumber(data.netTokensSaved)}`}
             className={`font-mono font-medium ${
               data.netTokensSaved >= 0
@@ -96,7 +121,7 @@ export function ChartTooltip({ data, active }: ChartTooltipProps) {
             }`}
           />
           <Row
-            label="SoftBudget ratio"
+            label={SAVINGS_VS_FULL_HISTORY_RATIO_LABEL}
             value={formatPercentage(data.savingsRatio)}
             className="font-mono font-medium text-blue-600 dark:text-blue-400"
           />
@@ -111,10 +136,6 @@ export function ChartTooltip({ data, active }: ChartTooltipProps) {
                     : 'text-red-700 dark:text-red-400'
                 }`}
               />
-              <p className="text-[11px] leading-snug text-gray-500 dark:text-gray-400">
-                NativeRaw − IR full; not tools-only; may be negative when IR history tax exceeds
-                native-wire catalog savings.
-              </p>
             </>
           )}
         </div>

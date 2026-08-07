@@ -177,8 +177,8 @@ describe('ConversationIoCards', () => {
 
     const vt = screen.getByRole('region', { name: 'Virtual Tools channel' });
     expect(vt).toHaveTextContent('1,000');
-    expect(vt).toHaveTextContent('not tools-only');
-    expect(vt).toHaveTextContent('may be negative');
+    expect(vt).not.toHaveTextContent('not tools-only');
+    expect(vt).not.toHaveTextContent('may be negative');
     expect(
       screen.getByRole('region', { name: 'Raw input tokens' }),
     ).toHaveTextContent('12,000');

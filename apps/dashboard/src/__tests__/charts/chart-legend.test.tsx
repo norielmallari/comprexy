@@ -6,7 +6,7 @@ import type { ChartLegendItem } from '@/types/chart';
 
 const defaultItems: ChartLegendItem[] = [
   { label: 'System', color: '#cbd5e0' },
-  { label: 'History + tools', color: '#94a3b8' },
+  { label: 'History', color: '#94a3b8' },
   { label: 'Compressed WM', color: '#2d6bc4' },
 ];
 
@@ -84,7 +84,7 @@ describe('ChartLegend', () => {
 
   it('draws outlined items as a dashed border instead of a solid swatch', () => {
     const { container } = render(
-      <ChartLegend items={[{ label: 'SoftBudget (IR full)', color: '#64748b', outlined: true }]} />,
+      <ChartLegend items={[{ label: 'Full History Est.', color: '#64748b', outlined: true }]} />,
     );
 
     const block = container.querySelector('span.inline-block');

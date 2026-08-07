@@ -88,7 +88,10 @@ public sealed class ConversationMetricsRecorder : IConversationMetricsRecorder
             input.Timings.UpstreamDurationMs,
             input.Timings.PrepareDurationMs,
             now,
-            input.IrFullInputTokensEstimated);
+            input.IrFullInputTokensEstimated,
+            preparedVirtualToolSchemaTokensEstimated: input.PreparedVirtualToolSchemaTokensEstimated,
+            preparedClientToolSchemaTokensEstimated: input.PreparedClientToolSchemaTokensEstimated,
+            preparedRulesTokensEstimated: input.PreparedRulesTokensEstimated);
 
         _turnMetricRepository.Add(turn);
 

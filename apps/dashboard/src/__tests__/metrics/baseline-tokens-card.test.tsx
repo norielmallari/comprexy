@@ -51,11 +51,11 @@ describe('BaselineTokensCard', () => {
     ).toBeInTheDocument();
   });
 
-  it('describes SoftBudget IR full + completion without renaming the region', () => {
+  it('describes Full History Est. + completion without renaming the region', () => {
     render(<BaselineTokensCard totalBaselineTokensEstimated={1000} />);
 
     const region = screen.getByRole('region', { name: 'Baseline (combined)' });
-    expect(region).toHaveTextContent('SoftBudget IR full + completion');
+    expect(region).toHaveTextContent('Full History Est. + completion');
     expect(
       screen.queryByRole('region', { name: 'Baseline Tokens' }),
     ).not.toBeInTheDocument();

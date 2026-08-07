@@ -85,6 +85,6 @@ describe('HeroCard', () => {
 
     const region = screen.getByRole('region', { name: 'Tokens Saved' });
     expect(region).toHaveTextContent('Tokens Saved');
-    expect(region).toHaveTextContent('SoftBudget net (IR full − prepared)');
+    expect(region).toHaveTextContent('Saved vs full history (full history − prepared)');
   });
 });

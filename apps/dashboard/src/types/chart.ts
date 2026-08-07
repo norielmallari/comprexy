@@ -15,11 +15,20 @@ export interface ChartDataPoint {
   model: string;
   /** Captured system prompt; constant across the conversation */
   systemTokens: number;
-  /** Still-unfolded raw turns plus the model-facing tool catalog */
+  /** Prepared virtual+meta tool catalog segment (not VT / native-wire channel) */
+  virtualToolSchemaTokens: number;
+  /** Prepared client passthrough tool catalog segment */
+  clientToolSchemaTokens: number;
+  /**
+   * Prepared ephemeral rules segment. Present when mapped from the API;
+   * chart series/legend omit Rules when every point is 0.
+   */
+  rulesTokens: number;
+  /** History residual (chat history; catalogs/rules excluded) */
   historyTokens: number;
   /** Working memory injected on this turn; 0 before the first version exists */
   workingMemoryTokens: number;
-  /** Prompt actually sent upstream — the sum of the three segments above */
+  /** Prompt actually sent upstream — sum of named prepared segments */
   preparedPromptTokens: number;
   /**
    * SoftBudget ghost baseline: IR full (no WM fold), or NativeRaw when legacy mixed-axis.

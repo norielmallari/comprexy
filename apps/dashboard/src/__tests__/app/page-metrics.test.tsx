@@ -142,7 +142,10 @@ const turns: ConversationTurnMetricDto[] = [
     compressedInputTokensEstimated: 2500,
     systemPromptTokensEstimated: 300,
     workingMemoryTokensEstimated: 0,
-    historyAndToolsTokensEstimated: 2200,
+    preparedVirtualToolSchemaTokensEstimated: 0,
+    preparedClientToolSchemaTokensEstimated: 0,
+    preparedRulesTokensEstimated: 0,
+    historyTokensEstimated: 2200,
     actualPromptTokens: 2480,
     actualCompletionTokens: 200,
     baselineTotalTokensEstimated: 2700,
@@ -172,7 +175,10 @@ const turns: ConversationTurnMetricDto[] = [
     compressedInputTokensEstimated: 1500,
     systemPromptTokensEstimated: 300,
     workingMemoryTokensEstimated: 800,
-    historyAndToolsTokensEstimated: 400,
+    preparedVirtualToolSchemaTokensEstimated: 0,
+    preparedClientToolSchemaTokensEstimated: 0,
+    preparedRulesTokensEstimated: 0,
+    historyTokensEstimated: 400,
     actualPromptTokens: 1520,
     actualCompletionTokens: 200,
     baselineTotalTokensEstimated: 4700,
@@ -420,7 +426,7 @@ describe('Dashboard page metric composition', () => {
     render(<Home />);
 
     const hero = screen.getByRole('region', { name: 'Tokens Saved' });
-    expect(hero).toHaveTextContent('SoftBudget net (IR full − prepared)');
+    expect(hero).toHaveTextContent('Saved vs full history (full history − prepared)');
     expect(
       screen.queryByRole('region', { name: 'SoftBudget tokens saved' }),
     ).not.toBeInTheDocument();

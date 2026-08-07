@@ -50,8 +50,6 @@ export function VirtualToolsChannelCard({
       title={VIRTUAL_TOOLS_CHANNEL_LABEL}
       value={formatTokenValue(totalVirtualToolsTokensSaved)}
       unit="tokens"
-      description="NativeRaw − IR full; not tools-only; may be negative"
-      descriptionPlacement="inline"
       costOverlay={formatTokenCostOverlay(totalVirtualToolsTokensSaved, model, 'input')}
     />
   );

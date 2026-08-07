@@ -1,11 +1,9 @@
 /**
  * Constants for the dashboard.
  *
- * Includes working memory version colors, overhead color, ghost bar color,
- * and other reusable values.
- *
- * Chart fills target WCAG 2.1 AA non-text contrast (≥3:1) against card/page
- * backgrounds. Badge text uses {@link getContrastingForeground}.
+ * Prepared-bar fills use a limited slate + blue palette (light/dark pairs) targeting
+ * WCAG 2.1 AA non-text contrast (≥3:1) against card/page backgrounds. Badge text uses
+ * {@link getContrastingForeground}.
  */
 
 // ---------------------------------------------------------------------------
@@ -46,16 +44,70 @@ export const WM_COLORS_DARK = {
 // Prepared Prompt Segment Colors
 // ---------------------------------------------------------------------------
 
-/** Captured system prompt — constant across a conversation (≥3:1 vs white) */
-export const SYSTEM_SEGMENT_COLOR = '#475569';
+/**
+ * Limited prepared-bar palette: slate + teal/emerald (tools) + blue (history/WM).
+ * Fills meet WCAG 2.1 AA non-text contrast (≥3:1) vs card background; adjacent segments
+ * use {@link CHART_SEGMENT_STROKE_*} separators for distinguishability (1.4.11).
+ *
+ * Light (≥3:1 vs white / slate-50):
+ *   System = slate; Virtual = teal-700; Client = emerald-800; Rules/History/WM = blue
+ *
+ * Dark (≥3:1 vs slate-800 / slate-900):
+ *   System = muted slate; Virtual = teal-500; Client = emerald-300; Rules/History/WM = blue
+ */
+export const PREPARED_SEGMENT_COLORS_LIGHT = {
+  system: '#64748b',
+  virtualToolSchema: '#0f766e',
+  clientToolSchema: '#065f46',
+  rules: '#1e40af',
+  history: '#1d4ed8',
+  workingMemory: '#1e3a8a',
+} as const;
 
-/** Still-unfolded raw turns plus the model-facing tool catalog (≥3:1 vs white) */
-export const HISTORY_SEGMENT_COLOR = '#0f766e';
+export const PREPARED_SEGMENT_COLORS_DARK = {
+  system: '#7c8ea3',
+  virtualToolSchema: '#14b8a6',
+  clientToolSchema: '#6ee7b7',
+  rules: '#7aa2e3',
+  history: '#5b8bd6',
+  workingMemory: '#93b4e8',
+} as const;
+
+export type PreparedSegmentColors =
+  | typeof PREPARED_SEGMENT_COLORS_LIGHT
+  | typeof PREPARED_SEGMENT_COLORS_DARK;
+
+export function getPreparedSegmentColors(isDark: boolean): PreparedSegmentColors {
+  return isDark ? PREPARED_SEGMENT_COLORS_DARK : PREPARED_SEGMENT_COLORS_LIGHT;
+}
+
+/** Light-mode System fill (tests / ghost contrast checks). */
+export const SYSTEM_SEGMENT_COLOR = PREPARED_SEGMENT_COLORS_LIGHT.system;
+
+/** Light-mode Virtual tools fill. */
+export const VIRTUAL_TOOL_SCHEMA_SEGMENT_COLOR =
+  PREPARED_SEGMENT_COLORS_LIGHT.virtualToolSchema;
+
+/** Light-mode Client tools fill. */
+export const CLIENT_TOOL_SCHEMA_SEGMENT_COLOR =
+  PREPARED_SEGMENT_COLORS_LIGHT.clientToolSchema;
+
+/** Light-mode Rules fill. */
+export const RULES_SEGMENT_COLOR = PREPARED_SEGMENT_COLORS_LIGHT.rules;
+
+/** Light-mode History fill. */
+export const HISTORY_SEGMENT_COLOR = PREPARED_SEGMENT_COLORS_LIGHT.history;
 
 /** Stacked-bar separator stroke so adjacent segments stay distinguishable (1.4.11). */
 export const CHART_SEGMENT_STROKE_LIGHT = '#ffffff';
 export const CHART_SEGMENT_STROKE_DARK = '#0f172a';
 export const CHART_SEGMENT_STROKE_WIDTH = 1;
+
+/** Prepared-stack catalog labels (never “VT / native-wire”). */
+export const VIRTUAL_TOOLS_STACK_LABEL = 'Virtual tools';
+export const CLIENT_TOOLS_STACK_LABEL = 'Client tools';
+export const RULES_STACK_LABEL = 'Rules';
+export const HISTORY_STACK_LABEL = 'History';
 
 // ---------------------------------------------------------------------------
 // Ghost Bar (baseline reference drawn behind the stack)
@@ -71,8 +123,14 @@ export const GHOST_BAR_STROKE_LIGHT = '#1e293b';
 export const GHOST_BAR_STROKE_DARK = '#f8fafc';
 export const GHOST_BAR_FILL_OPACITY = 0.18;
 
-/** SoftBudget chart ghost baseline — IR full prompt estimate (no WM fold). */
-export const SOFTBUDGET_GHOST_LABEL = 'SoftBudget (IR full)';
+/** Chart ghost baseline — IR full prompt estimate (no WM fold); UI: Full History Est. */
+export const FULL_HISTORY_EST_LABEL = 'Full History Est.';
+
+/** SoftBudget net vs IrFull baseline — operator-facing chart/tooltip label. */
+export const SAVED_VS_FULL_HISTORY_LABEL = 'Saved vs full history';
+
+/** SoftBudget savings ratio vs IrFull baseline — operator-facing chart/tooltip label. */
+export const SAVINGS_VS_FULL_HISTORY_RATIO_LABEL = 'Savings vs full history';
 
 /** Virtual Tools / native-wire channel secondary metric title. */
 export const VIRTUAL_TOOLS_CHANNEL_LABEL = 'Virtual Tools channel';
@@ -92,9 +150,33 @@ export const WM_LABELS = [
 // API Configuration
 // ---------------------------------------------------------------------------
 
-/** Base URL for the control API. Override via NEXT_PUBLIC_API_BASE_URL env var. */
+/**
+ * Base URL for the control API.
+ *
+ * - Unset → `http://localhost:8130` (local `npm run dev`)
+ * - Empty string → same-origin (combined nginx deploy; see {@link resolveApiBaseUrl})
+ * - Non-empty → that absolute origin (no trailing slash)
+ */
 export const API_BASE_URL =
-  process.env.NEXT_PUBLIC_API_BASE_URL ?? 'http://localhost:8130';
+  process.env.NEXT_PUBLIC_API_BASE_URL === undefined
+    ? 'http://localhost:8130'
+    : process.env.NEXT_PUBLIC_API_BASE_URL.replace(/\/$/, '');
+
+/**
+ * Runtime control-api origin. When {@link API_BASE_URL} is empty (combined container),
+ * uses `window.location.origin` in the browser.
+ */
+export function resolveApiBaseUrl(): string {
+  if (API_BASE_URL.length > 0) {
+    return API_BASE_URL;
+  }
+
+  if (typeof window !== 'undefined' && window.location?.origin) {
+    return window.location.origin;
+  }
+
+  return 'http://127.0.0.1:8130';
+}
 
 /** Default number of conversations to fetch per page */
 export const DEFAULT_PAGE_SIZE = 25;

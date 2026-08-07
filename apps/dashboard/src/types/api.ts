@@ -80,13 +80,21 @@ export interface ConversationTurnMetricDto {
   irFullInputTokensEstimated: number | null;
   compressedInputTokensEstimated: number;
   /**
-   * Prepared-prompt split derived by the control API. The three sum to
-   * `compressedInputTokensEstimated`. `systemPromptTokensEstimated` is constant across a
-   * conversation; `workingMemoryTokensEstimated` is 0 before the first working memory exists.
+   * Prepared-prompt split derived by the control API. Named segments plus
+   * `historyTokensEstimated` sum to `compressedInputTokensEstimated`.
+   * `systemPromptTokensEstimated` is constant across a conversation;
+   * `workingMemoryTokensEstimated` is 0 before the first working memory exists.
    */
   systemPromptTokensEstimated: number;
   workingMemoryTokensEstimated: number;
-  historyAndToolsTokensEstimated: number;
+  /** Prepared virtual+meta tool catalog tokens (tiktoken of wire defs). */
+  preparedVirtualToolSchemaTokensEstimated: number;
+  /** Prepared client passthrough tool catalog tokens. */
+  preparedClientToolSchemaTokensEstimated: number;
+  /** Prepared ephemeral rules tokens; 0 when none. */
+  preparedRulesTokensEstimated: number;
+  /** History residual (prepared basis minus named segments); not history+tools. */
+  historyTokensEstimated: number;
   actualPromptTokens: number | null;
   actualCompletionTokens: number;
   baselineTotalTokensEstimated: number;

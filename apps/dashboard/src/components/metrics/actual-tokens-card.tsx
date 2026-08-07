@@ -32,7 +32,7 @@ export function ActualTokensCard({
           : '—'
       }
       unit="tokens"
-      description="SoftBudget prepared + completion + overhead"
+      description="Prepared + completion + overhead"
       costOverlay={formatTokenCostOverlay(totalActualTokensEstimated, model, 'input')}
     />
   );
