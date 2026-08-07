@@ -37,8 +37,11 @@ Kilo agent files use their own YAML frontmatter and treat the Markdown body as t
 | `name:` | dropped — the filename is the agent name |
 | `description:` | `description:`, same text, emitted as a **double-quoted** YAML scalar |
 | `model: inherit` | omitted — subagents inherit the invoking agent's model |
-| `readonly: true` | `permission:` denying `edit`/`write` except `.cursor/agent-state/*` |
+| `agent_state_only: true` | `permission:` denying `edit`/`write` except `.cursor/agent-state/*` |
+| `readonly: true` | **Do not use on reviewers** — Cursor Ask mode blocks writing review artifacts. Prefer `agent_state_only: true`. If present on a non-reviewer, map like `agent_state_only` |
 | _(no equivalent)_ | `mode:` — `all` for the three orchestrators, `subagent` for specialists |
+
+**Why not Cursor `readonly: true` for reviewers:** Cursor treats it as Ask mode and denies *all* filesystem writes, including mandatory `.cursor/agent-state/*` reviews. Reviewers must remain writable for agent-state only; product/test edits stay forbidden by prompt + (on Kilo) `permission`.
 
 Quoting `description` is not cosmetic: the source values contain `: ` (e.g. `` `track: backend` ``), which is invalid in a YAML plain scalar even though Cursor tolerates it.
 

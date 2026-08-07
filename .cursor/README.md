@@ -70,11 +70,11 @@ Agent prompts live under [`.cursor/agents/`](agents/).
 | [`backend-implementation-orchestrator`](agents/backend-implementation-orchestrator.md) | Backend implement → test → review until approval or HITL |
 | [`backend-implementer`](agents/backend-implementer.md) | Backend production code; `dotnet build` plus isolated affected-host `/health` smoke must pass; no unit tests |
 | [`backend-unit-tester`](agents/backend-unit-tester.md) | Backend xUnit from handoff; UI track redirects to `ui-unit-tester` |
-| [`backend-code-reviewer`](agents/backend-code-reviewer.md) | Adversarial backend review (DI/lease); quote-verified, plan-aware severity (E1–E7); read-only |
+| [`backend-code-reviewer`](agents/backend-code-reviewer.md) | Adversarial backend review (DI/lease); quote-verified, plan-aware severity (E1–E7); no product edits; writes agent-state reviews |
 | [`ui-implementation-orchestrator`](agents/ui-implementation-orchestrator.md) | UI implement → unit+e2e author → ui-review → ui-sim until approval or HITL |
 | [`ui-implementer`](agents/ui-implementer.md) | UI production code; `npx tsc --noEmit` clean + build; handoff for Vitest + Playwright smokes |
 | [`ui-unit-tester`](agents/ui-unit-tester.md) | Vitest/RTL **and** mocked Playwright fixtures/smokes from handoff; keeps `npx tsc --noEmit` clean |
-| [`ui-reviewer`](agents/ui-reviewer.md) | Adversarial UI review (typecheck, a11y, locators, test authorship); quote-verified evidence (E1–E7); read-only |
+| [`ui-reviewer`](agents/ui-reviewer.md) | Adversarial UI review (typecheck, a11y, locators, test authorship); quote-verified evidence (E1–E7); no product edits; writes agent-state reviews |
 | [`ui-simulator`](agents/ui-simulator.md) | Runs committed Playwright under existing mocks; no new fixture invention |
 | [`bench-runner`](agents/bench-runner.md) | Ops: one-script-at-a-time `./comprexy.sh bench` queue; continues on error; no auto-publish |
 
